@@ -1,0 +1,66 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NFL Model Z</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=20260807-pff-review-suggest3" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="mark">Z</span>
+        <div>
+          <strong>NFL Model Z</strong>
+          <small>Talent intelligence</small>
+        </div>
+      </div>
+      <nav id="nav"></nav>
+    </aside>
+
+    <main class="app">
+      <header class="topbar">
+        <div class="topbar-title">
+          <p class="eyebrow">Workbook refresh prototype</p>
+          <h1 id="page-title">Live Rankings</h1>
+          <nav class="utility-links" aria-label="NFL research links">
+            <a href="https://www.ourlads.com/nfldepthcharts/depthcharts.aspx" target="_blank" rel="noreferrer"><img class="utility-icon" src="https://www.google.com/s2/favicons?domain=ourlads.com&sz=32" alt="" />Depth Charts</a>
+            <a href="https://www.pff.com/nfl/grades/position/qb" target="_blank" rel="noreferrer"><img class="utility-icon" src="https://www.google.com/s2/favicons?domain=pff.com&sz=32" alt="" />PFF Grades</a>
+            <a href="https://www.footballguys.com/stats/snap-counts/teams" target="_blank" rel="noreferrer"><img class="utility-icon" src="https://www.google.com/s2/favicons?domain=footballguys.com&sz=32" alt="" />Snap Counts</a>
+            <a href="https://www.espn.com/nfl/schedule" target="_blank" rel="noreferrer"><img class="utility-icon" src="https://www.google.com/s2/favicons?domain=espn.com&sz=32" alt="" />NFL Schedule</a>
+            <a href="https://www.teamrankings.com/nfl/stat/opponent-points-per-game" target="_blank" rel="noreferrer"><img class="utility-icon" src="https://www.google.com/s2/favicons?domain=teamrankings.com&sz=32" alt="" />Team Stats</a>
+          </nav>
+        </div>
+        <div class="topbar-actions">
+          <button class="backup-btn" id="export-backup" title="Export full NFL IQ backup">Export</button>
+          <button class="backup-btn" id="import-backup" title="Import full NFL IQ backup">Import</button>
+          <input id="import-backup-file" type="file" accept="application/json,.json" hidden />
+          <div class="search">
+            <span class="search-label">Search</span>
+            <input id="search" type="search" placeholder="Search teams, players, positions" />
+          </div>
+        </div>
+      </header>
+
+      <section id="content" class="content"></section>
+    </main>
+
+    <script src="data.js?v=20260805-file-ourlads-cache"></script>
+    <script src="nfl-calendar-2026.js?v=20260806-site-week-calendar-v2"></script>
+    <script src="fantasy-rankings.js?v=20260806-weekly-qb-week"></script>
+    <script src="team-rankings-scan.js?v=20260806-team-rankings-scan"></script>
+    <script src="footballguys-game-logs.js?v=20260806-snaps-stats-scan"></script>
+    <script src="draftkings-odds.js?v=20260806-dk-odds"></script>
+    <script src="espn-game-results.js?v=20260806-espn-game-results"></script>
+    <script src="madden-ratings.js?v=20260805-file-ourlads-cache"></script>
+    <script src="pff-position-overrides.js?v=20260807-pff-grades-ranks"></script>
+    <script src="ourlads-check-results.js?v=20260805-pff-position-buckets"></script>
+    <script src="espn-injury-check-results.js?v=20260805-espn-injury-check"></script>
+    <script src="ourlads-cache.js?v=20260805-file-ourlads-cache"></script>
+    <script src="app.js?v=20260807-pff-review-suggest3"></script>
+  </body>
+</html>
+
