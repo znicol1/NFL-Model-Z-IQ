@@ -3689,18 +3689,39 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   const gap = madden - mine;
   if (!gap) return mine;
   const pffPct = pffRankPercentile(pff);
-  const snapPct = Number.isFinite(Number(pff?.snapPercentile)) ? Math.max(0.25, Math.min(1, Number(pff.snapPercentile) / 100)) : 0.45;
+  const snapPct = Number.isFinite(Number(pff?.snapPercentile)) ? Math.max(0.25, Math.min(1, Number(pff.snapPercentile) / 100)) : 0.5;
   const hasPff = pffPct !== null;
+  const trust = hasPff ? Math.max(0.35, Math.min(1, 0.35 + (snapPct * 0.65))) : 0.45;
   let closePct;
   if (!hasPff) {
-    closePct = gap > 0 ? 0.18 : 0.34;
+    closePct = gap > 0 ? 0.1 : 0.14;
   } else if (gap > 0) {
-    closePct = 0.12 + (0.68 * pffPct * snapPct);
+    closePct = pffPct >= 0.75
+      ? 0.7 + (0.22 * trust)
+      : pffPct >= 0.55
+        ? 0.46 + (0.26 * trust)
+        : pffPct >= 0.35
+          ? 0.2 + (0.18 * trust)
+          : 0.06 + (0.14 * trust);
   } else {
-    closePct = 0.18 + (0.58 * (1 - pffPct) * snapPct);
+    closePct = pffPct >= 0.85
+      ? 0.08 + (0.08 * (1 - trust))
+      : pffPct >= 0.65
+        ? 0.16 + (0.16 * (1 - trust))
+        : pffPct >= 0.4
+          ? 0.34 + (0.24 * trust)
+          : 0.7 + (0.22 * trust);
   }
-  closePct = Math.max(0.08, Math.min(0.85, closePct));
+  closePct = Math.max(0.05, Math.min(0.92, closePct));
   let suggested = Math.round(mine + (gap * closePct));
+  if (!hasPff && Math.abs(suggested - mine) > 2) suggested = mine + (gap > 0 ? 2 : -2);
+  if (gap > 0 && hasPff && pffPct >= 0.75 && snapPct >= 0.35 && Math.abs(gap) >= 3) suggested = Math.max(suggested, mine + Math.min(Math.abs(gap), 3));
+  if (gap > 0 && hasPff && pffPct >= 0.55 && snapPct >= 0.4 && Math.abs(gap) >= 4) suggested = Math.max(suggested, mine + 2);
+  if (gap < 0 && hasPff && pffPct >= 0.8) suggested = Math.max(suggested, mine - 1);
+  if (gap < 0 && hasPff && pffPct <= 0.25 && Math.abs(gap) >= 4) suggested = Math.min(suggested, mine - 3);
+  if (Math.abs(gap) >= 5 && suggested !== mine && Math.abs(suggested - mine) === 1 && hasPff && pffPct > 0.25 && pffPct < 0.8) {
+    suggested = mine + (gap > 0 ? 2 : -2);
+  }
   if (mine <= 70 && suggested < mine) suggested = mine;
   if (suggested < 68) suggested = 68;
   if (mine >= 71 && suggested < 71) suggested = 71;
@@ -3941,6 +3962,7 @@ function renderMadden() {
     document.querySelector("#madden-approve-suggested")?.addEventListener("click", () => {
       rows.forEach((row) => {
         if (!row.match || !row.key) return;
+        if (maddenRecentAdjustments[row.key]) return;
         const suggested = maddenSuggestedRating(row);
         if (suggested == null || suggested === num(row.match.rating)) return;
         applyMaddenRating(row.key, suggested, { maddenPlayer: row.madden?.player, maddenOvr: row.madden?.ovr });
@@ -3950,6 +3972,22 @@ function renderMadden() {
     document.querySelector("#madden-clear-recent")?.addEventListener("click", () => {
       Object.keys(maddenRecentAdjustments).forEach((key) => delete maddenRecentAdjustments[key]);
       storage.set("nflz-madden-recent-adjustments", maddenRecentAdjustments);
+      if (state.maddenView === "adjusted") state.maddenView = "matched";
+      render();
+    });
+    document.querySelector("#madden-undo-recent")?.addEventListener("click", () => {
+      const entries = Object.entries(maddenRecentAdjustments);
+      if (!entries.length) return;
+      if (!confirm(`Undo ${entries.length} recent Madden rating adjustment${entries.length === 1 ? "" : "s"}?`)) return;
+      entries.forEach(([key, recent]) => {
+        const player = findPlayer(key);
+        if (!player || !Number.isFinite(Number(recent.oldRating))) return;
+        persistPlayer(player, { rating: Number(recent.oldRating), newRating: Number(recent.oldRating) });
+      });
+      Object.keys(maddenRecentAdjustments).forEach((key) => delete maddenRecentAdjustments[key]);
+      storage.set("nflz-madden-recent-adjustments", maddenRecentAdjustments);
+      state.maddenPending = {};
+      state.maddenSetTo = {};
       if (state.maddenView === "adjusted") state.maddenView = "matched";
       render();
     });
@@ -3966,14 +4004,15 @@ function renderMadden() {
   const pendingCount = Object.values(state.maddenPending).filter((value) => num(value) !== 0).length;
   const setToCount = Object.keys(state.maddenSetTo).filter((key) => findPlayer(key) && num(state.maddenSetTo[key]) !== num(findPlayer(key)?.rating)).length;
   const recentCount = Object.keys(maddenRecentAdjustments).length;
-  const suggestedCount = rows.filter((row) => row.match && row.key && maddenSuggestedRating(row) !== num(row.match.rating)).length;
+  const suggestedCount = rows.filter((row) => row.match && row.key && !maddenRecentAdjustments[row.key] && maddenSuggestedRating(row) !== num(row.match.rating)).length;
   return `<section class="panel madden-panel">
     <div class="toolbar madden-toolbar">
       <div><h2>Madden Rating Comparison</h2><p>${maddenRows.length} EA Madden 27 non-specialist rows loaded. ${matched.length} exact matches, ${review.length} review matches, ${unmatched.length} need review/add.</p></div>
       <div class="filters">
         <button id="madden-set-adjusted" class="mini-action primary">Set Adjusted${setToCount ? ` ${setToCount}` : ""}</button>
-        ${suggestedCount ? `<button id="madden-approve-suggested" class="mini-action primary">Approve All Suggested (${suggestedCount})</button>` : ""}
+        ${suggestedCount ? `<button id="madden-approve-suggested" class="mini-action primary" title="Skips rows already marked recently adjusted.">Approve All Suggested (${suggestedCount})</button>` : ""}
         ${pendingCount ? `<button id="madden-apply-all" class="mini-action">Apply ${pendingCount} Pending</button>` : ""}
+        ${recentCount ? `<button id="madden-undo-recent" class="mini-action danger" title="Restores recently adjusted Madden players to their previous ratings.">Undo Recent Madden (${recentCount})</button>` : ""}
         ${recentCount ? `<button id="madden-clear-recent" class="mini-action">Clear Recent (${recentCount})</button>` : ""}
         <a class="mini-action" href="https://www.ea.com/games/madden-nfl/ratings" target="_blank" rel="noreferrer">EA Ratings</a>
       </div>
