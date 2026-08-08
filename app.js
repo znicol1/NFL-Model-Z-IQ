@@ -3694,7 +3694,7 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   const trust = hasPff ? Math.max(0.35, Math.min(1, 0.35 + (snapPct * 0.65))) : 0.45;
   let closePct;
   if (!hasPff) {
-    closePct = gap > 0 ? 0.1 : 0.14;
+    closePct = gap > 0 ? 0.16 : 0.32;
   } else if (gap > 0) {
     closePct = pffPct >= 0.75
       ? 0.7 + (0.22 * trust)
@@ -3714,7 +3714,8 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   }
   closePct = Math.max(0.05, Math.min(0.92, closePct));
   let suggested = Math.round(mine + (gap * closePct));
-  if (!hasPff && Math.abs(suggested - mine) > 2) suggested = mine + (gap > 0 ? 2 : -2);
+  if (!hasPff && gap > 0 && Math.abs(suggested - mine) > 2) suggested = mine + 2;
+  if (!hasPff && gap < 0 && Math.abs(suggested - mine) > 4) suggested = mine - 4;
   if (gap > 0 && hasPff && pffPct >= 0.75 && snapPct >= 0.35 && Math.abs(gap) >= 3) suggested = Math.max(suggested, mine + Math.min(Math.abs(gap), 3));
   if (gap > 0 && hasPff && pffPct >= 0.55 && snapPct >= 0.4 && Math.abs(gap) >= 4) suggested = Math.max(suggested, mine + 2);
   if (gap < 0 && hasPff && pffPct >= 0.8) suggested = Math.max(suggested, mine - 1);
@@ -3756,6 +3757,7 @@ function sortMaddenRows(rows) {
       if (key === "pff") return maddenRowPff(row)?.rank === "" ? 999 : num(maddenRowPff(row)?.rank, 999);
       if (key === "pffSnaps") return num(maddenRowPff(row)?.snapPercentile, -1);
       if (key === "suggested") return num(maddenSuggestedRating(row), -999);
+      if (key === "suggestedDelta") return row.match ? num(maddenSuggestedRating(row), num(row.match.rating)) - num(row.match.rating) : -999;
       if (key === "pending") return num(row.pending, 0);
       return row.confidence;
     };
@@ -3862,6 +3864,7 @@ function renderMadden() {
     maddenSortHeader("pff", "PFF", "num"),
     maddenSortHeader("pffSnaps", "PFF Snaps", "num"),
     maddenSortHeader("suggested", "Suggested", "num"),
+    maddenSortHeader("suggestedDelta", "Sug Diff", "num"),
     maddenSortHeader("pending", "Pending", "num"),
     "<th>Matched To</th>",
     "<th>Adjust</th>",
@@ -3870,6 +3873,8 @@ function renderMadden() {
     const pff = maddenRowPff(row);
     const key = esc(row.key);
     const diff = num(row.diff);
+    const suggested = row.match ? maddenSuggestedRating(row, pff) : null;
+    const suggestedDelta = row.match && suggested != null ? suggested - num(row.match.rating) : "";
     const targetRating = row.match ? Math.max(50, Math.min(110, state.maddenSetTo[row.key] ?? (num(row.match.rating) + num(row.pending)))) : "";
     return `<tr>
       <td>${renderMaddenPlayer(row)}</td>
@@ -3881,7 +3886,8 @@ function renderMadden() {
       <td class="num">${renderMaddenPffCell(pff)}</td>
       <td class="num">${pff && Number.isFinite(Number(pff.snapPercentile)) ? `<span class="madden-snap-pct" ${pffSnapStyle(pff.snapPercentile)} title="${esc(`${fmt(pff.snaps, 0)} snaps, ${pffTrustLabel(pff)} for this PFF position.`)}">${fmt(pff.snapPercentile, 0)}%<small>${fmt(pff.snaps, 0)}</small></span>` : "-"}</td>
       <td class="num">${renderMaddenSuggestion(row, pff)}</td>
-      <td class="num">${row.match ? `${row.pending > 0 ? "+" : ""}${fmt(row.pending, 0)}` : "-"}</td>
+      <td class="num delta ${num(suggestedDelta) >= 0 ? "plus" : "minus"}">${suggestedDelta !== "" ? `${suggestedDelta > 0 ? "+" : ""}${fmt(suggestedDelta, 0)}` : "-"}</td>
+      <td class="num madden-pending-cell">${row.match ? `${row.pending > 0 ? "+" : ""}${fmt(row.pending, 0)}` : "-"}</td>
       <td>${renderMaddenMatchCell(row)}</td>
       <td>${row.match ? `<span class="madden-adjust"><button data-madden-nudge="-1" data-player-key="${key}">-1</button><button data-madden-nudge="1" data-player-key="${key}">+1</button><label>Set to <input class="madden-manual-rating" data-madden-target="${key}" type="number" min="68" max="110" value="${fmt(targetRating, 0)}" /></label><button class="primary" data-madden-apply="${key}">Apply</button></span>` : ""}</td>
     </tr>`;
@@ -3920,7 +3926,7 @@ function renderMadden() {
         state.maddenSetTo[key] = rating;
         state.maddenPending[key] = rating - num(player.rating);
       }
-      const pendingCell = input.closest("tr")?.children?.[8];
+      const pendingCell = input.closest("tr")?.querySelector?.(".madden-pending-cell");
       if (pendingCell) pendingCell.textContent = `${state.maddenPending[key] > 0 ? "+" : ""}${fmt(state.maddenPending[key], 0)}`;
     }));
     document.querySelectorAll("[data-madden-match]").forEach((select) => select.addEventListener("change", () => {
@@ -3960,7 +3966,7 @@ function renderMadden() {
       render();
     });
     document.querySelector("#madden-approve-suggested")?.addEventListener("click", () => {
-      rows.forEach((row) => {
+      filteredRows.forEach((row) => {
         if (!row.match || !row.key) return;
         if (maddenRecentAdjustments[row.key]) return;
         const suggested = maddenSuggestedRating(row);
@@ -4004,7 +4010,7 @@ function renderMadden() {
   const pendingCount = Object.values(state.maddenPending).filter((value) => num(value) !== 0).length;
   const setToCount = Object.keys(state.maddenSetTo).filter((key) => findPlayer(key) && num(state.maddenSetTo[key]) !== num(findPlayer(key)?.rating)).length;
   const recentCount = Object.keys(maddenRecentAdjustments).length;
-  const suggestedCount = rows.filter((row) => row.match && row.key && !maddenRecentAdjustments[row.key] && maddenSuggestedRating(row) !== num(row.match.rating)).length;
+  const suggestedCount = filteredRows.filter((row) => row.match && row.key && !maddenRecentAdjustments[row.key] && maddenSuggestedRating(row) !== num(row.match.rating)).length;
   return `<section class="panel madden-panel">
     <div class="toolbar madden-toolbar">
       <div><h2>Madden Rating Comparison</h2><p>${maddenRows.length} EA Madden 27 non-specialist rows loaded. ${matched.length} exact matches, ${review.length} review matches, ${unmatched.length} need review/add.</p></div>
@@ -4024,7 +4030,7 @@ function renderMadden() {
       <span>Showing ${rows.length} of ${filteredRows.length}</span>
       ${rows.length < filteredRows.length ? `<button id="madden-show-more" class="mini-action">Show 500 More</button><button id="madden-show-all" class="mini-action">Show All</button>` : ""}
     </div>
-    <div class="table-scroll madden-scroll"><table class="madden-table"><thead><tr>${headers}</tr></thead><tbody>${body || "<tr><td colspan='12'>No Madden rows in this view.</td></tr>"}</tbody></table></div>
+    <div class="table-scroll madden-scroll"><table class="madden-table"><thead><tr>${headers}</tr></thead><tbody>${body || "<tr><td colspan='13'>No Madden rows in this view.</td></tr>"}</tbody></table></div>
     ${renderPlayerModal()}
   </section>`;
 }
