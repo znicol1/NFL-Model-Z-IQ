@@ -9,7 +9,6 @@ const pages = [
   ["weeklyFantasy", "Weekly Fantasy Rankings"],
   ["seasonFantasy", "Season Long Fantasy Ranks"],
   ["statRanks", "Stat Ranks"],
-  ["madden", "Madden Ratings"],
   ["data", "Data"],
   ["start", "Start 'Em, Sit 'Em"],
   ["pff", "PFF Update"],
@@ -3459,8 +3458,12 @@ function pffCachedRowFor(row) {
 
 function pffManualRows() {
   if (pffManualRowsCache) return pffManualRowsCache;
-  pffManualRowsCache = Object.values(pffManualRanks || {}).map((row) => {
-    const cached = pffCachedRowFor(row);
+  const savedRows = Object.values(pffManualRanks || {});
+  const usingSavedRows = savedRows.length > 0;
+  const sourceRows = (usingSavedRows ? savedRows : (pffPositionCache.rows || []))
+    .filter((row) => allowedModelPositions.has(groupPosition(row.modelPosition || row.pffPosition || row.position)));
+  pffManualRowsCache = sourceRows.map((row) => {
+    const cached = usingSavedRows ? pffCachedRowFor(row) : row;
     const modelPosition = groupPosition(cached?.modelPosition || cached?.pffPosition || row.modelPosition || row.pffPosition);
     return {
       ...row,
@@ -3469,6 +3472,7 @@ function pffManualRows() {
       team: row.team || cached?.team,
       grade: usefulPffGrade(row.grade) ?? usefulPffGrade(cached?.grade),
       snaps: Number.isFinite(Number(row.snaps)) ? Number(row.snaps) : cached?.snaps,
+      source: row.source || (usingSavedRows ? "paste" : "static-cache"),
     };
   });
   return pffManualRowsCache;
@@ -6197,6 +6201,20 @@ function renderPff() {
     const delta = num(p.delta);
     return `<tr><td>${p.position}</td><td>${p.player}</td><td class="num">${fmt(p.pff, 0)}</td><td class="num">${fmt(p.oldRating, 0)}</td><td class="num">${fmt(p.newRating, 0)}</td><td class="num delta ${delta >= 0 ? "plus" : "minus"}">${delta > 0 ? "+" : ""}${fmt(delta, 0)}</td></tr>`;
   });
+  if (state.pffView === "madden") {
+    setTimeout(() => {
+      document.querySelectorAll("[data-pff-view]").forEach((button) => button.addEventListener("click", () => { state.pffView = button.dataset.pffView; state.pffLimit = 500; render(); }));
+    });
+    return `<section class="panel pff-review-panel">
+      <div class="toolbar fantasy-rank-toolbar">
+        <div><h2>PFF Update</h2><p>PFF is the main weekly ratings review. Madden comparison is kept here as a secondary check.</p></div>
+      </div>
+      <div class="live-tabs pff-tabs">
+        ${[["review", `PFF Review ${reviewAll.length}`], ["recent", `Recently Adjusted ${Object.keys(pffRecentAdjustments).length}`], ["madden", "Madden Comparison"], ["workbook", "Workbook Import"]].map(([id, label]) => `<button class="${state.pffView === id ? "active" : ""}" data-pff-view="${id}">${esc(label)}</button>`).join("")}
+      </div>
+      <div class="pff-secondary-view">${renderMadden()}</div>
+    </section>`;
+  }
   const viewRows = state.pffView === "workbook" ? [] : state.pffView === "recent" ? reviewAll.filter((item) => item.key && pffRecentAdjustments[item.key]) : reviewAll;
   const sortedRows = sortPffRows(viewRows);
   const visibleRows = sortedRows.slice(0, state.pffLimit);
@@ -6255,7 +6273,7 @@ function renderPff() {
       </div>
     </div>
     <div class="live-tabs pff-tabs">
-      ${[["review", `PFF Review ${reviewAll.length}`], ["recent", `Recently Adjusted ${Object.keys(pffRecentAdjustments).length}`], ["workbook", "Workbook Import"]].map(([id, label]) => `<button class="${state.pffView === id ? "active" : ""}" data-pff-view="${id}">${esc(label)}</button>`).join("")}
+      ${[["review", `PFF Review ${reviewAll.length}`], ["recent", `Recently Adjusted ${Object.keys(pffRecentAdjustments).length}`], ["madden", "Madden Comparison"], ["workbook", "Workbook Import"]].map(([id, label]) => `<button class="${state.pffView === id ? "active" : ""}" data-pff-view="${id}">${esc(label)}</button>`).join("")}
     </div>
     ${state.pffView !== "workbook" ? `
       <section class="formula-card pff-import-panel">
