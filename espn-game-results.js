@@ -1,5 +1,5 @@
 window.ESPN_GAME_RESULTS = {
-  "fetchedAt": "2026-08-06T22:25:13.241Z",
+  "fetchedAt": "2026-08-11T18:11:01.269Z",
   "source": "ESPN scoreboard results",
   "games": [
     {
@@ -8,11 +8,11 @@ window.ESPN_GAME_RESULTS = {
       "week": "",
       "visitor": "Carolina Panthers",
       "home": "Arizona Cardinals",
-      "awayScore": 0,
-      "homeScore": 0,
-      "completed": false,
-      "status": "Scheduled",
-      "winner": "",
+      "awayScore": 33,
+      "homeScore": 30,
+      "completed": true,
+      "status": "Final",
+      "winner": "Carolina Panthers",
       "sourceUrl": "https://www.espn.com/nfl/scoreboard/"
     },
     {

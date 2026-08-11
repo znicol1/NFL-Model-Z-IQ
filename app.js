@@ -3,9 +3,10 @@ const pages = [
   ["live", "Live Rankings"],
   ["depth", "Depth Charts"],
   ["top30", "Top 30s by Position"],
-  ["schedule", "Sim Schedule"],
+  ["schedule", "Season Schedule"],
   ["picks", "Picks Tracker"],
   ["standings", "Sim Standings"],
+  ["weeklyMatchups", "Weekly Matchups"],
   ["weeklyFantasy", "Weekly Fantasy Rankings"],
   ["seasonFantasy", "Season Long Fantasy Ranks"],
   ["statRanks", "Stat Ranks"],
@@ -42,6 +43,7 @@ const backupKeys = {
   addedPlayers: "nflz-added-players",
   maddenMatchOverrides: "nflz-madden-match-overrides",
   maddenRecentAdjustments: "nflz-madden-recent-adjustments",
+  ratingHistoryStartAt: "nflz-rating-history-start-at",
 };
 
 const defaultWeeklyQbOptions = {
@@ -64,6 +66,44 @@ const defaultWeeklyQbWeights = {
   rushTds: 100,
 };
 
+const defaultWeeklySkillWeights = {
+  depth: 100,
+  matchup: 100,
+  talent: 100,
+  oline: 100,
+  ppg: 100,
+  qb: 100,
+  usage: 100,
+  redZone: 100,
+  gameScript: 0,
+  teamTotal: 0,
+  opponentTd: 0,
+};
+
+const defaultWeeklySkillOptions = {
+  useStatRanks: true,
+  useLast5: true,
+  useProduction: true,
+  extraFactors: [],
+};
+
+const defaultWeeklyMatchupWeights = {
+  vQB_IDL1: 100, vQB_IDL2: 100, vQB_IDL3: 100, vQB_IDL4: 0, vQB_IDL5: 0,
+  vQB_EDGE1: 100, vQB_EDGE2: 100, vQB_EDGE3: 100, vQB_EDGE4: 0, vQB_EDGE5: 0,
+  vQB_LB1: 50, vQB_LB2: 50, vQB_LB3: 50, vQB_LB4: 0, vQB_LB5: 0,
+  vQB_CB1: 100, vQB_CB2: 100, vQB_CB3: 100, vQB_CB4: 0, vQB_CB5: 0,
+  vQB_S1: 100, vQB_S2: 100, vQB_S3: 0, vQB_S4: 0, vQB_S5: 0,
+  vRB_IDL1: 100, vRB_IDL2: 100, vRB_IDL3: 100, vRB_IDL4: 0, vRB_IDL5: 0,
+  vRB_EDGE1: 100, vRB_EDGE2: 100, vRB_EDGE3: 100, vRB_EDGE4: 0, vRB_EDGE5: 0,
+  vRB_LB1: 100, vRB_LB2: 100, vRB_LB3: 100, vRB_LB4: 0, vRB_LB5: 0,
+  vWR_CB1: 101, vWR_CB2: 100, vWR_CB3: 100, vWR_CB4: 0, vWR_CB5: 0,
+  vWR_S1: 100, vWR_S2: 100, vWR_S3: 0, vWR_S4: 0, vWR_S5: 0,
+  vTE_EDGE1: 100, vTE_EDGE2: 0, vTE_EDGE3: 0, vTE_EDGE4: 0, vTE_EDGE5: 0,
+  vTE_LB1: 100, vTE_LB2: 100, vTE_LB3: 100, vTE_LB4: 0, vTE_LB5: 0,
+  vTE_S1: 100, vTE_S2: 100, vTE_S3: 0, vTE_S4: 0, vTE_S5: 0,
+  vTE_CB1: 80, vTE_CB2: 80, vTE_CB3: 0, vTE_CB4: 0, vTE_CB5: 0,
+};
+
 function weeklyQbDefaultOptions() {
   return { ...defaultWeeklyQbOptions, ...storage.get("nflz-weekly-qb-default-options", {}) };
 }
@@ -72,7 +112,28 @@ function weeklyQbDefaultWeights() {
   return { ...defaultWeeklyQbWeights, ...storage.get("nflz-weekly-qb-default-weights", {}) };
 }
 
+function weeklySkillDefaultWeights() {
+  return { ...defaultWeeklySkillWeights, ...storage.get("nflz-weekly-skill-default-weights", {}) };
+}
+
+function weeklySkillDefaultOptions() {
+  return { ...defaultWeeklySkillOptions, ...storage.get("nflz-weekly-skill-default-options", {}) };
+}
+
 const defaultSchedulePositionWeights = {
+  QB: 5,
+  RB: 6,
+  WR: 10,
+  TE: 3,
+  OL: 4,
+  IDL: 6,
+  EDGE: 6,
+  LB: 6,
+  CB: 8,
+  S: 6,
+};
+
+const legacySchedulePositionWeights = {
   QB: 18,
   RB: 8,
   WR: 14,
@@ -96,6 +157,32 @@ const defaultPreseasonDepthMultipliers = {
   LB: [100, 110, 110, 110, 110],
   CB: [100, 100, 110, 110, 110, 110],
   S: [100, 100, 110, 110],
+};
+
+const defaultRegularDepthMultipliers = {
+  QB: [100],
+  RB: [100, 50],
+  WR: [100, 75, 50, 25],
+  TE: [100, 0],
+  OL: [100],
+  IDL: [100, 67, 33],
+  EDGE: [100, 67, 33],
+  LB: [100, 67, 33],
+  CB: [100, 100, 67],
+  S: [100, 100],
+};
+
+const legacyRegularDepthMultipliers = {
+  QB: [100],
+  RB: [100, 100],
+  WR: [100, 100, 100, 100],
+  TE: [100, 100],
+  OL: [100],
+  IDL: [100, 100, 100],
+  EDGE: [100, 100, 100],
+  LB: [100, 100, 100],
+  CB: [100, 100, 100],
+  S: [100, 100],
 };
 
 const defaultHomeFieldAdvantages = {
@@ -163,6 +250,13 @@ const spreadWinChanceTable = [
   [15, 0.956], [15.5, 0.963], [16, 0.981], [16.5, 0.998], [17, 1],
 ];
 
+const scheduleScoreTuning = {
+  offenseBase: 26.2,
+  defenseAllowedBase: 17.2,
+  offenseScale: 1.75,
+  defenseScale: 1.25,
+};
+
 const state = {
   page: "home",
   query: "",
@@ -176,22 +270,26 @@ const state = {
   depthTeam: "All Teams",
   depthPosition: "All Positions",
   depthSide: "All Sides",
+  depthWeek: "auto",
   depthCheckActivity: "All Activities",
   depthCheckVisibleLimit: 250,
   depthCheckVersion: 0,
   depthCheckNotice: "",
   depthCheck: { status: "idle", results: [], error: "", source: "" },
   injuryCheck: { status: "idle", results: [], error: "", source: "" },
+  injuryCheckActivity: "All Categories",
   selectedPlayerKey: null,
   topPosition: "All Positions",
   topLimit: 30,
   scheduleView: "week",
-  scheduleWeek: "All Weeks",
+  scheduleWeek: "Current Week",
   scheduleTeam: "All Teams",
+  scheduleVisibleLimit: 80,
   scheduleSimMode: storage.get("nflz-schedule-sim-mode", "auto"),
   scheduleControlsOpen: storage.get("nflz-schedule-controls-open", false),
   schedulePositionWeights: { ...defaultSchedulePositionWeights, ...storage.get("nflz-schedule-position-weights", {}) },
   preseasonDepthMultipliers: { ...defaultPreseasonDepthMultipliers, ...storage.get("nflz-preseason-depth-multipliers", {}) },
+  regularDepthMultipliers: { ...defaultRegularDepthMultipliers, ...storage.get("nflz-regular-depth-multipliers", {}) },
   homeFieldAdvantages: { ...defaultHomeFieldAdvantages, ...storage.get("nflz-home-field-advantages", {}) },
   siteWeek: storage.get("nflz-site-week", "auto"),
   selectedScheduleKey: "",
@@ -206,6 +304,15 @@ const state = {
   weeklyQbWeights: { ...weeklyQbDefaultWeights(), ...storage.get("nflz-weekly-qb-weights", {}) },
   weeklyQbControlsOpen: storage.get("nflz-weekly-qb-controls-open", true),
   weeklyQbDefaultMessage: "",
+  weeklySkillWeights: { ...weeklySkillDefaultWeights(), ...storage.get("nflz-weekly-skill-weights", {}) },
+  weeklySkillOptions: { ...weeklySkillDefaultOptions(), ...storage.get("nflz-weekly-skill-options", {}) },
+  weeklySkillControlsOpen: storage.get("nflz-weekly-skill-controls-open", true),
+  weeklySkillDefaultMessage: "",
+  weeklyMatchupWeights: { ...defaultWeeklyMatchupWeights, ...storage.get("nflz-weekly-matchup-weights", {}) },
+  weeklyMatchupSort: "team",
+  weeklyMatchupWeek: storage.get("nflz-weekly-matchup-week", "auto"),
+  weeklyMatchupWeightView: storage.get("nflz-weekly-matchup-weight-view", "vQB"),
+  selectedMatchupDetail: null,
   weeklyFantasyLimit: 150,
   seasonFantasyPosition: "QB",
   seasonFantasyView: "regular",
@@ -276,6 +383,28 @@ let pffPlayerMatchIndexCache = null;
 const addedPlayers = storage.get("nflz-added-players", []);
 let globalSearchTimer = null;
 let quickPlayerSearchTimer = null;
+let scheduleProjectionCache = new Map();
+
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function migrateScheduleDefaults() {
+  const weightKey = "nflz-schedule-position-weights";
+  const depthKey = "nflz-regular-depth-multipliers";
+  const storedWeights = storage.get(weightKey, null);
+  const storedDepths = storage.get(depthKey, null);
+  if (!storedWeights || sameJson(storedWeights, legacySchedulePositionWeights)) {
+    state.schedulePositionWeights = { ...defaultSchedulePositionWeights };
+    storage.set(weightKey, state.schedulePositionWeights);
+  }
+  if (!storedDepths || sameJson(storedDepths, legacyRegularDepthMultipliers)) {
+    state.regularDepthMultipliers = JSON.parse(JSON.stringify(defaultRegularDepthMultipliers));
+    storage.set(depthKey, state.regularDepthMultipliers);
+  }
+}
+
+migrateScheduleDefaults();
 
 function gameAction(gameKey) {
   const saved = savedPicks[gameKey];
@@ -345,6 +474,7 @@ function importFullBackup(file) {
       storage.set(backupKeys.addedPlayers, data.addedPlayers || []);
       storage.set(backupKeys.maddenMatchOverrides, data.maddenMatchOverrides || {});
       storage.set(backupKeys.maddenRecentAdjustments, data.maddenRecentAdjustments || {});
+      storage.set(backupKeys.ratingHistoryStartAt, data.ratingHistoryStartAt || "");
       alert("NFL IQ backup imported. The app will reload with your saved ratings, picks, challenges, and fantasy order.");
       window.location.reload();
     } catch (error) {
@@ -376,7 +506,7 @@ const excelTime = (value) => {
 };
 const unique = (items) => [...new Set(items.filter(Boolean))].sort();
 const playerKey = (p) => `${p.team}|${p.position}|${p.player}`;
-const allowedModelPositions = new Set(["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"]);
+const allowedModelPositions = new Set(["QB", "RB", "WR", "TE", "OT", "OG", "C", "IDL", "EDGE", "LB", "CB", "S"]);
 const excludedPlayerPositions = new Set(["FB", "K", "P", "PK", "LS", "PT", "PR", "KR", "H", "KO", "KICKER", "PUNTER", "FULLBACK", "LONG SNAPPER", "SPECIAL TEAMS"]);
 const depthNameNoiseTokens = new Set(["OLB", "ILB", "MLB", "LOLB", "ROLB", "WLB", "SLB", "RILB", "LILB", "NB", "NCB", "NT", "LDT", "RDT", "DT", "LDE", "RDE", "LEDG", "REDG", "IDL", "EDGE"]);
 const ourladsPositionTokens = new Set([
@@ -396,6 +526,8 @@ const pffTeamAbbrevMap = {
 const teamNameAliases = {
   "Los Angeles Rams": "LA Rams",
   "Los Angeles Chargers": "LA Chargers",
+  LAR: "LA Rams",
+  LAC: "LA Chargers",
   "NY Giants": "New York Giants",
   "NY Jets": "New York Jets",
 };
@@ -407,7 +539,7 @@ function fallbackModelPosition(position) {
   if (["HB"].includes(pos)) return "RB";
   if (["LWR", "RWR", "SWR"].includes(pos)) return "WR";
   if (["LDE", "RDE", "DE", "LEDG", "REDG", "ED", "OLB", "LOLB", "ROLB"].includes(pos)) return "EDGE";
-  if (["NT", "DT", "DI"].includes(pos)) return "IDL";
+  if (["NT", "DT", "DI", "LDT", "RDT"].includes(pos)) return "IDL";
   if (["MLB", "MIKE", "WLB", "WILL", "SLB", "SAM", "ILB"].includes(pos)) return "LB";
   if (["LCB", "RCB", "NCB", "NB", "DB"].includes(pos)) return "CB";
   if (["FS", "SS"].includes(pos)) return "S";
@@ -418,7 +550,14 @@ function fallbackModelPosition(position) {
 function pffModelPosition(player) {
   const name = cleanPlayerName(player?.player || player?.name);
   const teamCode = String(player?.teamAbbrev || pffTeamAbbrevMap[player?.team] || "").toUpperCase();
-  return pffPositionCache.byNameTeam?.[`${name}__${teamCode}`] || "";
+  const pasted = Object.values(pffManualRanks || {}).find((row) => (
+    cleanPlayerName(row.name || row.player) === name
+    && (!teamCode || String(row.team || "").toUpperCase() === teamCode)
+  ));
+  return (pasted ? groupPosition(pasted.modelPosition || pasted.pffPosition) : "")
+    || pffPositionCache.byNameTeam?.[`${name}__${teamCode}`]
+    || pffPositionCache.byName?.[name]
+    || "";
 }
 function modelPosition(player) {
   const raw = String(player?.position || "").trim().toUpperCase();
@@ -467,7 +606,7 @@ function sourceKey(player) {
 }
 
 function applyOverrides(players) {
-  return [...(players || []), ...addedPlayers].filter(isIncludedPlayer).map((p) => {
+  const merged = [...(players || []), ...addedPlayers].filter((p) => !overrides[playerKey(p)]?.deleted).filter(isIncludedPlayer).map((p) => {
     const key = playerKey(p);
     const patch = overrides[key] || {};
     const normalizedPosition = modelPosition({ ...p, ...patch });
@@ -482,19 +621,215 @@ function applyOverrides(players) {
     }
     return normalizeStarProgress(base);
   });
+  return assignDepthSlots(merged);
 }
 
 function saveAddedPlayers() {
   storage.set("nflz-added-players", addedPlayers);
 }
 
-function persistPlayer(player, patch) {
+function persistPlayer(player, patch, options = {}) {
   const key = sourceKey(player);
-  const normalized = normalizeStarProgress({ ...player, ...(overrides[key] || {}), ...patch });
-  overrides[key] = { ...(overrides[key] || {}), ...patch, rating: normalized.rating, stars: normalized.stars, newRating: normalized.newRating, newStars: normalized.newStars };
+  const { ratingChangeType, ratingChangeNote, ...cleanPatch } = patch || {};
+  const before = { ...player, ...(overrides[key] || {}) };
+  const normalized = normalizeStarProgress({ ...before, ...cleanPatch });
+  const oldRating = num(before.rating);
+  const newRating = num(normalized.rating);
+  if (Number.isFinite(oldRating) && Number.isFinite(newRating) && oldRating !== newRating) {
+    recordRatingHistory(key, before, oldRating, newRating, ratingChangeType || inferRatingChangeType(cleanPatch), ratingChangeNote);
+  }
+  overrides[key] = { ...(overrides[key] || {}), ...cleanPatch, rating: normalized.rating, stars: normalized.stars, newRating: normalized.newRating, newStars: normalized.newStars };
+  if (!options.deferRefresh) {
+    storage.set("nflz-player-overrides", overrides);
+    state.players = applyOverrides(state.data.players);
+    pffPlayerMatchIndexCache = null;
+  }
+}
+
+function renamePlayer(player, newName) {
+  const key = sourceKey(player);
+  const cleanName = String(newName || "").replace(/\s+/g, " ").trim();
+  if (!player || !cleanName || cleanName === player.player) return false;
+  persistPlayer(player, { player: cleanName });
+  state.selectedPlayerKey = key;
+  return true;
+}
+
+function resetPlayerName(player) {
+  const key = sourceKey(player);
+  if (!player || !overrides[key] || !Object.prototype.hasOwnProperty.call(overrides[key], "player")) return false;
+  delete overrides[key].player;
   storage.set("nflz-player-overrides", overrides);
   state.players = applyOverrides(state.data.players);
   pffPlayerMatchIndexCache = null;
+  state.selectedPlayerKey = key;
+  return true;
+}
+
+function deletePlayer(player) {
+  const key = sourceKey(player);
+  const addedIndex = addedPlayers.findIndex((entry) => playerKey(entry) === key || sourceKey(entry) === key);
+  if (addedIndex >= 0) {
+    addedPlayers.splice(addedIndex, 1);
+    saveAddedPlayers();
+  }
+  overrides[key] = { ...(overrides[key] || {}), deleted: true };
+  storage.set("nflz-player-overrides", overrides);
+  delete maddenRecentAdjustments[key];
+  delete pffRecentAdjustments[key];
+  storage.set("nflz-madden-recent-adjustments", maddenRecentAdjustments);
+  storage.set("nflz-pff-recent-adjustments", pffRecentAdjustments);
+  state.selectedPlayerKey = null;
+  state.players = applyOverrides(state.data.players);
+  pffPlayerMatchIndexCache = null;
+}
+
+function playerDepthLock(player) {
+  const value = Number(player?.depthLock);
+  return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 0;
+}
+
+function assignDepthSlots(players = []) {
+  const nextPlayers = players.map((player) => ({ ...player }));
+  const groups = new Map();
+  nextPlayers.forEach((player) => {
+    if (!player) return;
+    if (normalizeTeamName(player.team) === "Free Agent") {
+      player.depth = 0;
+      return;
+    }
+    if (!isPlayerAvailable(player)) return;
+    if (!Number.isFinite(Number(player.rating))) return;
+    const key = `${normalizeTeamName(player.team)}__${String(player.position || "").toUpperCase()}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(player);
+  });
+  groups.forEach((group) => {
+    const occupied = new Set();
+    const sortByRating = (a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
+    const locked = group.filter(playerDepthLock).sort((a, b) => playerDepthLock(a) - playerDepthLock(b) || sortByRating(a, b));
+    const unlocked = group.filter((player) => !playerDepthLock(player)).sort(sortByRating);
+    locked.forEach((player) => {
+      let slot = playerDepthLock(player);
+      while (occupied.has(slot)) slot += 1;
+      player.depth = slot;
+      occupied.add(slot);
+    });
+    let slot = 1;
+    unlocked.forEach((player) => {
+      while (occupied.has(slot)) slot += 1;
+      player.depth = slot;
+      occupied.add(slot);
+    });
+  });
+  return nextPlayers;
+}
+
+function lockPlayerDepth(player, depth) {
+  const slot = Math.max(1, Math.min(99, Math.floor(num(depth, 0))));
+  if (!player || !slot) return false;
+  persistPlayer(player, { depthLock: slot, depth: slot });
+  return true;
+}
+
+function unlockPlayerDepth(player) {
+  if (!player) return false;
+  const key = sourceKey(player);
+  if (!overrides[key]) return false;
+  delete overrides[key].depthLock;
+  storage.set("nflz-player-overrides", overrides);
+  state.players = applyOverrides(state.data.players);
+  pffPlayerMatchIndexCache = null;
+  return true;
+}
+
+function promptDepthLock(key) {
+  const player = findPlayer(key);
+  if (!player || normalizeTeamName(player.team) === "Free Agent" || playerUnavailableLabel(player)) return;
+  const current = playerDepthLock(player) || num(player.depth, 1);
+  const value = window.prompt(`Lock ${player.player} into a depth spot. Leave blank to unlock.`, String(current));
+  if (value === null) return;
+  if (!String(value).trim()) {
+    unlockPlayerDepth(player);
+    render();
+    return;
+  }
+  const slot = Number(value);
+  if (!Number.isFinite(slot) || slot < 1) {
+    window.alert("Enter a depth spot of 1 or higher.");
+    return;
+  }
+  lockPlayerDepth(player, slot);
+  render();
+}
+
+function inferRatingChangeType(patch = {}) {
+  if (patch.thumb) return "Nudge";
+  return "Manual adjustment";
+}
+
+function recordRatingHistory(key, player, oldRating, newRating, type = "Manual adjustment", note = "") {
+  overrides.__ratingHistory = overrides.__ratingHistory || {};
+  const entry = {
+    type,
+    note,
+    player: player.player,
+    team: player.team,
+    position: player.position,
+    oldRating,
+    newRating,
+    delta: newRating - oldRating,
+    at: new Date().toISOString(),
+  };
+  overrides.__ratingHistory[key] = [entry, ...(overrides.__ratingHistory[key] || [])].slice(0, 40);
+}
+
+function setRatingHistoryStart(at = new Date().toISOString()) {
+  storage.set("nflz-rating-history-start-at", at);
+}
+
+function isAfterRatingHistoryStart(item) {
+  const startAt = storage.get("nflz-rating-history-start-at", "");
+  if (!startAt || !item?.at) return true;
+  return String(item.at) >= String(startAt);
+}
+
+function ratingHistoryFor(player) {
+  const key = sourceKey(player);
+  const saved = overrides.__ratingHistory?.[key] || [];
+  const recent = [];
+  if (maddenRecentAdjustments[key]) {
+    const item = maddenRecentAdjustments[key];
+    recent.push({
+      type: "Manual adjustment",
+      note: item.maddenPlayer ? `Madden ${item.maddenPlayer} ${item.maddenOvr || ""}`.trim() : "Madden comparison",
+      oldRating: item.oldRating,
+      newRating: item.newRating,
+      delta: num(item.newRating) - num(item.oldRating),
+      at: item.adjustedAt,
+    });
+  }
+  if (pffRecentAdjustments[key]) {
+    const item = pffRecentAdjustments[key];
+    recent.push({
+      type: "PFF import",
+      note: item.pffRank ? `PFF #${item.pffRank}${item.pffTotal ? `/${item.pffTotal}` : ""}` : "PFF suggestion",
+      oldRating: item.oldRating,
+      newRating: item.newRating,
+      delta: num(item.newRating) - num(item.oldRating),
+      at: item.adjustedAt,
+    });
+  }
+  const seen = new Set();
+  return [...saved, ...recent]
+    .filter(isAfterRatingHistoryStart)
+    .filter((item) => {
+      const id = `${item.type}|${item.oldRating}|${item.newRating}|${item.at}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .sort((a, b) => String(b.at || "").localeCompare(String(a.at || "")));
 }
 
 function rememberPlayer(player) {
@@ -589,7 +924,7 @@ function undoNudge(player) {
   const key = sourceKey(player);
   const previous = overrides.__history?.[key];
   if (!previous) return;
-  persistPlayer(player, { ...previous, thumb: "" });
+  persistPlayer(player, { ...previous, thumb: "", ratingChangeType: "Nudge undo" });
   delete overrides.__history[key];
   storage.set("nflz-player-overrides", overrides);
 }
@@ -632,6 +967,15 @@ function weekSortValue(week) {
   const text = String(week || "");
   if (text.startsWith("Pre")) return Number(text.replace("Pre", "")) - 10;
   return num(text, 999);
+}
+
+function injuryWeekSortValue(week) {
+  const text = String(week || "").trim();
+  if (!text) return Infinity;
+  if (/^Pre\d+$/i.test(text)) return Number(text.replace(/Pre/i, "")) - 10;
+  const playoffOrder = { WC: 19, DIV: 20, ACC: 21, NCC: 21, SB: 22 };
+  const upper = text.toUpperCase();
+  return playoffOrder[upper] ?? num(text, Infinity);
 }
 
 function scheduleWeekGroupKey(week) {
@@ -1028,6 +1372,17 @@ function teamByName(name) {
     || null;
 }
 
+function teamAbbrevFor(name, fallback = name || "") {
+  const team = teamByName(name);
+  const canonical = normalizeTeamName(name);
+  return team?.teamAbbrev
+    || state.data?.meta?.teamAbbrevs?.[canonical]
+    || state.data?.meta?.teamAbbrevs?.[name]
+    || pffTeamAbbrevMap[canonical]
+    || pffTeamAbbrevMap[name]
+    || fallback;
+}
+
 function teamCellByName(name) {
   const team = teamByName(name) || { team: name, teamAbbrev: name };
   return teamCell(team);
@@ -1043,8 +1398,8 @@ function teamStatRanksByName(name) {
   return (window.TEAM_RANKINGS_SCAN?.teams || []).find((team) => normalizeTeamName(team.team) === canonical) || null;
 }
 
-const depthPositionOrder = ["QB", "HB", "RB", "WR", "SWR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "DT", "EDGE", "LEDG", "REDG", "DE", "LB", "MIKE", "MLB", "WILL", "SAM", "CB", "S", "FS", "SS"];
-const depthOffensePositions = new Set(["QB", "HB", "RB", "WR", "SWR", "TE", "LT", "LG", "C", "RG", "RT"]);
+const depthPositionOrder = ["QB", "HB", "RB", "WR", "SWR", "TE", "LT", "LG", "C", "RG", "RT", "OT", "OG", "IDL", "DT", "LDT", "RDT", "EDGE", "LEDG", "REDG", "DE", "LB", "MIKE", "MLB", "WILL", "SAM", "CB", "S", "FS", "SS"];
+const depthOffensePositions = new Set(["QB", "HB", "RB", "WR", "SWR", "TE", "LT", "LG", "C", "RG", "RT", "OT", "OG"]);
 
 function depthPositionRank(pos) {
   const normalized = String(pos || "").toUpperCase();
@@ -1070,6 +1425,12 @@ function ratingBadge(value) {
   return `<span class="rating-fill" style="--pct:${pct}%; --rating-bg:${ratingScaleColor(value, 68, 100)}"><span>${fmt(value, 0)}</span></span>`;
 }
 
+function pffPositionSlug(pos) {
+  const group = groupPosition(pos);
+  const map = { QB: "qb", RB: "hb", WR: "wr", TE: "te", OT: "t", OG: "g", C: "c", IDL: "di", EDGE: "ed", LB: "lb", CB: "cb", S: "s" };
+  return map[group] || String(group || "").toLowerCase();
+}
+
 function depthBadge(value) {
   if (String(value || "").toUpperCase() === "INJ" || String(value || "").toUpperCase() === "SUS") {
     const label = String(value).toUpperCase();
@@ -1080,18 +1441,48 @@ function depthBadge(value) {
   return `<span class="depth-badge ${cls}">${fmt(value, 0)}</span>`;
 }
 
+function depthLockControl(player, displayDepth) {
+  const unavailable = playerUnavailableLabel(player);
+  if (unavailable || normalizeTeamName(player?.team) === "Free Agent") return depthBadge(displayDepth);
+  const locked = playerDepthLock(player);
+  return `<button class="depth-lock-button ${locked ? "locked" : ""}" data-depth-lock-key="${esc(sourceKey(player))}" title="${locked ? `Locked into ${player.position}${locked}. Click to edit or unlock.` : "Click to lock this depth spot."}">${depthBadge(displayDepth)}${locked ? `<span class="depth-lock-glyph" aria-label="Locked"></span>` : ""}</button>`;
+}
+
 function injuryStatusText(player) {
   return String(player?.injury || "Healthy").trim();
 }
 
-function playerUnavailableLabel(player) {
+function playerUnavailableLabel(player, week = selectedSiteWeek()) {
   const status = injuryStatusText(player);
   if (!status || /^healthy$/i.test(status)) return "";
-  return /suspended/i.test(status) ? "SUS" : "INJ";
+  const label = /suspended/i.test(status) ? "SUS" : "INJ";
+  if (/out\s+for\s+season/i.test(status)) return label;
+  if (/ir\s+thru|out\s+thru|\*?likely\*?\s+out\s+thru|suspended\s+thru/i.test(status)) {
+    const current = injuryWeekSortValue(week);
+    const thru = injuryWeekSortValue(player?.week);
+    if (!Number.isFinite(thru)) return label;
+    return Number.isFinite(current) && current <= thru ? label : "";
+  }
+  return label;
 }
 
-function isPlayerAvailable(player) {
-  return !playerUnavailableLabel(player);
+function isPlayerAvailable(player, week = selectedSiteWeek()) {
+  return !playerUnavailableLabel(player, week);
+}
+
+function injuryStatusNeedsReturnReview(player) {
+  const status = injuryStatusText(player);
+  if (!/ir\s+thru|out\s+thru|\*?likely\*?\s+out\s+thru/i.test(status)) return false;
+  const current = injuryWeekSortValue(selectedSiteWeek());
+  const returnThrough = injuryWeekSortValue(player?.week);
+  return Number.isFinite(current) && Number.isFinite(returnThrough) && current > returnThrough;
+}
+
+function injuryReviewDuePlayers() {
+  return state.players
+    .filter((player) => normalizeTeamName(player.team) !== "Free Agent")
+    .filter(injuryStatusNeedsReturnReview)
+    .sort((a, b) => injuryWeekSortValue(a.week) - injuryWeekSortValue(b.week) || String(a.team).localeCompare(b.team) || String(a.player).localeCompare(b.player));
 }
 
 function starsMeter(player) {
@@ -1109,6 +1500,7 @@ function nudgeControls(player) {
 
 const ourladsUrl = "https://www.ourlads.com/nfldepthcharts/depthcharts.aspx";
 const ourladsProxyUrl = "/api/ourlads-depth";
+const ourladsCheckScanUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/ourlads-check-scan" : "/api/ourlads-check-scan";
 const externalTeamNames = {
   "Los Angeles Chargers": "LA Chargers",
   "Los Angeles Rams": "LA Rams",
@@ -1233,11 +1625,11 @@ function depthCheckResolvedKey(item) {
   ].join("__");
 }
 
-function markDepthCheckResolved(item) {
+function markDepthCheckResolved(item, shouldSave = true) {
   const key = depthCheckResolvedKey(item);
   if (!key) return;
   depthResolvedResults[key] = true;
-  storage.set("nflz-depth-resolved-results", depthResolvedResults);
+  if (shouldSave) storage.set("nflz-depth-resolved-results", depthResolvedResults);
 }
 
 function resetDepthNameMatchCache() {
@@ -1384,6 +1776,72 @@ function buildDepthCheckResults(ourladsPlayers) {
   }).filter(Boolean);
 }
 
+function repairStaleOurLadsFreeAgentOverrides(data) {
+  if (!data?.players?.length) return 0;
+  let ourladsPlayers = new Map();
+  if (window.OURLADS_DEPTH_HTML) try {
+    ourladsPlayers = parseOurladsDepthChart(window.OURLADS_DEPTH_HTML);
+  } catch {}
+  const generatedRows = window.OURLADS_DEPTH_CHECK?.results || [];
+  const hasGeneratedRows = generatedRows.length > 100;
+  let fixed = 0;
+  (data.players || []).forEach((basePlayer) => {
+    const key = playerKey(basePlayer);
+    const patch = overrides[key];
+    if (!patch || normalizeTeamName(patch.team) !== "Free Agent") return;
+    if (!isIncludedPlayer(basePlayer)) return;
+    const currentTeams = [...(ourladsPlayers.get(cleanPlayerName(basePlayer.player)) || [])].map(normalizeTeamName);
+    const parsedSaysOriginalTeam = currentTeams.includes(normalizeTeamName(basePlayer.team));
+    const generatedStillFlagsPlayer = hasGeneratedRows && generatedRows.some((row) => (
+      ["free-agent", "move", "duplicate"].includes(row.kind)
+      && cleanPlayerName(row.player) === cleanPlayerName(basePlayer.player)
+      && normalizeTeamName(row.fromTeam) === normalizeTeamName(basePlayer.team)
+    ));
+    if (!parsedSaysOriginalTeam && (!hasGeneratedRows || generatedStillFlagsPlayer)) return;
+    delete patch.team;
+    delete patch.teamAbbrev;
+    fixed += 1;
+    if (!Object.keys(patch).length) delete overrides[key];
+  });
+  if (fixed) storage.set("nflz-player-overrides", overrides);
+  return fixed;
+}
+
+function repairKnownRosterExceptions(data) {
+  const known = [
+    { player: "Nate Landman", team: "LA Rams", teamAbbrev: "LAR", position: "LB" },
+    { player: "Omar Speights", team: "LA Rams", teamAbbrev: "LAR", position: "LB" },
+    { player: "Grant Stuard", team: "LA Rams", teamAbbrev: "LAR", position: "LB" },
+    { player: "Shaun Dolac", team: "LA Rams", teamAbbrev: "LAR", position: "LB" },
+  ];
+  let fixed = 0;
+  known.forEach((expected) => {
+    const base = (data?.players || []).find((player) => (
+      cleanPlayerName(player.player) === cleanPlayerName(expected.player)
+      && normalizeTeamName(player.team) === normalizeTeamName(expected.team)
+    ));
+    if (!base) return;
+    const key = playerKey(base);
+    const patch = overrides[key];
+    if (!patch) return;
+    const wronglyDeleted = patch.deleted === true;
+    const wrongTeam = Object.prototype.hasOwnProperty.call(patch, "team") && normalizeTeamName(patch.team) !== normalizeTeamName(expected.team);
+    const wrongPosition = Object.prototype.hasOwnProperty.call(patch, "position") && String(patch.position || "").toUpperCase() !== expected.position;
+    if (!wronglyDeleted && !wrongTeam && !wrongPosition) return;
+    delete patch.deleted;
+    delete patch.team;
+    delete patch.teamAbbrev;
+    delete patch.position;
+    delete patch.rawPosition;
+    delete patch.depth;
+    delete patch.depthLock;
+    fixed += 1;
+    if (!Object.keys(patch).length) delete overrides[key];
+  });
+  if (fixed) storage.set("nflz-player-overrides", overrides);
+  return fixed;
+}
+
 function unresolvedDepthCheckResults(results) {
   const playerByKey = new Map();
   const playerByNameTeamPos = new Map();
@@ -1464,17 +1922,25 @@ async function runDepthChartCheck() {
   state.depthCheck = { status: "checking", results: [], error: "Connecting to OurLads", source: "live" };
   render();
   try {
-    if (window.OURLADS_DEPTH_CHECK?.results?.length) {
-      state.depthCheck = {
-        status: "review",
-        results: unresolvedDepthCheckResults(window.OURLADS_DEPTH_CHECK.results),
-        error: "",
-        source: "codex",
-        fetchedAt: window.OURLADS_DEPTH_CHECK.fetchedAt,
-      };
-      bumpDepthCheckVersion();
+    if (location.protocol !== "file:") {
+      state.depthCheck = { status: "checking", results: [], error: "Running local OurLads scan helper", source: "live" };
       render();
-      return;
+      const scanResponse = await fetch(ourladsCheckScanUrl, { cache: "no-store" });
+      if (scanResponse.ok) {
+        const payload = await scanResponse.json();
+        window.OURLADS_DEPTH_CHECK = payload;
+        state.depthCheck = {
+          status: "review",
+          results: unresolvedDepthCheckResults(payload.results || []),
+          error: "",
+          source: "live",
+          fetchedAt: payload.fetchedAt,
+        };
+        state.depthCheckNotice = `Updated live OurLads scan from ${payload.fetchedAt || "the local scan helper"}.`;
+        bumpDepthCheckVersion();
+        render();
+        return;
+      }
     }
     let text = "";
     if (location.protocol === "file:" && window.OURLADS_DEPTH_HTML) {
@@ -1494,6 +1960,19 @@ async function runDepthChartCheck() {
     state.depthCheck = { status: "review", results: unresolvedDepthCheckResults(buildDepthCheckResults(parsed)), error: "", source: location.protocol === "file:" ? "cache" : "live" };
     bumpDepthCheckVersion();
   } catch (error) {
+    if (window.OURLADS_DEPTH_CHECK?.results?.length) {
+      state.depthCheck = {
+        status: "review",
+        results: unresolvedDepthCheckResults(window.OURLADS_DEPTH_CHECK.results),
+        error: "",
+        source: "codex",
+        fetchedAt: window.OURLADS_DEPTH_CHECK.fetchedAt,
+      };
+      state.depthCheckNotice = `Live OurLads scan was blocked, so I loaded the generated scan from ${window.OURLADS_DEPTH_CHECK.fetchedAt || "the bundled file"}. Run refresh-ourlads-check.bat to update it.`;
+      bumpDepthCheckVersion();
+      render();
+      return;
+    }
     const fileHint = location.protocol === "file:" ? " File-opened pages cannot scan the internet directly; use the cached OurLads file, refresh it with refresh-ourlads-cache.bat, or open the local server URL." : "";
     state.depthCheck = { status: "paste", results: [], error: `The browser blocked the live scan.${fileHint} Open OurLads, select the page, copy it, then paste it here.`, source: "paste" };
   }
@@ -1536,7 +2015,7 @@ function findDuplicateDepthCheckPlayers(item) {
   return state.players.filter((player) => cleanPlayerName(baseReviewPlayerName(player.player)) === baseName);
 }
 
-function applyDepthCheckResult(index, overrideTeam = "", shouldRender = true) {
+function applyDepthCheckResult(index, overrideTeam = "", shouldRender = true, options = {}) {
   const item = state.depthCheck.results[index];
   if (!item || item.ignored) return;
   const toTeam = overrideTeam || item.toTeam;
@@ -1550,12 +2029,13 @@ function applyDepthCheckResult(index, overrideTeam = "", shouldRender = true) {
   const patch = toTeam === "Free Agent"
     ? { team: "Free Agent", teamAbbrev: "FA" }
     : { team: toTeam, teamAbbrev: state.data.meta.teamAbbrevs[toTeam] || toTeam };
-  if (toTeam === "Free Agent") Object.assign(patch, applyThumbMath(player, "down", 2));
-  persistPlayer(player, patch);
+  if (toTeam === "Free Agent") Object.assign(patch, applyThumbMath(player, "down", 2), { ratingChangeType: "Nudge", ratingChangeNote: "Moved to Free Agent" });
+  const deferRefresh = Boolean(options.deferRefresh);
+  persistPlayer(player, patch, { deferRefresh });
   item.applied = true;
   item.appliedTo = toTeam;
-  markDepthCheckResolved(item);
-  state.players = applyOverrides(state.data.players);
+  markDepthCheckResolved(item, !deferRefresh);
+  if (!deferRefresh) state.players = applyOverrides(state.data.players);
   if (shouldRender) {
     bumpDepthCheckVersion();
     render();
@@ -1595,32 +2075,71 @@ function pendingDepthActivityRows(activity = state.depthCheckActivity) {
     .filter((row) => activity === "All Activities" || row.activity === activity);
 }
 
-function applyDepthCheckActivity(activity = state.depthCheckActivity) {
+function safeDepthCheckRows(rows = pendingDepthActivityRows("All Activities")) {
+  return rows.filter(({ item }) => item.kind === "move" || (item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length));
+}
+
+const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+async function applyDepthCheckActivity(activity = state.depthCheckActivity) {
   const rows = pendingDepthActivityRows(activity);
-  if (activity === "All Activities") {
-    rows.forEach(({ item, index }) => {
-      if (item.kind === "move" || (item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length)) applyDepthCheckResult(index, "", false);
-    });
+  const applyBatch = async (workRows, worker, label) => {
+    let applied = 0;
+    const total = workRows.length;
+    const chunkSize = 20;
+    if (!total) {
+      state.depthCheckNotice = `${label}: nothing automatically applicable in this view.`;
+      render();
+      return;
+    }
+    state.depthCheckNotice = `${label}: 0 of ${total}`;
+    render();
+    for (let start = 0; start < workRows.length; start += chunkSize) {
+      workRows.slice(start, start + chunkSize).forEach(({ item, index }) => {
+        if (worker(item, index)) applied += 1;
+      });
+      storage.set("nflz-player-overrides", overrides);
+      storage.set("nflz-depth-resolved-results", depthResolvedResults);
+      state.players = applyOverrides(state.data.players);
+      pffPlayerMatchIndexCache = null;
+      state.depthCheckNotice = `${label}: ${Math.min(start + chunkSize, total)} of ${total}`;
+      render();
+      await yieldToBrowser();
+    }
     state.depthCheck.results = unresolvedDepthCheckResults(state.depthCheck.results);
+    state.depthCheckNotice = `${label}: applied ${applied} change${applied === 1 ? "" : "s"}.`;
     bumpDepthCheckVersion();
     render();
+  };
+  if (activity === "All Activities") {
+    await applyBatch(safeDepthCheckRows(rows), (item, index) => {
+      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      return true;
+    }, "Applying safe depth chart changes");
     return;
   }
   if (activity === "Missing Player") {
     addAllMissingDepthCheckPlayers();
     return;
   }
-  rows.forEach(({ item, index }) => {
-    if (activity === "Team Changed" && item.kind === "move") applyDepthCheckResult(index, "", false);
-    if (activity === "Free Agent" && item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length) applyDepthCheckResult(index, "", false);
+  await applyBatch(rows, (item, index) => {
+    if (activity === "Team Changed" && item.kind === "move") {
+      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      return true;
+    }
+    if (activity === "Free Agent" && item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length) {
+      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      return true;
+    }
     if (activity === "Name Match Suggested" && item.kind === "free-agent") {
       const matches = freeAgentNameMatchCandidates(item);
-      if (matches.length === 1) applyDepthCheckNameMatch(index, matches[0].player, matches[0].toTeam || "", false);
+      if (matches.length === 1) {
+        applyDepthCheckNameMatch(index, matches[0].player, matches[0].toTeam || "", false, { deferRefresh: true });
+        return true;
+      }
     }
-  });
-  state.depthCheck.results = unresolvedDepthCheckResults(state.depthCheck.results);
-  bumpDepthCheckVersion();
-  render();
+    return false;
+  }, `Applying ${activity}`);
 }
 
 function depthCheckRowKey(item, index) {
@@ -1713,9 +2232,10 @@ function freeAgentNameMatchCandidates(item) {
   return matches;
 }
 
-function applyDepthCheckNameMatch(freeAgentIndex, matchName, matchTeam, shouldRender = true) {
+function applyDepthCheckNameMatch(freeAgentIndex, matchName, matchTeam, shouldRender = true, options = {}) {
   const item = state.depthCheck.results[freeAgentIndex];
   if (!item || item.kind !== "free-agent" || !matchName) return;
+  const deferRefresh = Boolean(options.deferRefresh);
   const player = findDepthCheckPlayer(item);
   if (!player) {
     const existingMatch = state.players.find((entry) => {
@@ -1725,12 +2245,12 @@ function applyDepthCheckNameMatch(freeAgentIndex, matchName, matchTeam, shouldRe
     if (existingMatch) {
       item.applied = true;
       item.appliedTo = `already renamed to ${matchName}`;
-      markDepthCheckResolved(item);
+      markDepthCheckResolved(item, !deferRefresh);
       (state.depthCheck.results || []).forEach((candidate) => {
         if (candidate.kind === "missing-player" && cleanPlayerName(candidate.player) === cleanPlayerName(matchName) && (!matchTeam || candidate.toTeam === matchTeam)) {
           candidate.applied = true;
           candidate.appliedTo = "matched existing player";
-          markDepthCheckResolved(candidate);
+          markDepthCheckResolved(candidate, !deferRefresh);
         }
       });
       state.depthCheckNotice = `${baseReviewPlayerName(matchName)} is already in your players, so I marked that scan item resolved.`;
@@ -1750,19 +2270,19 @@ function applyDepthCheckNameMatch(freeAgentIndex, matchName, matchTeam, shouldRe
     patch.team = matchTeam;
     patch.teamAbbrev = state.data.meta.teamAbbrevs[matchTeam] || matchTeam;
   }
-  persistPlayer(player, patch);
+  persistPlayer(player, patch, { deferRefresh });
   item.applied = true;
   item.appliedTo = `renamed to ${matchName}`;
-  markDepthCheckResolved(item);
+  markDepthCheckResolved(item, !deferRefresh);
   state.depthCheckNotice = `Applied name change for ${baseReviewPlayerName(matchName)}.`;
   (state.depthCheck.results || []).forEach((candidate) => {
     if (candidate.kind === "missing-player" && cleanPlayerName(candidate.player) === cleanPlayerName(matchName) && candidate.toTeam === matchTeam) {
       candidate.applied = true;
       candidate.appliedTo = "matched existing player";
-      markDepthCheckResolved(candidate);
+      markDepthCheckResolved(candidate, !deferRefresh);
     }
   });
-  state.players = applyOverrides(state.data.players);
+  if (!deferRefresh) state.players = applyOverrides(state.data.players);
   if (shouldRender) {
     state.depthCheck.results = unresolvedDepthCheckResults(state.depthCheck.results);
     bumpDepthCheckVersion();
@@ -1938,17 +2458,110 @@ async function runDepthAndInjuryChecks() {
   runInjuryCheck();
 }
 
-function applyInjuryCheckResult(index) {
+function injuryCheckCategory(item) {
+  if (injuryCheckAlreadyPlaced(item)) return "Already Placed";
+  const status = String(effectiveInjurySuggestedStatus(item) || item?.espnTag || "").toLowerCase();
+  const comment = String(item?.espnComment || "").toLowerCase();
+  const text = `${status} ${comment}`;
+  if (injuryTextMeansSeasonEnding(text)) return "Out for Season";
+  if (injuryTextMeansReserveList(text)) return "Injured Reserve";
+  if (/likely/.test(text) && /out/.test(text)) return "Likely Out";
+  if (/out\s+thru|out\s+through|\bout\b/.test(text)) return "Out Thru";
+  if (/suspend/.test(text)) return "Suspended";
+  return "Other";
+}
+
+function injuryCheckCategoryOptions() {
+  const counts = {};
+  (state.injuryCheck.results || []).forEach((item) => {
+    if (item.applied || item.ignored) return;
+    const category = injuryCheckCategory(item);
+    counts[category] = (counts[category] || 0) + 1;
+  });
+  const visibleTotal = Object.entries(counts).reduce((sum, [category, value]) => sum + (category === "Already Placed" ? 0 : value), 0);
+  const ordered = ["All Categories", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Suspended", "Other", "Already Placed"];
+  return ordered
+    .filter((category) => category === "All Categories" || counts[category])
+    .map((category) => [category, category === "All Categories" ? `All Categories (${visibleTotal})` : `${category} (${counts[category]})`]);
+}
+
+function filteredInjuryCheckRows() {
+  return (state.injuryCheck.results || [])
+    .map((item, index) => ({ item, index, category: injuryCheckCategory(item) }))
+    .filter((row) => state.injuryCheckActivity === "Already Placed" || row.category !== "Already Placed")
+    .filter((row) => state.injuryCheckActivity === "All Categories" || row.category === state.injuryCheckActivity);
+}
+
+function injuryCheckAlreadyPlaced(item) {
+  const player = findInjuryCheckPlayer(item);
+  if (!player) return false;
+  const status = injuryStatusText(player);
+  if (!status || /^healthy$/i.test(status)) return false;
+  return !injuryStatusNeedsReturnReview(player);
+}
+
+function injuryTextMeansSeasonEnding(text) {
+  return /out\s+for\s+season|season-ending|season ending|will miss (?:the )?2026 (?:campaign|season)|miss (?:the )?(?:entire|rest of)(?: the)? (?:2026 )?(?:campaign|season)|expected to miss (?:the )?entire (?:2026 )?(?:campaign|season)/i.test(text || "");
+}
+
+function injuryTextMeansActivePupNfi(text) {
+  return /active\/pup|active-pup|active pup|active\/physically unable|active physically unable|active\/nfi|active-nfi|active nfi|active\/non-football|active non-football/i.test(text || "");
+}
+
+function injuryTextMeansHealthy(text) {
+  const value = String(text || "").toLowerCase();
+  if (/returned|return(ed)? to practice|full participant|cleared/.test(value)) return true;
+  if (/did not practice|not practicing|won't practice|will not practice|miss(?:ed|es|ing)? practice|held out|unable to practice|limited participant|limited practice/.test(value)) return false;
+  return /participat(?:ed|es|ing)? in (?:training camp|practice)|practic(?:ed|es|ing) (?:today|this week|during camp|at camp|in training camp)/.test(value);
+}
+
+function injuryTextMeansCampRampUp(text) {
+  return /not (?:yet )?(?:doing|participating in) full-team drills|isn'?t (?:yet )?doing full-team drills|no full-team drills|individual drills|ramp(?:ing)? up|working (?:his|her|their) way back/i.test(text || "");
+}
+
+function injuryTextMeansReserveList(text) {
+  const value = String(text || "");
+  if (injuryTextMeansActivePupNfi(value)) return false;
+  return /\bir\b|injured reserve|reserve\/pup|reserve-pup|reserve pup|reserve\/physically unable|reserve physically unable|reserve\/nfi|reserve-nfi|reserve nfi|reserve\/non-football|reserve non-football/.test(value);
+}
+
+function effectiveInjurySuggestedStatus(item) {
+  const status = String(item?.suggestedStatus || "").trim();
+  const tag = String(item?.espnTag || "").toLowerCase();
+  const comment = String(item?.espnComment || "").toLowerCase();
+  const text = `${tag} ${comment}`;
+  if (injuryTextMeansHealthy(text)) return "Healthy";
+  if (/questionable|doubtful/.test(tag) && !comment.trim()) return "Healthy";
+  if (injuryTextMeansSeasonEnding(text)) return "OUT for Season";
+  if (injuryTextMeansActivePupNfi(text)) return "OUT thru Week ___";
+  if (injuryTextMeansReserveList(text)) return "IR Thru Week ___";
+  return status || "Healthy";
+}
+
+function effectiveInjurySuggestedWeek(item) {
+  const status = effectiveInjurySuggestedStatus(item);
+  const tag = String(item?.espnTag || "").toLowerCase();
+  const comment = String(item?.espnComment || "").toLowerCase();
+  const text = `${tag} ${comment}`;
+  if (/^healthy$|out\s+for\s+season/i.test(status)) return "";
+  if (injuryTextMeansActivePupNfi(text)) return "Pre3";
+  if (injuryTextMeansCampRampUp(text) && String(selectedSiteWeek()).startsWith("Pre")) return "Pre3";
+  if (/out\s+thru|likely.*out\s+thru|suspended\s+thru/i.test(status) && String(selectedSiteWeek()).startsWith("Pre")) return currentInjuryReviewWeek();
+  return item?.suggestedWeek || defaultInjuryWeekForStatus(status);
+}
+
+function applyInjuryCheckResult(index, options = {}) {
   const item = state.injuryCheck.results[index];
   if (!item || item.ignored) return;
   const player = findInjuryCheckPlayer(item);
   if (!player) return;
-  const status = document.querySelector(`[data-injury-status-index="${index}"]`)?.value || item.suggestedStatus || "Healthy";
-  const week = document.querySelector(`[data-injury-week-index="${index}"]`)?.value || item.suggestedWeek || "";
-  persistPlayer(player, { injury: status, week });
+  const status = document.querySelector(`[data-injury-status-index="${index}"]`)?.value || effectiveInjurySuggestedStatus(item) || "Healthy";
+  const week = document.querySelector(`[data-injury-week-index="${index}"]`)?.value || effectiveInjurySuggestedWeek(item) || "";
+  const patch = injuryPatchForStatus(status, week);
+  persistPlayer(player, patch, { deferRefresh: options.skipRender });
   item.applied = true;
-  item.appliedTo = `${status}${week ? ` / ${week}` : ""}`;
-  render();
+  item.appliedTo = `${status}${patch.week ? ` / ${patch.week}` : ""}`;
+  if (!options.skipRender) render();
 }
 
 function ignoreInjuryCheckResult(index) {
@@ -1958,26 +2571,91 @@ function ignoreInjuryCheckResult(index) {
   render();
 }
 
+async function applyShownInjuryCheckResults() {
+  const rows = filteredInjuryCheckRows()
+    .filter(({ item, category }) => category !== "Already Placed" && !item.applied && !item.ignored);
+  for (let i = 0; i < rows.length; i += 25) {
+    rows.slice(i, i + 25).forEach(({ index }) => applyInjuryCheckResult(index, { skipRender: true }));
+    await yieldToBrowser();
+  }
+  storage.set("nflz-player-overrides", overrides);
+  state.players = applyOverrides(state.data.players);
+  pffPlayerMatchIndexCache = null;
+  render();
+}
+
+function clearInjuryReviewDue(playerKeyValue) {
+  const player = findPlayer(playerKeyValue);
+  if (!player) return;
+  persistPlayer(player, { injury: "Healthy", week: "" });
+  render();
+}
+
+function keepInjuryReviewDue(playerKeyValue) {
+  const player = findPlayer(playerKeyValue);
+  if (!player) return;
+  const week = selectedSiteWeek();
+  persistPlayer(player, { week });
+  render();
+}
+
+function renderInjuryReviewDuePanel() {
+  const duePlayers = injuryReviewDuePlayers();
+  if (!duePlayers.length) return "";
+  const rows = duePlayers.map((player) => `
+    <tr>
+      <td>${playerNameButton(player)}</td>
+      <td>${teamCellByName(player.team)}</td>
+      <td><span class="review-chip">${esc(player.injury)}</span></td>
+      <td>${esc(player.week ? weekDisplay(player.week) : "-")}</td>
+      <td><span class="depth-review-actions"><button class="mini-action injury-review-clear primary" data-player-key="${esc(sourceKey(player))}">Mark Healthy</button><button class="mini-action injury-review-keep" data-player-key="${esc(sourceKey(player))}">Keep Injured</button></span></td>
+    </tr>
+  `).join("");
+  return `
+    <div class="injury-due-box">
+      <div>
+        <strong>${duePlayers.length} injury statuses need review</strong>
+        <span>Current site week is ${esc(siteWeekLabel())}. These players were marked through an earlier week.</span>
+      </div>
+      <div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Thru</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+  `;
+}
+
 function indexedInjuryStatusSelect(index, value) {
   return `<select class="injury-review-status" data-injury-status-index="${index}">${injuryStatuses.map((item) => `<option ${String(value || "Healthy") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
 }
 
-function indexedInjuryWeekSelect(index, value) {
-  return `<select class="injury-review-week" data-injury-week-index="${index}">${injuryWeeks.map((item) => `<option ${String(value || "") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
+function indexedInjuryWeekSelect(index, value, status = "") {
+  const selected = value || defaultInjuryWeekForStatus(status);
+  return `<select class="injury-review-week" data-injury-week-index="${index}">${injuryWeeks.map((item) => `<option ${String(selected || "") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
 }
 
 function renderInjuryCheckPanel() {
   const check = state.injuryCheck;
-  const rows = check.results.map((item, index) => `
-    <tr class="${item.applied ? "applied" : ""} ${item.ignored ? "ignored" : ""}">
-      <td>${playerNameButton(findInjuryCheckPlayer(item) || { player: item.player, team: item.team, position: item.position, _sourceKey: item.playerKey })}</td>
-      <td>${teamCellByName(item.team)}</td>
-      <td><span class="review-chip">${esc(item.espnTag)}</span><small>${esc(item.espnReturnDate || "")}</small></td>
-      <td><b>${esc(item.espnCommentDate || "No date")}</b><span>${esc(item.espnComment || "No ESPN comment.")}</span></td>
-      <td><span class="injury-review-controls">${indexedInjuryStatusSelect(index, item.suggestedStatus)}${indexedInjuryWeekSelect(index, item.suggestedWeek)}</span></td>
-      <td>${item.applied ? `<span class="applied-chip">Applied: ${esc(item.appliedTo || "")}</span>` : item.ignored ? "<span class='ignored-chip'>Ignored</span>" : `<span class="depth-review-actions"><button class="mini-action injury-apply-one" data-injury-check-index="${index}">Apply Revised</button><button class="mini-action injury-ignore-one" data-injury-check-index="${index}">Ignore</button></span>`}</td>
-    </tr>
-  `).join("");
+  const categoryOptions = injuryCheckCategoryOptions();
+  if (!categoryOptions.some((option) => option[0] === state.injuryCheckActivity)) state.injuryCheckActivity = "All Categories";
+  const rowItems = filteredInjuryCheckRows();
+  const pendingShown = rowItems.filter(({ item, category }) => category !== "Already Placed" && !item.applied && !item.ignored).length;
+  const rows = rowItems.map(({ item, index, category }) => {
+    const commentText = item.espnComment || "No ESPN comment.";
+    const commentDate = item.espnCommentDate || "";
+    const cleanedComment = commentDate
+      ? String(commentText).replace(new RegExp(`^\\s*${commentDate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:?\\s*`, "i"), "")
+      : commentText;
+    const tagTitle = [item.espnTag, item.espnReturnDate ? `Return: ${item.espnReturnDate}` : ""].filter(Boolean).join(" / ");
+    return `
+      <tr class="${item.applied ? "applied" : ""} ${item.ignored ? "ignored" : ""}">
+        <td>${playerNameButton(findInjuryCheckPlayer(item) || { player: item.player, team: item.team, position: item.position, _sourceKey: item.playerKey })}</td>
+        <td>${teamCellByName(item.team)}</td>
+        <td><span class="review-chip">${esc(category)}</span></td>
+        <td title="${esc(tagTitle)}"><span class="review-chip injury-tag-chip">${esc(item.espnTag)}</span>${item.espnReturnDate ? `<small>${esc(item.espnReturnDate)}</small>` : ""}</td>
+        <td class="injury-comment-cell" title="${esc(commentText)}">${commentDate ? `<b>${esc(commentDate)}</b>` : ""}<span>${esc(cleanedComment)}</span></td>
+        <td><span class="injury-review-controls">${indexedInjuryStatusSelect(index, effectiveInjurySuggestedStatus(item))}${indexedInjuryWeekSelect(index, effectiveInjurySuggestedWeek(item), effectiveInjurySuggestedStatus(item))}</span></td>
+        <td>${category === "Already Placed" ? `<span class="applied-chip">Already placed</span>` : item.applied ? `<span class="applied-chip">Applied: ${esc(item.appliedTo || "")}</span>` : item.ignored ? "<span class='ignored-chip'>Ignored</span>" : `<span class="depth-review-actions"><button class="mini-action injury-apply-one" data-injury-check-index="${index}">Apply Revised</button><button class="mini-action injury-ignore-one" data-injury-check-index="${index}">Ignore</button></span>`}</td>
+      </tr>
+    `;
+  }).join("");
   return `
     <section class="depth-check injury-check">
       <div class="depth-check-head">
@@ -1986,9 +2664,10 @@ function renderInjuryCheckPanel() {
           <p>Reviews ESPN injury tags and comments, then suggests your injury status and return week. Adjust the dropdowns before applying if needed.</p>
         </div>
       </div>
+      ${renderInjuryReviewDuePanel()}
       ${check.status === "checking" ? `<div class="depth-scan-progress"><div class="depth-scan-bar"><span></span></div><p>${esc(check.error || "Loading ESPN injury check")}</p></div>` : ""}
       ${check.status === "empty" ? `<p class="depth-check-note">${esc(check.error)}</p>` : ""}
-      ${check.status === "review" ? `<p class="depth-check-note">Showing ESPN injury scan from ${esc(check.fetchedAt || "latest refresh")}.</p><div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Suggested / Revise</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No ESPN injury matches found.</td></tr>'}</tbody></table></div>` : ""}
+      ${check.status === "review" ? `<p class="depth-check-note">Showing ESPN injury scan from ${esc(check.fetchedAt || "latest refresh")}. Players already marked injured are hidden from All Categories until their return-review week; use Already Placed to audit them.</p><div class="depth-check-controls">${optionSelect("injury-check-activity", state.injuryCheckActivity, categoryOptions)}${pendingShown ? `<button id="injury-check-apply-shown" class="mini-action primary">Apply ${state.injuryCheckActivity === "All Categories" ? "Shown Injuries" : esc(state.injuryCheckActivity)} (${pendingShown})</button>` : `<span class="depth-check-note">No pending injuries in this category.</span>`}</div><div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Category</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Suggested / Revise</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No ESPN injury matches found.</td></tr>'}</tbody></table></div>` : ""}
     </section>
   `;
 }
@@ -1998,12 +2677,14 @@ function renderDepthCheckPanel() {
   const activityOptions = depthCheckActivityOptions();
   if (!activityOptions.some((option) => Array.isArray(option) ? option[0] === state.depthCheckActivity : option === state.depthCheckActivity)) state.depthCheckActivity = "All Activities";
   const selectedActivityRows = pendingDepthActivityRows(state.depthCheckActivity);
-  const bulkCount = selectedActivityRows.filter(({ item, activity }) =>
-    activity === "Team Changed"
-    || activity === "Missing Player"
-    || (activity === "Name Match Suggested" && item.kind === "free-agent" && freeAgentNameMatchCandidates(item).length === 1)
-    || (activity === "Free Agent" && item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length)
-  ).length;
+  const bulkCount = state.depthCheckActivity === "All Activities"
+    ? safeDepthCheckRows(selectedActivityRows).length
+    : selectedActivityRows.filter(({ item, activity }) =>
+      activity === "Team Changed"
+      || activity === "Missing Player"
+      || (activity === "Name Match Suggested" && item.kind === "free-agent" && freeAgentNameMatchCandidates(item).length === 1)
+      || (activity === "Free Agent" && item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length)
+    ).length;
   const pendingMissing = (check.results || []).filter((item) => item.kind === "missing-player" && !item.applied && !item.ignored);
   const pendingMissingRoster = pendingMissing.filter((item) => item.toTeam !== "Free Agent").length;
   const pendingMissingFa = pendingMissing.length - pendingMissingRoster;
@@ -2083,7 +2764,7 @@ function renderDepthCheckPanel() {
       ${check.status === "review" && check.source === "codex" ? `<p class="depth-check-note">Showing Codex-generated OurLads scan from ${esc(check.fetchedAt || window.OURLADS_DEPTH_CHECK?.fetchedAt || "latest refresh")}.</p>` : ""}
       ${check.status === "review" && state.depthCheckNotice ? `<p class="depth-check-note depth-check-success">${esc(state.depthCheckNotice)}</p>` : ""}
       ${check.status === "paste" ? `<div class="paste-check"><p>${esc(check.error)}</p><textarea id="depth-check-paste" placeholder="Paste copied OurLads all-teams depth chart text or HTML here"></textarea><button id="depth-check-paste-run" class="mini-action primary">Review Pasted Chart</button></div>` : ""}
-      ${check.status === "review" ? `<div class="depth-check-controls">${optionSelect("depth-check-activity", state.depthCheckActivity, activityOptions)}${bulkCount ? `<button id="depth-check-apply-all" class="mini-action primary">Apply ${state.depthCheckActivity === "All Activities" ? "Safe Changes" : esc(state.depthCheckActivity)} (${bulkCount})</button>` : ""}</div>` : ""}
+      ${check.status === "review" ? `<div class="depth-check-controls">${optionSelect("depth-check-activity", state.depthCheckActivity, activityOptions)}${bulkCount ? `<button id="depth-check-apply-all" class="mini-action primary">Apply ${state.depthCheckActivity === "All Activities" ? "Safe Changes" : esc(state.depthCheckActivity)} (${bulkCount})</button>` : `<span class="depth-check-note">No automatic apply actions in this view.</span>`}</div>` : ""}
       ${check.status === "review" && (state.depthCheckActivity === "All Activities" || state.depthCheckActivity === "Missing Player") ? missingPreview : ""}
       ${check.status === "review" ? `<div class="table-scroll review-scroll"><table class="review-table depth-review-table"><thead><tr><th>Player</th><th>Current</th><th>OurLads</th><th>Activity</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No team-placement changes found.</td></tr>'}</tbody></table></div>${hasMoreRows ? `<div class="depth-check-more"><span>Showing ${visibleRows.length} of ${rowItems.length}</span><button id="depth-check-show-more" class="mini-action">Show More</button></div>` : ""}` : ""}
     </section>
@@ -2150,11 +2831,12 @@ function playerGroupForSchedule(player) {
   return pos;
 }
 
-function schedulePlayersFor(teamName, group) {
+function schedulePlayersFor(teamName, group, week = selectedSiteWeek()) {
   const exactPositions = new Set(["LT", "LG", "C", "RG", "RT"]);
+  const wantedTeam = normalizeScheduleTeam(teamName);
   return state.players
     .filter((player) => {
-      if (player.team !== teamName || !isPlayerAvailable(player) || !Number.isFinite(Number(player.rating))) return false;
+      if (normalizeScheduleTeam(player.team) !== wantedTeam || !isPlayerAvailable(player, week) || !Number.isFinite(Number(player.rating))) return false;
       if (exactPositions.has(group)) return player.position === group;
       return playerGroupForSchedule(player) === group;
     })
@@ -2167,62 +2849,99 @@ function weightedAverage(values) {
   return totalWeight ? rows.reduce((sum, item) => sum + (Number(item.value) * Number(item.weight)), 0) / totalWeight : "";
 }
 
-function preseasonPositionScore(teamName, group) {
+function preseasonPositionScore(teamName, group, week = selectedSiteWeek()) {
   const multipliers = state.preseasonDepthMultipliers[group] || defaultPreseasonDepthMultipliers[group] || [100];
   if (group === "OL") {
     const linePositions = ["LT", "LG", "C", "RG", "RT"];
     const values = linePositions.flatMap((position) => {
-      const players = schedulePlayersFor(teamName, position).slice(0, multipliers.length);
+      const players = schedulePlayersFor(teamName, position, week).slice(0, multipliers.length);
       return players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 }));
     });
     return weightedAverage(values);
   }
-  const players = schedulePlayersFor(teamName, group).slice(0, multipliers.length);
+  const players = schedulePlayersFor(teamName, group, week).slice(0, multipliers.length);
   return weightedAverage(players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 })));
 }
 
-function regularPositionScore(team, group) {
-  const map = {
-    QB: "QB",
-    RB: "RB",
-    WR: "WR",
-    TE: "TE",
-    OL: "OL",
-    IDL: "IDL",
-    EDGE: "EDGE Def",
-    LB: "LB Only",
-    CB: "CB",
-    S: "S",
-  };
-  return teamPositionScore(team, map[group] || group);
+function depthMultiplierPositionScore(teamName, group, multipliersByGroup, defaultByGroup, week = selectedSiteWeek()) {
+  const multipliers = multipliersByGroup[group] || defaultByGroup[group] || [100];
+  if (group === "OL") {
+    const linePositions = ["LT", "LG", "C", "RG", "RT"];
+    const values = linePositions.flatMap((position) => {
+      const players = schedulePlayersFor(teamName, position, week).slice(0, multipliers.length);
+      return players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 }));
+    });
+    return weightedAverage(values);
+  }
+  const players = schedulePlayersFor(teamName, group, week).slice(0, multipliers.length);
+  return weightedAverage(players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 })));
 }
 
-function schedulePositionScore(team, group, mode) {
-  if (!team) return "";
-  return mode === "preseason" ? preseasonPositionScore(team.team, group) : regularPositionScore(team, group);
+function regularPositionScore(team, group, week = selectedSiteWeek()) {
+  return depthMultiplierPositionScore(team.team, group, state.regularDepthMultipliers, defaultRegularDepthMultipliers, week);
 }
 
-function scheduleComposite(team, mode) {
+function schedulePositionScore(team, group, mode, week = selectedSiteWeek()) {
   if (!team) return "";
+  const key = `pos|${mode}|${week}|${team.team}|${group}`;
+  if (scheduleProjectionCache.has(key)) return scheduleProjectionCache.get(key);
+  const value = mode === "preseason" ? preseasonPositionScore(team.team, group, week) : regularPositionScore(team, group, week);
+  scheduleProjectionCache.set(key, value);
+  return value;
+}
+
+function scheduleComposite(team, mode, week = selectedSiteWeek()) {
+  if (!team) return "";
+  const key = `comp|${mode}|${week}|${team.team}`;
+  if (scheduleProjectionCache.has(key)) return scheduleProjectionCache.get(key);
   const rows = Object.keys(defaultSchedulePositionWeights).map((group) => ({
-    value: schedulePositionScore(team, group, mode),
+    value: schedulePositionScore(team, group, mode, week),
     weight: num(state.schedulePositionWeights[group], defaultSchedulePositionWeights[group]),
   }));
-  return weightedAverage(rows);
+  const value = weightedAverage(rows);
+  scheduleProjectionCache.set(key, value);
+  return value;
 }
 
-function scheduleSideComposite(team, side, mode) {
+function scheduleSideComposite(team, side, mode, week = selectedSiteWeek()) {
+  if (!team) return "";
+  const key = `side|${mode}|${week}|${team.team}|${side}`;
+  if (scheduleProjectionCache.has(key)) return scheduleProjectionCache.get(key);
   const groups = side === "defense" ? ["IDL", "EDGE", "LB", "CB", "S"] : ["QB", "RB", "WR", "TE", "OL"];
-  return weightedAverage(groups.map((group) => ({
-    value: schedulePositionScore(team, group, mode),
+  const value = weightedAverage(groups.map((group) => ({
+    value: schedulePositionScore(team, group, mode, week),
     weight: num(state.schedulePositionWeights[group], defaultSchedulePositionWeights[group]),
   })));
+  scheduleProjectionCache.set(key, value);
+  return value;
+}
+
+function scheduleLeagueSideAverage(side, mode, week = selectedSiteWeek()) {
+  const key = `league-side|${mode}|${week}|${side}`;
+  if (scheduleProjectionCache.has(key)) return scheduleProjectionCache.get(key);
+  const value = weightedAverage((state.data?.teams || []).map((team) => ({
+    value: scheduleSideComposite(team, side, mode, week),
+    weight: 1,
+  })));
+  scheduleProjectionCache.set(key, value);
+  return value;
+}
+
+function scheduleOffensePoints(team, mode, week = selectedSiteWeek()) {
+  const teamOffense = scheduleSideComposite(team, "offense", mode, week);
+  const leagueOffense = scheduleLeagueSideAverage("offense", mode, week);
+  return scheduleScoreTuning.offenseBase + ((num(teamOffense, leagueOffense) - num(leagueOffense, 84)) * scheduleScoreTuning.offenseScale);
+}
+
+function scheduleDefensePointsAllowed(team, mode, week = selectedSiteWeek()) {
+  const teamDefense = scheduleSideComposite(team, "defense", mode, week);
+  const leagueDefense = scheduleLeagueSideAverage("defense", mode, week);
+  return scheduleScoreTuning.defenseAllowedBase - ((num(teamDefense, leagueDefense) - num(leagueDefense, 84)) * scheduleScoreTuning.defenseScale);
 }
 
 function scheduleHomeAdvantage(game, mode) {
   if (isNeutralSiteGame(game)) return 0;
-  if (Number.isFinite(Number(game.homeAdvantage))) return num(game.homeAdvantage);
-  if (mode === "preseason") return 0.8;
+  if (String(game.week) === "Playoff" && Number.isFinite(Number(game.homeAdvantage))) return num(game.homeAdvantage);
   return num(state.homeFieldAdvantages?.[game.home], defaultHomeFieldAdvantages[game.home] ?? 1.5);
 }
 
@@ -2263,11 +2982,8 @@ function projectionWinProfile(game, projection = scheduleProjection(game)) {
   };
 }
 
-function scheduleTeamProjectionScore(team, opponent, mode, homeAdvantage = 0) {
-  const teamOverall = scheduleComposite(team, mode);
-  const teamOff = scheduleSideComposite(team, "offense", mode);
-  const opponentDef = scheduleSideComposite(opponent, "defense", mode);
-  return 20 + ((num(teamOverall, 84) - 84) * 0.34) + ((num(teamOff, 84) - num(opponentDef, 84)) * 0.16) + num(homeAdvantage, 0);
+function scheduleTeamProjectionScore(team, opponent, mode, homeAdvantage = 0, week = selectedSiteWeek()) {
+  return ((scheduleOffensePoints(team, mode, week) + scheduleDefensePointsAllowed(opponent, mode, week)) / 2) + num(homeAdvantage, 0);
 }
 
 function scheduleProjection(game) {
@@ -2275,8 +2991,8 @@ function scheduleProjection(game) {
   const visitorTeam = teamByName(game.visitor);
   const homeTeam = teamByName(game.home);
   if (visitorTeam && homeTeam) {
-    const visitorRaw = scheduleTeamProjectionScore(visitorTeam, homeTeam, mode, 0);
-    const homeRaw = scheduleTeamProjectionScore(homeTeam, visitorTeam, mode, scheduleHomeAdvantage(game, mode));
+    const visitorRaw = scheduleTeamProjectionScore(visitorTeam, homeTeam, mode, 0, game.week);
+    const homeRaw = scheduleTeamProjectionScore(homeTeam, visitorTeam, mode, scheduleHomeAdvantage(game, mode), game.week);
     const visitor = Math.max(6, Math.round(visitorRaw));
     const home = Math.max(6, Math.round(homeRaw));
     const favorite = visitor === home ? "" : visitor > home ? game.visitor : game.home;
@@ -2329,6 +3045,39 @@ function draftKingsOddsFor(game) {
     || games.find((odds) => odds.visitor === game.visitor && odds.home === game.home && String(odds.week) === String(game.week))
     || games.find((odds) => odds.visitor === game.visitor && odds.home === game.home)
     || null;
+}
+
+function draftKingsOddsKey(game) {
+  return [
+    String(game?.eventId || ""),
+    String(game?.date || ""),
+    normalizeTeamName(normalizeScheduleTeam(game?.visitor || "")),
+    normalizeTeamName(normalizeScheduleTeam(game?.home || "")),
+  ].join("|");
+}
+
+function isPastScheduleDate(dateText) {
+  if (!dateText) return false;
+  const gameDate = new Date(`${dateText}T23:59:59`);
+  return Number.isFinite(gameDate.getTime()) && gameDate < new Date();
+}
+
+function mergeDraftKingsOddsScan(freshScan, existingScan = window.DRAFTKINGS_ODDS) {
+  const freshGames = freshScan?.games || [];
+  const existingGames = existingScan?.games || [];
+  const byKey = new Map(freshGames.map((game) => [draftKingsOddsKey(game), game]));
+  existingGames.forEach((game) => {
+    if (isPastScheduleDate(game.date) && !byKey.has(draftKingsOddsKey(game))) {
+      byKey.set(draftKingsOddsKey(game), { ...game, preservedPastGame: true });
+    }
+  });
+  const games = [...byKey.values()].sort((a, b) => `${a.date || ""} ${a.visitor || ""}`.localeCompare(`${b.date || ""} ${b.visitor || ""}`));
+  return {
+    ...(freshScan || {}),
+    games,
+    freshGames: freshGames.length,
+    preservedPastGames: games.filter((game) => game.preservedPastGame).length,
+  };
 }
 
 function dkMoneylineLabel(game, odds) {
@@ -2443,9 +3192,9 @@ function starterSlotParts(slot) {
   return match ? { group: match[1], depth: Number(match[2]) } : { group: slot, depth: 1 };
 }
 
-function scheduleStarterFor(teamName, slot) {
+function scheduleStarterFor(teamName, slot, week = selectedSiteWeek()) {
   const { group, depth } = starterSlotParts(slot);
-  return schedulePlayersFor(teamName, group)[depth - 1] || null;
+  return schedulePlayersFor(teamName, group, week)[depth - 1] || null;
 }
 
 function starterCompareCell(player) {
@@ -2463,8 +3212,8 @@ function scheduleStarterComparison(game) {
   const mode = scheduleActiveMode(game);
   const slots = mode === "preseason" ? schedulePlayerComparisonSlots() : scheduleStarterSlots;
   const rows = slots.map((slot) => {
-    const away = scheduleStarterFor(game.visitor, slot);
-    const home = scheduleStarterFor(game.home, slot);
+    const away = scheduleStarterFor(game.visitor, slot, game.week);
+    const home = scheduleStarterFor(game.home, slot, game.week);
     const edge = away && home ? num(home.rating) - num(away.rating) : NaN;
     return `<tr>
       <td><span class="starter-slot">${esc(slot)}</span></td>
@@ -2527,6 +3276,10 @@ function scheduleBubble(label, value, subValue, style = "") {
   return `<span class="schedule-heat-pill" ${style}><b>${esc(label)}</b>${esc(value)}${subValue ? `<em>${esc(subValue)}</em>` : ""}</span>`;
 }
 
+function isScheduleInteractiveTarget(target) {
+  return Boolean(target?.closest?.("select, input, button, label, textarea, a"));
+}
+
 function scheduleSlider(label, key, value, min = 0, max = 200, attr = "schedule-weight", step = 5, suffix = "%") {
   return `
     <label class="schedule-slider">
@@ -2537,18 +3290,52 @@ function scheduleSlider(label, key, value, min = 0, max = 200, attr = "schedule-
   `;
 }
 
+function renderScheduleProjectionMath() {
+  return `
+    <div class="schedule-control-block projection-math-card">
+      <h3>Projection Math</h3>
+      <div class="projection-math-grid">
+        <div>
+          <b>Team points</b>
+          <span>Blend that team's offense points with the opponent's defensive points allowed, then add HFA.</span>
+        </div>
+        <div>
+          <b>Total</b>
+          <span>Away projected points plus home projected points after both scores are rounded.</span>
+        </div>
+        <div>
+          <b>Spread</b>
+          <span>Difference between projected scores. Higher projected score becomes the favorite.</span>
+        </div>
+        <div>
+          <b>Win odds</b>
+          <span>The spread is rounded to the nearest half point, then mapped through your spread-to-win table.</span>
+        </div>
+      </div>
+      <p>Current score formula: team score = average(offense points, opponent defense allowed points) + HFA. Offense points use ${fmt(scheduleScoreTuning.offenseBase, 1)} plus roster edge x ${fmt(scheduleScoreTuning.offenseScale, 2)}. Defense allowed uses ${fmt(scheduleScoreTuning.defenseAllowedBase, 1)} minus defense edge x ${fmt(scheduleScoreTuning.defenseScale, 2)}.</p>
+    </div>
+  `;
+}
+
 function renderScheduleControls() {
   if (!state.scheduleControlsOpen) return "";
+  const depthMode = state.scheduleSimMode === "auto" ? scheduleActiveMode({ week: selectedSiteWeek(), preseason: String(selectedSiteWeek()).startsWith("Pre") }) : state.scheduleSimMode;
+  const depthDefaults = depthMode === "regular" ? defaultRegularDepthMultipliers : defaultPreseasonDepthMultipliers;
+  const depthState = depthMode === "regular" ? state.regularDepthMultipliers : state.preseasonDepthMultipliers;
+  const depthTitle = depthMode === "regular" ? "Regular Season Depth Multipliers" : "Preseason Depth Multipliers";
+  const depthCopy = depthMode === "regular"
+    ? "These are rating multipliers for the depth spots included in regular-season mode."
+    : "These are rating multipliers for the depth spots included in preseason mode.";
   const positionSliders = Object.keys(defaultSchedulePositionWeights).map((key) =>
     scheduleSlider(key, key, num(state.schedulePositionWeights[key], defaultSchedulePositionWeights[key]), 0, 30, "schedule-weight", 1, " pts")
   ).join("");
   const depthRows = (groups) => groups.map((group) => {
-    const values = state.preseasonDepthMultipliers[group] || defaultPreseasonDepthMultipliers[group];
+    const values = depthState[group] || depthDefaults[group];
     const labels = group === "OL" ? values.map((_, index) => `OL${index + 1}`) : values.map((_, index) => `${group}${index + 1}`);
     return `
       <div class="depth-slider-row">
         <strong>${esc(group)}</strong>
-        <div>${values.map((value, index) => scheduleSlider(labels[index], `${group}|${index}`, num(value, 100), 60, 150, "preseason-depth")).join("")}</div>
+        <div>${values.map((value, index) => scheduleSlider(labels[index], `${depthMode}|${group}|${index}`, num(value, 100), 0, 150, "schedule-depth")).join("")}</div>
       </div>
     `;
   }).join("");
@@ -2563,8 +3350,8 @@ function renderScheduleControls() {
         <div class="schedule-slider-grid">${positionSliders}</div>
       </div>
       <div class="schedule-control-block">
-        <h3>Preseason Depth Multipliers</h3>
-        <p>These are rating multipliers for the depth spots included in preseason mode.</p>
+        <h3>${depthTitle}</h3>
+        <p>${depthCopy}</p>
         <div class="depth-control-columns">
           <div><h4>Offense</h4><div class="depth-slider-grid">${depthRows(["QB", "RB", "WR", "TE", "OL"])}</div></div>
           <div><h4>Defense</h4><div class="depth-slider-grid">${depthRows(["IDL", "EDGE", "LB", "CB", "S"])}</div></div>
@@ -2572,9 +3359,10 @@ function renderScheduleControls() {
       </div>
       <div class="schedule-control-block">
         <h3>Home Field Advantage</h3>
-        <p>Regular-season HFA points by home team. Neutral-site games override this to 0.</p>
+        <p>HFA points by home team for any non-neutral game. Neutral-site games override this to 0.</p>
         <div class="hfa-control-grid">${hfaRows}</div>
       </div>
+      ${renderScheduleProjectionMath()}
     </section>
   `;
 }
@@ -2593,9 +3381,11 @@ function wireScheduleControls() {
   document.querySelector("#schedule-reset-controls")?.addEventListener("click", () => {
     state.schedulePositionWeights = { ...defaultSchedulePositionWeights };
     state.preseasonDepthMultipliers = JSON.parse(JSON.stringify(defaultPreseasonDepthMultipliers));
+    state.regularDepthMultipliers = JSON.parse(JSON.stringify(defaultRegularDepthMultipliers));
     state.homeFieldAdvantages = { ...defaultHomeFieldAdvantages };
     storage.set("nflz-schedule-position-weights", state.schedulePositionWeights);
     storage.set("nflz-preseason-depth-multipliers", state.preseasonDepthMultipliers);
+    storage.set("nflz-regular-depth-multipliers", state.regularDepthMultipliers);
     storage.set("nflz-home-field-advantages", state.homeFieldAdvantages);
     render();
   });
@@ -2610,17 +3400,21 @@ function wireScheduleControls() {
       render();
     });
   });
-  document.querySelectorAll("[data-preseason-depth]").forEach((input) => {
+  document.querySelectorAll("[data-schedule-depth]").forEach((input) => {
     input.addEventListener("input", () => {
       input.closest(".schedule-slider")?.querySelector("b")?.replaceChildren(`${input.value}${input.dataset.suffix || ""}`);
     });
     input.addEventListener("change", () => {
-      const [group, indexText] = input.dataset.preseasonDepth.split("|");
-      const next = { ...state.preseasonDepthMultipliers };
-      next[group] = [...(next[group] || defaultPreseasonDepthMultipliers[group])];
+      const [mode, group, indexText] = input.dataset.scheduleDepth.split("|");
+      const isRegular = mode === "regular";
+      const stateKey = isRegular ? "regularDepthMultipliers" : "preseasonDepthMultipliers";
+      const storageKey = isRegular ? "nflz-regular-depth-multipliers" : "nflz-preseason-depth-multipliers";
+      const defaults = isRegular ? defaultRegularDepthMultipliers : defaultPreseasonDepthMultipliers;
+      const next = { ...state[stateKey] };
+      next[group] = [...(next[group] || defaults[group])];
       next[group][Number(indexText)] = Number(input.value);
-      state.preseasonDepthMultipliers = next;
-      storage.set("nflz-preseason-depth-multipliers", state.preseasonDepthMultipliers);
+      state[stateKey] = next;
+      storage.set(storageKey, state[stateKey]);
       render();
     });
   });
@@ -2796,7 +3590,7 @@ function wireQuickActions() {
     const player = selectedQuickPlayer();
     if (!player) return;
     const rating = Math.max(50, Math.min(105, Math.floor(num(document.querySelector("#quick-rating")?.value, player.rating))));
-    persistPlayer(player, { rating, newRating: rating });
+    persistPlayer(player, { rating, newRating: rating, ratingChangeType: "Manual adjustment" });
     render();
   });
   document.querySelectorAll(".quick-thumb").forEach((button) => button.addEventListener("click", () => {
@@ -2806,7 +3600,7 @@ function wireQuickActions() {
   }));
   document.querySelector("#quick-injury")?.addEventListener("change", (event) => {
     const player = selectedQuickPlayer();
-    if (player) persistPlayer(player, { injury: event.target.value });
+    if (player) persistPlayer(player, injuryPatchForStatus(event.target.value, /^ir\s+thru/i.test(event.target.value) ? "" : player.week));
     render();
   });
   document.querySelector("#quick-week")?.addEventListener("change", (event) => {
@@ -2923,8 +3717,10 @@ function renderDepth() {
   const teams = ["All Teams", ...unique(state.players.map((p) => p.team))];
   const positions = ["All Positions", ...unique(state.players.map((p) => p.position)).sort((a, b) => depthPositionRank(a) - depthPositionRank(b) || String(a).localeCompare(String(b)))];
   const sides = ["All Sides", "Offense", "Defense"];
+  const depthWeek = state.depthWeek === "auto" ? selectedSiteWeek() : state.depthWeek;
+  const depthWeekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
   let players = state.players.filter(matches);
-  if (state.depthTeam !== "All Teams") players = players.filter((p) => p.team === state.depthTeam);
+  if (state.depthTeam !== "All Teams") players = players.filter((p) => normalizeTeamName(p.team) === normalizeTeamName(state.depthTeam));
   if (state.depthSide !== "All Sides") players = players.filter((p) => depthSideFor(p) === state.depthSide);
   if (state.depthPosition !== "All Positions") players = players.filter((p) => p.position === state.depthPosition);
   players = players.sort((a, b) => a.team.localeCompare(b.team) || depthPositionRank(a.position) - depthPositionRank(b.position) || num(b.rating) - num(a.rating) || num(a.depth, 999) - num(b.depth, 999) || String(a.player).localeCompare(b.player));
@@ -2935,13 +3731,13 @@ function renderDepth() {
       ? ["Defense"]
       : ["Offense", "Defense"].filter((side) => players.some((p) => depthSideFor(p) === side));
   const reviewIsActive = state.depthCheck.status === "review" && (state.depthCheck.results || []).some((item) => !item.applied && !item.ignored);
-  const depthTableRow = (p, includeTeam = true, extraClass = "", displayDepth = playerUnavailableLabel(p) || p.depth) => `
-    <tr class="${String(p.player).includes("(R)") ? "rookie" : ""} ${playerUnavailableLabel(p) ? "unavailable-player" : ""} ${extraClass}" data-player-key="${esc(playerKey(p))}">
+  const depthTableRow = (p, includeTeam = true, extraClass = "", displayDepth = playerUnavailableLabel(p, depthWeek) || p.depth) => `
+    <tr class="${String(p.player).includes("(R)") ? "rookie" : ""} ${playerUnavailableLabel(p, depthWeek) ? "unavailable-player" : ""} ${playerDepthLock(p) ? "depth-locked-player" : ""} ${extraClass}" data-player-key="${esc(sourceKey(p))}">
       ${includeTeam ? `<td class="team-col">${teamCell(p)}</td>` : ""}
       <td class="pos-col"><span class="pos-chip ${positionChipClass(p.position)}">${esc(p.position)}</span></td>
       <td class="player-col">${playerNameButton(p)}</td>
       <td class="num rating-col">${ratingBadge(p.rating)}</td>
-      <td class="num depth-col">${depthBadge(displayDepth)}</td>
+      <td class="num depth-col">${depthLockControl(p, displayDepth)}</td>
       <td class="stars-col">${starsMeter(p)}</td>
       <td class="nudge-col">${nudgeControls(p)}</td>
       <td class="injury-col"><span class="injury-stack">${injurySelect(sourceKey(p), p.injury)}${weekSelect(sourceKey(p), p.week)}</span></td>
@@ -2949,21 +3745,27 @@ function renderDepth() {
   `;
   const depthRowsForSide = (sidePlayers) => {
     const positionCounts = {};
-    const ordered = [...sidePlayers].sort((a, b) => depthPositionRank(a.position) - depthPositionRank(b.position) || Number(Boolean(playerUnavailableLabel(a))) - Number(Boolean(playerUnavailableLabel(b))) || num(a.depth, 999) - num(b.depth, 999) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
+    const ordered = [...sidePlayers].sort((a, b) => depthPositionRank(a.position) - depthPositionRank(b.position) || Number(Boolean(playerUnavailableLabel(a, depthWeek))) - Number(Boolean(playerUnavailableLabel(b, depthWeek))) || num(a.depth, 999) - num(b.depth, 999) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
     return ordered.map((p, index) => {
-      const unavailable = playerUnavailableLabel(p);
+      const unavailable = playerUnavailableLabel(p, depthWeek);
       if (!unavailable) positionCounts[p.position] = (positionCounts[p.position] || 0) + 1;
       const next = ordered[index + 1];
       const isPositionEnd = !next || String(next.position) !== String(p.position);
       return depthTableRow(p, false, isPositionEnd ? "position-end" : "", unavailable || positionCounts[p.position]);
     }).join("");
   };
-  const groupedTeams = reviewIsActive ? "" : unique(players.map((p) => p.team)).map((team) => {
-    const teamPlayers = players.filter((p) => p.team === team);
-    const sample = teamPlayers[0] || {};
+  const displayTeams = state.depthTeam !== "All Teams"
+    ? [state.depthTeam]
+    : state.depthPosition !== "All Positions"
+      ? (state.data?.teams || []).map((team) => team.team)
+      : unique(players.map((p) => p.team));
+  const groupedTeams = reviewIsActive ? "" : displayTeams.map((team) => {
+    const teamPlayers = players.filter((p) => normalizeTeamName(p.team) === normalizeTeamName(team));
+    const teamInfo = teamByName(team) || { team, teamAbbrev: state.data?.meta?.teamAbbrevs?.[team] || team };
+    const sample = teamPlayers[0] || teamInfo;
     const sideTable = (title, sidePlayers) => `
       <div class="depth-side ${title.toLowerCase()}">
-        <div class="depth-side-title"><span>${title}</span><b>${sidePlayers.filter(isPlayerAvailable).length}</b></div>
+        <div class="depth-side-title"><span>${title}</span><b>${sidePlayers.filter((player) => isPlayerAvailable(player, depthWeek)).length}</b></div>
         <div class="table-scroll depth-side-scroll">
           <table class="depth-table depth-team-table">
             <colgroup>
@@ -2977,8 +3779,8 @@ function renderDepth() {
     `;
     return `<article class="depth-team-bubble">
       <div class="depth-team-head">
-        <h3>${teamLogo(team, sample.teamAbbrev)}<span>${esc(team)}</span></h3>
-        <em>${teamPlayers.length} players</em>
+        <h3>${teamLogo(teamInfo.team, sample.teamAbbrev || teamInfo.teamAbbrev)}<span>${esc(teamInfo.team)}</span></h3>
+        <em>${teamPlayers.length ? `${teamPlayers.length} players` : "missing in this filter"}</em>
       </div>
       <div class="depth-team-sides ${activeSides.length === 1 ? "single" : ""}">
         ${activeSides.map((side) => sideTable(side, teamPlayers.filter((p) => depthSideFor(p) === side))).join("")}
@@ -2989,6 +3791,7 @@ function renderDepth() {
     wireSelect("depth-team", "depthTeam");
     wireSelect("depth-side", "depthSide");
     wireSelect("depth-position", "depthPosition");
+    wireSelect("depth-week", "depthWeek");
     wirePlayerActions();
     document.querySelector("#depth-check-run")?.addEventListener("click", runDepthChartCheck);
     document.querySelector("#depth-check-run-both")?.addEventListener("click", runDepthAndInjuryChecks);
@@ -3006,8 +3809,19 @@ function renderDepth() {
     document.querySelector("#depth-check-apply-all")?.addEventListener("click", applyAllDepthCheckResults);
     document.querySelector("#depth-check-add-missing")?.addEventListener("click", addAllMissingDepthCheckPlayers);
     document.querySelector("#injury-check-run")?.addEventListener("click", runInjuryCheck);
+    document.querySelector("#injury-check-activity")?.addEventListener("change", (event) => {
+      state.injuryCheckActivity = event.target.value;
+      render();
+    });
+    document.querySelector("#injury-check-apply-shown")?.addEventListener("click", applyShownInjuryCheckResults);
+    document.querySelectorAll(".injury-review-clear").forEach((button) => button.addEventListener("click", () => clearInjuryReviewDue(button.dataset.playerKey)));
+    document.querySelectorAll(".injury-review-keep").forEach((button) => button.addEventListener("click", () => keepInjuryReviewDue(button.dataset.playerKey)));
     document.querySelectorAll(".injury-apply-one").forEach((button) => button.addEventListener("click", () => applyInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
     document.querySelectorAll(".injury-ignore-one").forEach((button) => button.addEventListener("click", () => ignoreInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
+    document.querySelectorAll(".depth-lock-button").forEach((button) => button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      promptDepthLock(button.dataset.depthLockKey);
+    }));
   });
   return `
     <section class="panel depth-panel">
@@ -3020,6 +3834,7 @@ function renderDepth() {
           ${select("depth-team", state.depthTeam, teams)}
           ${select("depth-side", state.depthSide, sides)}
           ${select("depth-position", state.depthPosition, positions)}
+          ${optionSelect("depth-week", state.depthWeek, depthWeekOptions)}
           <button id="depth-check-run-both" class="mini-action primary">Run Both Checks</button>
           <button id="depth-check-run" class="mini-action primary">Scan OurLads</button>
           <button id="injury-check-run" class="mini-action primary">Scan ESPN Injuries</button>
@@ -3044,7 +3859,36 @@ function findPlayerByName(name) {
 }
 
 const injuryStatuses = ["Healthy", "OUT for Season", "OUT thru Week ___", "IR Thru Week ___", "Suspended thru Week ___", "*Likely* Out thru Week ___"];
-const injuryWeeks = ["", ...Array.from({ length: 18 }, (_, i) => String(i + 1)), "WC", "DIV", "ACC", "NCC", "SB"];
+const injuryWeeks = ["", "Pre1", "Pre2", "Pre3", ...Array.from({ length: 18 }, (_, i) => String(i + 1)), "WC", "DIV", "ACC", "NCC", "SB"];
+
+function irAutoThruWeek() {
+  const current = selectedSiteWeek();
+  if (String(current).startsWith("Pre")) return "4";
+  const week = Number(current);
+  if (!Number.isFinite(week)) return "4";
+  const target = week + 4;
+  if (target <= 18) return String(target);
+  return ({ 19: "WC", 20: "DIV", 21: "ACC", 22: "SB" })[target] || "SB";
+}
+
+function currentInjuryReviewWeek() {
+  const week = selectedSiteWeek();
+  return week === "Pre0" ? "Pre1" : week;
+}
+
+function defaultInjuryWeekForStatus(status, currentWeek = "") {
+  const injury = status || "Healthy";
+  if (/^healthy$|out\s+for\s+season/i.test(injury)) return "";
+  if (/^ir\s+thru/i.test(injury)) return irAutoThruWeek();
+  if (/out\s+thru|likely.*out\s+thru|suspended\s+thru/i.test(injury)) return currentWeek || currentInjuryReviewWeek();
+  return currentWeek || "";
+}
+
+function injuryPatchForStatus(status, currentWeek = "") {
+  const injury = status || "Healthy";
+  if (/^healthy$/i.test(injury)) return { injury, week: "" };
+  return { injury, week: currentWeek || defaultInjuryWeekForStatus(injury) };
+}
 
 function injurySelect(key, value) {
   return `<select class="injury-status" data-player-key="${esc(key)}">${injuryStatuses.map((item) => `<option ${String(value || "Healthy") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
@@ -3052,6 +3896,39 @@ function injurySelect(key, value) {
 
 function weekSelect(key, value) {
   return `<select class="injury-week" data-player-key="${esc(key)}">${injuryWeeks.map((item) => `<option ${String(value || "") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
+}
+
+function historyDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
+}
+
+function renderRatingHistory(player) {
+  const rows = ratingHistoryFor(player).slice(0, 12);
+  if (!rows.length) {
+    return `<section class="rating-history"><div class="modal-section-head"><h3>Rating Change History</h3><span>No rating changes tracked yet</span></div></section>`;
+  }
+  return `
+    <section class="rating-history">
+      <div class="modal-section-head">
+        <h3>Rating Change History</h3>
+        <span>${rows.length} recent change${rows.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="rating-history-list">
+        ${rows.map((item) => {
+          const delta = num(item.delta, num(item.newRating) - num(item.oldRating));
+          return `<div class="rating-history-row">
+            <span class="rating-history-type">${esc(item.type || "Manual adjustment")}</span>
+            <span class="rating-history-date">${esc(historyDate(item.at))}</span>
+            <span class="rating-history-values"><b>${fmt(item.oldRating, 0)}</b><em>to</em><b>${fmt(item.newRating, 0)}</b></span>
+            <span class="rating-history-delta ${delta >= 0 ? "plus" : "minus"}">${delta > 0 ? "+" : ""}${fmt(delta, 0)}</span>
+            ${item.note ? `<span class="rating-history-note">${esc(item.note)}</span>` : ""}
+          </div>`;
+        }).join("")}
+      </div>
+    </section>
+  `;
 }
 
 function wirePlayerActions() {
@@ -3077,7 +3954,7 @@ function wirePlayerActions() {
   }));
   document.querySelectorAll(".injury-status").forEach((sel) => sel.addEventListener("change", () => {
     const p = findPlayer(sel.dataset.playerKey);
-    if (p) persistPlayer(p, { injury: sel.value });
+    if (p) persistPlayer(p, injuryPatchForStatus(sel.value, /^ir\s+thru/i.test(sel.value) ? "" : p.week));
     render();
   }));
   document.querySelectorAll(".injury-week").forEach((sel) => sel.addEventListener("change", () => {
@@ -3104,8 +3981,19 @@ function wirePlayerActions() {
   document.querySelector("#rating-save")?.addEventListener("click", () => {
     const p = findPlayer(state.selectedPlayerKey);
     const rating = num(document.querySelector("#manual-rating")?.value, p?.rating);
-    if (p) persistPlayer(p, { rating: Math.max(50, Math.min(105, Math.floor(rating))), newRating: Math.floor(rating) });
+    if (p) persistPlayer(p, { rating: Math.max(50, Math.min(105, Math.floor(rating))), newRating: Math.floor(rating), ratingChangeType: "Manual adjustment" });
     state.selectedPlayerKey = null;
+    render();
+  });
+  document.querySelector("#player-name-save")?.addEventListener("click", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    const newName = document.querySelector("#manual-player-name")?.value;
+    if (p) renamePlayer(p, newName);
+    render();
+  });
+  document.querySelector("#player-name-reset")?.addEventListener("click", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (p) resetPlayerName(p);
     render();
   });
   document.querySelectorAll(".modal-thumb").forEach((button) => button.addEventListener("click", () => {
@@ -3120,12 +4008,19 @@ function wirePlayerActions() {
   });
   document.querySelector("#modal-injury")?.addEventListener("change", (event) => {
     const p = findPlayer(state.selectedPlayerKey);
-    if (p) persistPlayer(p, { injury: event.target.value });
+    if (p) persistPlayer(p, injuryPatchForStatus(event.target.value, /^ir\s+thru/i.test(event.target.value) ? "" : p.week));
     render();
   });
   document.querySelector("#modal-week")?.addEventListener("change", (event) => {
     const p = findPlayer(state.selectedPlayerKey);
     if (p) persistPlayer(p, { week: event.target.value });
+    render();
+  });
+  document.querySelector("#delete-player")?.addEventListener("click", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (!p) return;
+    if (!confirm(`Delete ${p.player} from NFL Model Z IQ? This removes them from depth charts, rankings, and comparisons on this device.`)) return;
+    deletePlayer(p);
     render();
   });
 }
@@ -3135,17 +4030,32 @@ function renderPlayerModal() {
   if (!p) return "";
   const rank = positionRank(p);
   const pff = state.data.pff.find((row) => row.player === p.player);
+  const team = teamByName(p.team) || { team: p.team, teamAbbrev: p.teamAbbrev };
+  const source = sourceKey(p);
+  const hasRenamedPlayer = Boolean(overrides[source]?.player);
   return `
     <div class="modal">
       <div class="modal-card">
         <button id="modal-close" class="modal-close" title="Close">x</button>
-        <div class="player-hero">${playerAvatar(p, "lg")}<div><h2>${p.player}</h2><p>${p.team} - ${p.position}${String(p.player).includes("(R)") ? " - Rookie" : ""}</p></div></div>
-        <div class="metrics compact">
-          ${metric("Rating", fmt(p.rating, 0), "G")}
-          ${metric("Depth", fmt(p.depth, 0), "H")}
-          ${metric("Stars", fmt(p.stars, 1), "I")}
-          ${metric("Pos Rank", rank ? `#${rank}` : "", groupPosition(p.position))}
-          ${metric("PFF", pff ? fmt(pff.pff, 0) : "No row", pff ? `New ${fmt(pff.newRating, 0)} / ${pff.delta > 0 ? "+" : ""}${fmt(pff.delta, 0)}` : "PFF Import")}
+        <div class="player-hero enhanced">
+          <div class="player-team-watermark">${teamLogo(team.team, team.teamAbbrev)}</div>
+          ${playerAvatar(p, "lg")}
+          <div class="player-hero-copy">
+            <h2>${p.player}</h2>
+            <p>${teamLogo(team.team, team.teamAbbrev)}<span>${esc(p.team)} - ${esc(p.position)}${String(p.player).includes("(R)") ? " - Rookie" : ""}</span></p>
+          </div>
+          <div class="player-hero-rating player-hero-rating-large">${ratingBadge(p.rating)}<span>Current Rating</span><em>${esc(playerDepthLabel(p))}</em></div>
+        </div>
+        <div class="player-card-grid">
+          ${playerRanksPanel(p)}
+          ${playerReferencePanel(p)}
+          ${playerFantasyPanel(p)}
+          ${playerUsagePanel(p)}
+        </div>
+        <div class="editor-row player-name-editor">
+          <label>Player name <input id="manual-player-name" type="text" value="${esc(p.player)}" /></label>
+          <button id="player-name-save">Save Name</button>
+          ${hasRenamedPlayer ? `<button id="player-name-reset" class="mini-action">Reset Name</button>` : ""}
         </div>
         <div class="editor-row">
           <label>Manual rating <input id="manual-rating" type="number" min="50" max="105" value="${fmt(p.rating, 0)}" /></label>
@@ -3157,9 +4067,11 @@ function renderPlayerModal() {
         <div class="editor-row">
           <label>Injury status ${injurySelect("modal", p.injury).replace("class=\"injury-status\"", "id=\"modal-injury\" class=\"injury-status\"")}</label>
           <label>Week ${weekSelect("modal", p.week).replace("class=\"injury-week\"", "id=\"modal-week\" class=\"injury-week\"")}</label>
+          <button id="delete-player" class="danger">Delete Player</button>
         </div>
+        ${renderRatingHistory(p)}
         ${renderPlayerQbGameLogs(p)}
-        <p class="note">Player photos can plug into this page later. For now this is the rating, depth, stars, injury, rookie, and nudge control center.</p>
+        ${playerTeamResultsPanel(p)}
       </div>
     </div>
   `;
@@ -3167,36 +4079,38 @@ function renderPlayerModal() {
 
 function renderPlayerQbGameLogs(player) {
   const log = footballguysLogFor(player);
+  const logYear = window.FOOTBALLGUYS_GAME_LOGS?.year || "2025";
   if (!log?.weeks?.length) {
     if (groupPosition(player.position) !== "QB" && player.position !== "QB") return "";
     return `
       <section class="modal-game-log">
         <div class="modal-section-head">
-          <h3>QB Game Logs</h3>
+          <h3>${esc(logYear)} QB Game Logs</h3>
           <span>No scanned Footballguys row found</span>
         </div>
       </section>
     `;
   }
+  const statValues = (key) => log.weeks.map((week) => Number(week[key])).filter(Number.isFinite);
   const rows = log.weeks.map((week) => `
     <tr class="${week.played ? "" : "muted-row"}">
       <td class="num rank-col">${fantasyDisplay(week.week, 0)}</td>
       <td>${esc(week.opponent || "-")}</td>
       <td>${esc(week.result || "-")}</td>
       <td>${week.played ? "Yes" : "No"}</td>
-      <td class="num">${fantasyDisplay(week.passYards, 0)}</td>
-      <td class="num">${fantasyDisplay(week.passTds, 0)}</td>
-      <td class="num">${fantasyDisplay(week.interceptions, 0)}</td>
-      <td class="num">${fantasyDisplay(week.rushAttempts, 0)}</td>
-      <td class="num">${fantasyDisplay(week.rushYards, 0)}</td>
-      <td class="num">${fantasyDisplay(week.rushTds, 0)}</td>
+      <td class="num cf" ${cfStyle(week.passYards, Math.min(...statValues("passYards"), 0), Math.max(...statValues("passYards"), 1))}>${fantasyDisplay(week.passYards, 0)}</td>
+      <td class="num cf" ${cfStyle(week.passTds, 0, Math.max(...statValues("passTds"), 1))}>${fantasyDisplay(week.passTds, 0)}</td>
+      <td class="num cf" ${cfStyle(week.interceptions, 0, Math.max(...statValues("interceptions"), 1), true)}>${fantasyDisplay(week.interceptions, 0)}</td>
+      <td class="num cf" ${cfStyle(week.rushAttempts, 0, Math.max(...statValues("rushAttempts"), 1))}>${fantasyDisplay(week.rushAttempts, 0)}</td>
+      <td class="num cf" ${cfStyle(week.rushYards, Math.min(...statValues("rushYards"), 0), Math.max(...statValues("rushYards"), 1))}>${fantasyDisplay(week.rushYards, 0)}</td>
+      <td class="num cf" ${cfStyle(week.rushTds, 0, Math.max(...statValues("rushTds"), 1))}>${fantasyDisplay(week.rushTds, 0)}</td>
     </tr>
   `);
   return `
     <section class="modal-game-log">
       <div class="modal-section-head">
-        <h3>QB Game Logs</h3>
-        <span>${esc(log.teamAbbrev || log.team || "")} ${esc(window.FOOTBALLGUYS_GAME_LOGS?.year || "")} - ${fantasyDisplay(log.gamesPlayed, 0)} games counted</span>
+        <h3>${esc(logYear)} QB Game Logs</h3>
+        <span>${esc(log.teamAbbrev || log.team || "")} - ${fantasyDisplay(log.gamesPlayed, 0)} games counted</span>
       </div>
       <div class="table-scroll modal-game-log-scroll">
         ${table([
@@ -3204,12 +4118,12 @@ function renderPlayerQbGameLogs(player) {
           { label: "Opp" },
           { label: "Result" },
           { label: "Played" },
-          { label: "PYds", cls: "num" },
-          { label: "PTD", cls: "num" },
-          { label: "INT", cls: "num" },
-          { label: "RA", cls: "num" },
-          { label: "RYds", cls: "num" },
-          { label: "RTD", cls: "num" },
+          { label: "Pass Yds", cls: "num" },
+          { label: "Pass TDs", cls: "num" },
+          { label: "INTs", cls: "num" },
+          { label: "Rush Att", cls: "num" },
+          { label: "Rush Yds", cls: "num" },
+          { label: "Rush TDs", cls: "num" },
         ], rows)}
       </div>
     </section>
@@ -3236,8 +4150,19 @@ function wirePlayerModalControls() {
   document.querySelector("#rating-save")?.addEventListener("click", () => {
     const p = findPlayer(state.selectedPlayerKey);
     const rating = num(document.querySelector("#manual-rating")?.value, p?.rating);
-    if (p) persistPlayer(p, { rating: Math.max(50, Math.min(105, Math.floor(rating))), newRating: Math.floor(rating) });
+    if (p) persistPlayer(p, { rating: Math.max(50, Math.min(105, Math.floor(rating))), newRating: Math.floor(rating), ratingChangeType: "Manual adjustment" });
     state.selectedPlayerKey = null;
+    render();
+  });
+  document.querySelector("#player-name-save")?.addEventListener("click", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    const newName = document.querySelector("#manual-player-name")?.value;
+    if (p) renamePlayer(p, newName);
+    render();
+  });
+  document.querySelector("#player-name-reset")?.addEventListener("click", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (p) resetPlayerName(p);
     render();
   });
   document.querySelectorAll(".modal-thumb").forEach((button) => button.addEventListener("click", () => {
@@ -3252,12 +4177,19 @@ function wirePlayerModalControls() {
   });
   document.querySelector("#modal-injury")?.addEventListener("change", (event) => {
     const p = findPlayer(state.selectedPlayerKey);
-    if (p) persistPlayer(p, { injury: event.target.value });
+    if (p) persistPlayer(p, injuryPatchForStatus(event.target.value, /^ir\s+thru/i.test(event.target.value) ? "" : p.week));
     render();
   });
   document.querySelector("#modal-week")?.addEventListener("change", (event) => {
     const p = findPlayer(state.selectedPlayerKey);
     if (p) persistPlayer(p, { week: event.target.value });
+    render();
+  });
+  document.querySelector("#delete-player")?.addEventListener("click", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (!p) return;
+    if (!confirm(`Delete ${p.player} from NFL Model Z IQ? This removes them from depth charts, rankings, and comparisons on this device.`)) return;
+    deletePlayer(p);
     render();
   });
 }
@@ -3266,6 +4198,169 @@ function positionRank(player) {
   const group = groupPosition(player.position);
   const ranked = buildRankedPlayers(group, 5000);
   return ranked.find((p) => playerKey(p) === playerKey(player))?.rank;
+}
+
+function positionRankInfo(player) {
+  const group = groupPosition(player.position);
+  const ranked = buildRankedPlayers(group, 5000);
+  const found = ranked.find((p) => playerKey(p) === playerKey(player));
+  return { rank: found?.rank || "", total: ranked.length, label: group };
+}
+
+function playerSideRank(player) {
+  const side = depthSideFor(player);
+  const ranked = state.players
+    .filter((item) => depthSideFor(item) === side && isPlayerAvailable(item))
+    .sort((a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(String(b.player)));
+  const index = ranked.findIndex((item) => sourceKey(item) === sourceKey(player));
+  return index >= 0 ? index + 1 : "";
+}
+
+function playerSideRankInfo(player) {
+  const side = depthSideFor(player);
+  const ranked = state.players
+    .filter((item) => depthSideFor(item) === side && isPlayerAvailable(item))
+    .sort((a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(String(b.player)));
+  const index = ranked.findIndex((item) => sourceKey(item) === sourceKey(player));
+  return { rank: index >= 0 ? index + 1 : "", total: ranked.length, label: side };
+}
+
+function playerLeagueRank(player) {
+  const ranked = state.players
+    .filter(isPlayerAvailable)
+    .sort((a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(String(b.player)));
+  const index = ranked.findIndex((item) => sourceKey(item) === sourceKey(player));
+  return index >= 0 ? index + 1 : "";
+}
+
+function playerLeagueRankInfo(player) {
+  const ranked = state.players
+    .filter(isPlayerAvailable)
+    .sort((a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(String(b.player)));
+  const index = ranked.findIndex((item) => sourceKey(item) === sourceKey(player));
+  return { rank: index >= 0 ? index + 1 : "", total: ranked.length, label: "League" };
+}
+
+function playerDepthLabel(player) {
+  const unavailable = playerUnavailableLabel(player);
+  if (unavailable) return unavailable;
+  if (normalizeTeamName(player.team) === "Free Agent") return "FA";
+  const depth = num(player.depth, 0);
+  return depth ? `${groupPosition(player.position)}${depth}` : groupPosition(player.position);
+}
+
+function maddenReferenceForPlayer(player) {
+  const name = normalizeName(player.player);
+  const team = normalizeTeamName(player.team);
+  const pos = groupPosition(player.position);
+  return maddenRows.find((row) => normalizeName(row.player) === name && normalizeTeamName(row.team) === team && groupPosition(maddenPosition(row.pos)) === pos)
+    || maddenRows.find((row) => normalizeName(row.player) === name && groupPosition(maddenPosition(row.pos)) === pos)
+    || maddenRows.find((row) => normalizeName(row.player) === name)
+    || null;
+}
+
+function playerRanksPanel(player) {
+  const pos = positionRankInfo(player);
+  const side = playerSideRankInfo(player);
+  const league = playerLeagueRankInfo(player);
+  return `
+    <section class="player-card-panel player-rank-panel">
+      <div class="modal-section-head"><h3>Ranks</h3><span>Current available player pool</span></div>
+      <div class="player-rank-grid">
+        ${metric("Position", pos.rank ? `#${pos.rank}` : "-", `of ${pos.total} ${pos.label}`)}
+        ${metric(side.label, side.rank ? `#${side.rank}` : "-", `of ${side.total}`)}
+        ${metric("League", league.rank ? `#${league.rank}` : "-", `of ${league.total}`)}
+      </div>
+    </section>
+  `;
+}
+
+function playerReferencePanel(player) {
+  const pff = pffRankInfo(player);
+  const madden = maddenReferenceForPlayer(player);
+  const pffUrl = `https://www.pff.com/nfl/grades/position/${pffPositionSlug(player.position)}`;
+  const pffRank = pff?.rank ? `#${pff.rank}${pff.total ? ` / ${pff.total}` : ""}` : "No rank";
+  const pffGrade = pffHasGrade(pff) ? fmt(pff.grade, 1) : "No grade";
+  return `
+    <section class="player-card-panel player-reference-panel">
+      <div class="modal-section-head">
+        <h3>Reference Ratings</h3>
+        <a class="mini-action" href="${esc(pffUrl)}" target="_blank" rel="noreferrer">PFF ${esc(groupPosition(player.position))}</a>
+      </div>
+      <div class="player-reference-grid">
+        <div>${madden ? ratingBadge(madden.ovr) : "<b>-</b>"}<span>Madden</span><em>${madden ? "last imported" : "No match"}</em></div>
+        <div class="pff-reference-tile">${renderMaddenPffCell(pff)}<span>PFF</span><em>${esc(pffRank)} / ${esc(pffGrade)}</em></div>
+        <div>${player.school ? `<b>${esc(player.school)}</b>` : "<b>-</b>"}<span>College</span><em>${player.school ? "last school before NFL" : "not loaded yet"}</em></div>
+      </div>
+    </section>
+  `;
+}
+
+function playerFantasyPanel(player) {
+  const position = groupPosition(player.position);
+  const weeklyRows = fantasyBoardRows("weekly", position, fantasyRankItem("weekly", position)?.rows || []);
+  const row = weeklyRows.find((item) => fantasyMergeKey(item.player) === fantasyMergeKey(player.player));
+  const seasonRows = fantasyBoardRows("season", position, fantasyRankItem("season", position)?.rows || []);
+  const season = seasonRows.find((item) => fantasyMergeKey(item.player) === fantasyMergeKey(player.player));
+  const bars = [["Weekly", row?.score], ["Last 5", row?.last5Score], ["Season", season?.score || row?.seasonScore]];
+  const max = Math.max(1, ...bars.map(([, value]) => num(value, 0)));
+  return `
+    <section class="player-card-panel player-fantasy-panel">
+      <div class="modal-section-head"><h3>Fantasy</h3><span>${row?.opponent ? `Week ${esc(siteWeekLabel())} vs ${esc(row.opponent)}` : "projections building out"}</span></div>
+      <div class="player-fantasy-bars">
+        ${bars.map(([label, value]) => `<div><span>${esc(label)}</span><b>${fantasyDisplay(value, 1)}</b><em style="width:${Math.max(4, Math.round((num(value, 0) / max) * 100))}%"></em></div>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function playerUsagePanel(player) {
+  const position = groupPosition(player.position);
+  if (!["RB", "WR", "TE"].includes(position)) return "";
+  const rows = fantasyBoardRows("weekly", position, fantasyRankItem("weekly", position)?.rows || []);
+  const row = rows.find((item) => fantasyMergeKey(item.player) === fantasyMergeKey(player.player));
+  const snap = fantasyDetailValue(row || {}, "Typical Snap %");
+  const targets = fantasyDetailValue(row || {}, "Typical Targets");
+  const rz = fantasyDetailValue(row || {}, "Typical Red Zone Opportunities");
+  const l5Snap = fantasyDetailValue(row || {}, "!!LAST 5!!\nTypical Snap %");
+  const l5Targets = fantasyDetailValue(row || {}, "!!LAST 5!!\nTypical Targets");
+  const l5Rz = fantasyDetailValue(row || {}, "!!LAST 5!!\nTypical Red Zone Opportunities");
+  return `
+    <section class="player-card-panel player-usage-panel">
+      <div class="modal-section-head"><h3>Fantasy Usage</h3><span>Season / Last 5</span></div>
+      <div class="player-usage-grid">
+        ${metric("Snap %", fantasyDisplay(snap, 1), fantasyDisplay(l5Snap, 1))}
+        ${metric("Targets", fantasyDisplay(targets, 1), fantasyDisplay(l5Targets, 1))}
+        ${metric("RZone", fantasyDisplay(rz, 1), fantasyDisplay(l5Rz, 1))}
+      </div>
+    </section>
+  `;
+}
+
+function playerTeamResultsPanel(player) {
+  const teamKey = normalizeScheduleTeam(player.team);
+  const rows = scheduleGames().map((game, index) => {
+    const key = scheduleGameKey(game, game.calendarIndex ?? index);
+    return { game, key, action: gameAction(key) };
+  })
+    .filter(({ game, action }) => (normalizeScheduleTeam(game.visitor) === teamKey || normalizeScheduleTeam(game.home) === teamKey) && action.awayScore !== "" && action.homeScore !== "")
+    .slice(-8)
+    .map(({ game, action }) => {
+      const isHome = normalizeScheduleTeam(game.home) === teamKey;
+      const opp = isHome ? game.visitor : game.home;
+      const teamScore = isHome ? action.homeScore : action.awayScore;
+      const oppScore = isHome ? action.awayScore : action.homeScore;
+      const result = num(teamScore) > num(oppScore) ? "W" : num(teamScore) < num(oppScore) ? "L" : "T";
+      return `<tr><td>${esc(weekDisplay(game.week || ""))}</td><td>${esc(excelDate(game.date))}</td><td>${teamCellFull(opp)}</td><td class="num">${esc(teamScore)}-${esc(oppScore)}</td><td class="num ${result === "W" ? "plus" : result === "L" ? "minus" : ""}">${result}</td></tr>`;
+    });
+  return `
+    <section class="player-card-panel player-results-panel">
+      <div class="modal-section-head"><h3>Team Game Results</h3><span>Filled from added scores</span></div>
+      <div class="table-scroll modal-game-log-scroll">
+        ${table([{ label: "Wk" }, { label: "Date" }, { label: "Opp" }, { label: "Score", cls: "num" }, { label: "Res", cls: "num" }], rows.length ? rows : [`<tr><td colspan="5" class="empty-cell">No game results added for ${esc(player.team)} yet.</td></tr>`])}
+      </div>
+    </section>
+  `;
 }
 
 function buildRankedPlayers(position, limit) {
@@ -3284,6 +4379,8 @@ function buildRankedPlayers(position, limit) {
 }
 
 function groupPosition(pos) {
+  const clean = String(pos || "").split(",")[0].trim();
+  pos = clean;
   if (pos === "LT" || pos === "RT") return "OT";
   if (pos === "LG" || pos === "RG") return "OG";
   return pos;
@@ -3323,6 +4420,18 @@ function maddenPosition(pos) {
 
 function maddenRowKey(row) {
   return `${normalizeName(row.player)}__${maddenPosition(row.pos)}__${normalizeTeamName(row.team)}`;
+}
+
+function maddenBaselineKey(row) {
+  return `${normalizeName(row.player)}__${maddenPosition(row.pos)}__${normalizeTeamName(row.team)}`;
+}
+
+const maddenReviewBaseline = Array.isArray(window.MADDEN_REVIEW_BASELINE) ? window.MADDEN_REVIEW_BASELINE : [];
+const maddenReviewBaselineMap = new Map(maddenReviewBaseline.map((row) => [maddenBaselineKey(row), row]));
+
+function maddenBaselineFor(row) {
+  if (!row?.madden) return null;
+  return maddenReviewBaselineMap.get(maddenBaselineKey(row.madden)) || null;
 }
 
 function maddenNameScore(sourceName, candidateName) {
@@ -3374,7 +4483,22 @@ function maddenPlayerPools(players) {
 function maddenRowPff(row) {
   if (row._pff !== undefined) return row._pff;
   const mPos = maddenPosition(row.madden.pos);
-  row._pff = row.match ? pffRankInfo(row.match) : pffRankInfo({ player: row.madden.player, team: row.madden.team, teamAbbrev: pffTeamAbbrevMap[row.madden.team], position: mPos });
+  const matchPff = row.match ? pffRankInfo(row.match) : null;
+  const maddenPff = pffRankInfo({ player: row.madden.player, team: row.madden.team, teamAbbrev: pffTeamAbbrevMap[normalizeTeamName(row.madden.team)], position: mPos });
+  const baseline = maddenBaselineFor(row);
+  const baselinePff = baseline ? {
+    pffPosition: mPos,
+    modelPosition: mPos,
+    rank: "",
+    total: "",
+    grade: null,
+    snapPercentile: baseline.pffSnapPercent,
+    baseline: true,
+    pffLabel: baseline.pffLabel,
+    pffGradeText: baseline.pffGradeText,
+  } : null;
+  const hasUsablePff = (pff) => Boolean(pff && (pff.rank || usefulPffGrade(pff.grade) !== null || Number.isFinite(Number(pff.snapPercentile))));
+  row._pff = hasUsablePff(matchPff) ? matchPff : hasUsablePff(maddenPff) ? maddenPff : baselinePff;
   return row._pff;
 }
 
@@ -3439,6 +4563,10 @@ const pffPastePositions = [
   ["S", "S"],
 ];
 
+function cleanPffPosition(value) {
+  return groupPosition(String(value || "EDGE").split(",")[0].trim() || "EDGE");
+}
+
 function pffManualKey(row) {
   return `${groupPosition(row.modelPosition || row.position || "")}__${normalizeName(row.name || row.player)}__${String(row.team || "").toUpperCase()}`;
 }
@@ -3464,14 +4592,16 @@ function pffManualRows() {
     .filter((row) => allowedModelPositions.has(groupPosition(row.modelPosition || row.pffPosition || row.position)));
   pffManualRowsCache = sourceRows.map((row) => {
     const cached = usingSavedRows ? pffCachedRowFor(row) : row;
-    const modelPosition = groupPosition(cached?.modelPosition || cached?.pffPosition || row.modelPosition || row.pffPosition);
+    const modelPosition = groupPosition(row.modelPosition || row.pffPosition || cached?.modelPosition || cached?.pffPosition);
+    const rowSnaps = Number(row.snaps);
+    const cachedSnaps = Number(cached?.snaps);
     return {
       ...row,
       modelPosition,
-      pffPosition: cached?.pffPosition || row.pffPosition || modelPosition,
+      pffPosition: row.pffPosition || cached?.pffPosition || modelPosition,
       team: row.team || cached?.team,
       grade: usefulPffGrade(row.grade) ?? usefulPffGrade(cached?.grade),
-      snaps: Number.isFinite(Number(row.snaps)) ? Number(row.snaps) : cached?.snaps,
+      snaps: Number.isFinite(rowSnaps) && rowSnaps >= 20 ? rowSnaps : Number.isFinite(cachedSnaps) && cachedSnaps >= 20 ? cachedSnaps : null,
       source: row.source || (usingSavedRows ? "paste" : "static-cache"),
     };
   });
@@ -3514,11 +4644,22 @@ function pffPlayerMatchIndex() {
 
 function pffPasteSnapOffset(modelPosition) {
   const pos = groupPosition(modelPosition);
-  if (pos === "QB") return 7;
+  if (pos === "QB") return 10;
   if (["RB", "WR", "TE"].includes(pos)) return 10;
-  if (["OT", "OG", "C"].includes(pos)) return 9;
+  if (["OT", "OG", "C"].includes(pos)) return 7;
   if (pos === "LB") return 9;
   return 8;
+}
+
+function pffSnapFromValues(values, fallbackIndex = null) {
+  const cleaned = values.map((value) => String(value || "").replace(/,/g, "").trim());
+  if (fallbackIndex !== null) {
+    const fallback = Number(cleaned[fallbackIndex]);
+    if (Number.isFinite(fallback) && fallback >= 20) return fallback;
+  }
+  const start = fallbackIndex !== null ? Math.max(4, Math.min(cleaned.length - 1, fallbackIndex - 2)) : 4;
+  const snapText = cleaned.slice(start).find((value) => /^\d{2,4}$/.test(value) && Number(value) >= 20);
+  return Number.isFinite(Number(snapText)) ? Number(snapText) : null;
 }
 
 function parsePffPaste(text, modelPosition = "EDGE") {
@@ -3527,13 +4668,39 @@ function parsePffPaste(text, modelPosition = "EDGE") {
   const seen = new Set();
   const snapOffset = pffPasteSnapOffset(modelPosition);
   for (let index = 0; index < lines.length - 4; index += 1) {
+    const parts = lines[index].split("\t").map((part) => part.trim()).filter(Boolean);
+    if (parts.length >= 8 && /^\d{1,4}$/.test(parts[0].replace(/,/g, "")) && /^[A-Z]{2,4}$/.test(parts[2] || "")) {
+      const row = {
+        name: parts[1].replace(/\s+/g, " ").trim(),
+        player: parts[1].replace(/\s+/g, " ").trim(),
+        team: parts[2].toUpperCase(),
+        pffPosition: modelPosition,
+        modelPosition,
+        rank: Number(parts[0].replace(/,/g, "")),
+        ranked: null,
+        total: null,
+        grade: Number(String(parts[4] || "").replace(/,/g, "")),
+        snaps: pffSnapFromValues(parts, snapOffset),
+        snapPercentile: null,
+        source: "paste",
+        importedAt: new Date().toISOString(),
+      };
+      if (row.name && Number.isFinite(row.grade)) {
+        const key = pffManualKey(row);
+        if (!seen.has(key)) {
+          seen.add(key);
+          rows.push(row);
+        }
+      }
+      continue;
+    }
     const rankText = lines[index].replace(/,/g, "");
     if (!/^\d{1,4}$/.test(rankText)) continue;
     const name = lines[index + 1]?.replace(/\s+/g, " ").trim();
     const team = lines[index + 2]?.toUpperCase();
     const jersey = lines[index + 3] || "";
     const grade = Number(String(lines[index + 4] || "").replace(/,/g, ""));
-    const snaps = Number(String(lines[index + snapOffset] || "").replace(/,/g, ""));
+    const snaps = pffSnapFromValues(lines.slice(index, index + 18), snapOffset);
     if (!name || !/^[A-Z]{2,4}$/.test(team || "") || !/^#\s*\d+/.test(jersey) || !Number.isFinite(grade)) continue;
     const row = {
       name,
@@ -3586,6 +4753,12 @@ function detectPffPastePosition(text) {
 }
 
 function savePffManualRows(rows) {
+  const positions = new Set(rows.map((row) => groupPosition(row.modelPosition || row.pffPosition)));
+  Object.keys(pffManualRanks).forEach((key) => {
+    const row = pffManualRanks[key] || {};
+    const keyPosition = groupPosition(row.modelPosition || row.pffPosition || String(key).split("__")[0]);
+    if (positions.has(keyPosition)) delete pffManualRanks[key];
+  });
   rows.forEach((row) => {
     pffManualRanks[pffManualKey(row)] = row;
   });
@@ -3614,18 +4787,29 @@ function pffTrustLabel(pff) {
 
 function importPffPaste() {
   const text = document.querySelector("#pff-paste-text")?.value || "";
-  const selectedPosition = document.querySelector("#pff-paste-position")?.value || state.pffPastePosition || "EDGE";
+  const selectedPosition = cleanPffPosition(document.querySelector("#pff-paste-position")?.value || state.pffPastePosition || "EDGE");
   const detectedPosition = detectPffPastePosition(text);
-  const position = detectedPosition || selectedPosition;
+  const position = cleanPffPosition(detectedPosition || selectedPosition);
   state.pffPastePosition = position;
   const rows = parsePffPaste(text, position);
   if (!rows.length) {
-    state.pffManualNotice = "No PFF rows found. Copy the full position table and paste it here.";
+    state.pffManualNotice = `No ${position} PFF rows found. Make sure ${position} is selected, then copy the full PFF table including Rank, Name, Team, PFF Grade, and Snaps.`;
     render();
     return;
   }
   savePffManualRows(rows);
-  state.pffManualNotice = `Imported ${rows.length} ${position} PFF rank rows${detectedPosition ? " after detecting the pasted page type" : ""}. Madden comparison will use these first.`;
+  state.pffView = "review";
+  state.pffManualNotice = `Imported ${rows.length} ${position} PFF rank rows${detectedPosition ? " after detecting the pasted page type" : ""}. Review rows below; Madden Comparison is using them now too.`;
+  render();
+}
+
+function clearPffImports() {
+  Object.keys(pffManualRanks).forEach((key) => delete pffManualRanks[key]);
+  Object.keys(pffRecentAdjustments).forEach((key) => delete pffRecentAdjustments[key]);
+  storage.set("nflz-pff-manual-ranks", pffManualRanks);
+  storage.set("nflz-pff-recent-adjustments", pffRecentAdjustments);
+  invalidatePffIndexes();
+  state.pffManualNotice = "Cleared all pasted PFF imports. Start fresh by selecting a position, pasting that PFF table, and importing.";
   render();
 }
 
@@ -3641,11 +4825,13 @@ function pffRankInfo(player) {
   const manual = manualPositionRows.find((row) => normalizeName(row.name || row.player) === name && String(row.team || "").toUpperCase() === teamCode)
     || manualPositionRows.find((row) => normalizeName(row.name || row.player) === name);
   if (manual) {
+    const manualSnaps = Number(manual.snaps);
+    const cachedSnaps = Number(cachedExact?.snaps);
     const enriched = {
       ...manual,
       grade: usefulPffGrade(manual.grade) ?? usefulPffGrade(cachedExact?.grade),
-      snaps: Number.isFinite(Number(manual.snaps)) ? manual.snaps : cachedExact?.snaps,
-      snapPercentile: Number.isFinite(Number(manual.snapPercentile)) ? manual.snapPercentile : cachedExact ? pffSnapPercentile(cachedExact, positionRows) : pffSnapPercentile(manual, manualPositionRows),
+      snaps: Number.isFinite(manualSnaps) && manualSnaps >= 20 ? manualSnaps : Number.isFinite(cachedSnaps) && cachedSnaps >= 20 ? cachedSnaps : null,
+      snapPercentile: Number.isFinite(manualSnaps) && manualSnaps >= 20 && Number.isFinite(Number(manual.snapPercentile)) ? manual.snapPercentile : cachedExact ? pffSnapPercentile(cachedExact, positionRows) : pffSnapPercentile(manual, manualPositionRows),
     };
     return { ...enriched, total: manual.total || manual.ranked || manualPositionRows.length, manual: true };
   }
@@ -3664,15 +4850,17 @@ function pffHasGrade(pff) {
 function renderMaddenPffCell(pff) {
   if (!pff) return "-";
   const hasGrade = pffHasGrade(pff);
-  const source = pff.manual ? "paste" : "cache";
+  const source = pff.manual ? "paste" : pff.baseline ? "baseline" : "cache";
   const position = pff.pffPosition || pff.modelPosition || "PFF";
-  const gradeText = hasGrade ? fmt(pff.grade, 1) : "No grade";
-  const rankText = pff.rank ? `#${esc(pff.rank)} / ${esc(pff.total || "")}` : (hasGrade ? "PFF" : "Rank only");
+  const gradeText = hasGrade ? fmt(pff.grade, 1) : (pff.pffGradeText || "No grade");
+  const rankText = pff.rank ? `#${esc(pff.rank)} / ${esc(pff.total || "")}` : (pff.pffLabel || (hasGrade ? "PFF" : "Rank only"));
   const snapText = pff.snaps ? ` over ${fmt(pff.snaps, 0)} snaps` : "";
+  const pffPct = pffRankPercentile(pff);
+  const shadePct = pffPct === null ? (Number.isFinite(Number(pff.snapPercentile)) ? Number(pff.snapPercentile) : null) : pffPct * 100;
   const title = hasGrade
     ? `${source} ${position} PFF grade ${gradeText}${snapText}`
     : `${source} ${position} PFF rank/snaps found, but grade was not available. Paste this PFF position table to fill the grade.`;
-  return `<span class="madden-pff-rank ${hasGrade ? "" : "missing"}" title="${esc(title)}">${rankText}<small>${esc(gradeText)}</small></span>`;
+  return `<span class="madden-pff-rank ${hasGrade ? "" : "missing"}" ${shadePct === null ? "" : pffSnapStyle(shadePct)} title="${esc(title)}">${rankText}<small>${esc(gradeText)}</small></span>`;
 }
 
 function pffRankPercentile(pff) {
@@ -3685,24 +4873,30 @@ function pffRankPercentile(pff) {
 function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   if (!row.match) return null;
   const mine = num(row.match.rating);
+  const baseline = maddenBaselineFor(row);
   const madden = num(row.madden.ovr, mine);
   const gap = madden - mine;
   if (!gap) return mine;
   const pffPct = pffRankPercentile(pff);
   const snapPct = Number.isFinite(Number(pff?.snapPercentile)) ? Math.max(0.25, Math.min(1, Number(pff.snapPercentile) / 100)) : 0.5;
   const hasPff = pffPct !== null;
+  if (!hasPff && baseline && mine === num(baseline.mine) && Number.isFinite(Number(baseline.suggested))) {
+    return Math.max(68, Math.min(110, num(baseline.suggested)));
+  }
   const trust = hasPff ? Math.max(0.35, Math.min(1, 0.35 + (snapPct * 0.65))) : 0.45;
   let closePct;
   if (!hasPff) {
-    closePct = gap > 0 ? 0.16 : 0.32;
+    closePct = gap > 0 ? 0.1 : 0.14;
   } else if (gap > 0) {
-    closePct = pffPct >= 0.75
-      ? 0.7 + (0.22 * trust)
-      : pffPct >= 0.55
-        ? 0.46 + (0.26 * trust)
-        : pffPct >= 0.35
-          ? 0.2 + (0.18 * trust)
-          : 0.06 + (0.14 * trust);
+    closePct = pffPct >= 0.9
+      ? 0.82 + (0.16 * trust)
+      : pffPct >= 0.75
+        ? 0.68 + (0.22 * trust)
+        : pffPct >= 0.55
+          ? 0.42 + (0.26 * trust)
+          : pffPct >= 0.35
+            ? 0.18 + (0.18 * trust)
+            : 0.04 + (0.12 * trust);
   } else {
     closePct = pffPct >= 0.85
       ? 0.08 + (0.08 * (1 - trust))
@@ -3714,8 +4908,11 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   }
   closePct = Math.max(0.05, Math.min(0.92, closePct));
   let suggested = Math.round(mine + (gap * closePct));
-  if (!hasPff && gap > 0 && Math.abs(suggested - mine) > 2) suggested = mine + 2;
-  if (!hasPff && gap < 0 && Math.abs(suggested - mine) > 4) suggested = mine - 4;
+  if (!hasPff && Math.abs(suggested - mine) > 2) suggested = mine + (gap > 0 ? 2 : -2);
+  if (gap > 0 && hasPff && pffPct >= 0.88 && snapPct >= 0.65 && Math.abs(gap) >= 8) suggested = Math.max(suggested, madden - 1);
+  if (gap > 0 && hasPff && pffPct >= 0.8 && snapPct >= 0.55 && Math.abs(gap) >= 7) suggested = Math.max(suggested, madden - 2);
+  if (gap > 0 && hasPff && pffPct >= 0.7 && snapPct >= 0.45 && Math.abs(gap) >= 6) suggested = Math.max(suggested, mine + Math.min(Math.abs(gap), 5));
+  if (gap > 0 && hasPff && pffPct < 0.35 && Math.abs(suggested - mine) > 2) suggested = mine + 2;
   if (gap > 0 && hasPff && pffPct >= 0.75 && snapPct >= 0.35 && Math.abs(gap) >= 3) suggested = Math.max(suggested, mine + Math.min(Math.abs(gap), 3));
   if (gap > 0 && hasPff && pffPct >= 0.55 && snapPct >= 0.4 && Math.abs(gap) >= 4) suggested = Math.max(suggested, mine + 2);
   if (gap < 0 && hasPff && pffPct >= 0.8) suggested = Math.max(suggested, mine - 1);
@@ -3828,7 +5025,7 @@ function applyMaddenRating(key, rating, meta = {}) {
     return false;
   }
   markMaddenRecentAdjustment(key, player, safeRating, meta);
-  persistPlayer(player, { rating: safeRating, newRating: safeRating });
+  persistPlayer(player, { rating: safeRating, newRating: safeRating, ratingChangeType: "Manual adjustment", ratingChangeNote: meta.maddenPlayer ? `Madden ${meta.maddenPlayer} ${meta.maddenOvr || ""}`.trim() : "Madden comparison" });
   delete state.maddenPending[key];
   delete state.maddenSetTo[key];
   return true;
@@ -3860,7 +5057,7 @@ function renderMadden() {
     maddenSortHeader("team", "Madden Team"),
     maddenSortHeader("madden", "Madden", "num"),
     maddenSortHeader("mine", "Mine", "num"),
-    maddenSortHeader("diff", "Diff", "num"),
+    maddenSortHeader("diff", "Diff V", "num"),
     maddenSortHeader("pff", "PFF", "num"),
     maddenSortHeader("pffSnaps", "PFF Snaps", "num"),
     maddenSortHeader("suggested", "Suggested", "num"),
@@ -3875,6 +5072,7 @@ function renderMadden() {
     const diff = num(row.diff);
     const suggested = row.match ? maddenSuggestedRating(row, pff) : null;
     const suggestedDelta = row.match && suggested != null ? suggested - num(row.match.rating) : "";
+    const baseline = maddenBaselineFor(row);
     const targetRating = row.match ? Math.max(50, Math.min(110, state.maddenSetTo[row.key] ?? (num(row.match.rating) + num(row.pending)))) : "";
     return `<tr>
       <td>${renderMaddenPlayer(row)}</td>
@@ -3884,12 +5082,12 @@ function renderMadden() {
       <td class="num">${row.match ? ratingBadge(row.match.rating) : "-"}</td>
       <td class="num delta ${diff >= 0 ? "plus" : "minus"}">${row.match ? `${diff > 0 ? "+" : ""}${fmt(diff, 0)}` : "-"}</td>
       <td class="num">${renderMaddenPffCell(pff)}</td>
-      <td class="num">${pff && Number.isFinite(Number(pff.snapPercentile)) ? `<span class="madden-snap-pct" ${pffSnapStyle(pff.snapPercentile)} title="${esc(`${fmt(pff.snaps, 0)} snaps, ${pffTrustLabel(pff)} for this PFF position.`)}">${fmt(pff.snapPercentile, 0)}%<small>${fmt(pff.snaps, 0)}</small></span>` : "-"}</td>
+      <td class="num">${pff && Number.isFinite(Number(pff.snaps)) && Number(pff.snaps) >= 20 ? `<span class="madden-snap-pct" ${pffSnapStyle(pff.snapPercentile)} title="${esc(`${fmt(pff.snaps, 0)} snaps, ${pffTrustLabel(pff)} for this PFF position.`)}">${fmt(pff.snaps, 0)}<small>${Number.isFinite(Number(pff.snapPercentile)) ? `${fmt(pff.snapPercentile, 0)}%` : "no pct"}</small></span>` : "-"}</td>
       <td class="num">${renderMaddenSuggestion(row, pff)}</td>
       <td class="num delta ${num(suggestedDelta) >= 0 ? "plus" : "minus"}">${suggestedDelta !== "" ? `${suggestedDelta > 0 ? "+" : ""}${fmt(suggestedDelta, 0)}` : "-"}</td>
       <td class="num madden-pending-cell">${row.match ? `${row.pending > 0 ? "+" : ""}${fmt(row.pending, 0)}` : "-"}</td>
       <td>${renderMaddenMatchCell(row)}</td>
-      <td>${row.match ? `<span class="madden-adjust"><button data-madden-nudge="-1" data-player-key="${key}">-1</button><button data-madden-nudge="1" data-player-key="${key}">+1</button><label>Set to <input class="madden-manual-rating" data-madden-target="${key}" type="number" min="68" max="110" value="${fmt(targetRating, 0)}" /></label><button class="primary" data-madden-apply="${key}">Apply</button></span>` : ""}</td>
+      <td>${row.match ? `<span class="madden-adjust"><button data-madden-nudge="-1" data-player-key="${key}">-1</button><button data-madden-nudge="1" data-player-key="${key}">+1</button><label>Set to <input class="madden-manual-rating" data-madden-target="${key}" type="number" min="68" max="110" value="${fmt(targetRating, 0)}" /></label><button class="primary" data-madden-apply="${key}">Apply</button>${baseline && num(row.match.rating) !== num(baseline.mine) ? `<button data-madden-baseline-one="${key}" data-madden-baseline-value="${esc(baseline.mine)}" title="Restore this row to the good Madden baseline Mine rating.">Restore ${fmt(baseline.mine, 0)}</button>` : ""}</span>` : ""}</td>
     </tr>`;
   }).join("");
   setTimeout(() => {
@@ -3966,6 +5164,7 @@ function renderMadden() {
       render();
     });
     document.querySelector("#madden-approve-suggested")?.addEventListener("click", () => {
+      setRatingHistoryStart(new Date(Date.now() - 1000).toISOString());
       filteredRows.forEach((row) => {
         if (!row.match || !row.key) return;
         if (maddenRecentAdjustments[row.key]) return;
@@ -3973,6 +5172,31 @@ function renderMadden() {
         if (suggested == null || suggested === num(row.match.rating)) return;
         applyMaddenRating(row.key, suggested, { maddenPlayer: row.madden?.player, maddenOvr: row.madden?.ovr });
       });
+      render();
+    });
+    document.querySelectorAll("[data-madden-baseline-one]").forEach((button) => button.addEventListener("click", () => {
+      const key = button.dataset.maddenBaselineOne;
+      const player = findPlayer(key);
+      if (!player) return;
+      const rating = Math.max(68, Math.min(110, num(button.dataset.maddenBaselineValue, player.rating)));
+      persistPlayer(player, { rating, newRating: rating, ratingChangeType: "Manual adjustment", ratingChangeNote: "Madden baseline restore" });
+      delete maddenRecentAdjustments[key];
+      storage.set("nflz-madden-recent-adjustments", maddenRecentAdjustments);
+      render();
+    }));
+    document.querySelector("#madden-restore-baseline")?.addEventListener("click", () => {
+      const toRestore = filteredRows.filter((row) => row.match && row.key && maddenBaselineFor(row) && num(row.match.rating) !== num(maddenBaselineFor(row).mine));
+      if (!toRestore.length) return;
+      if (!confirm(`Restore ${toRestore.length} Madden rows to the pasted good Mine ratings?`)) return;
+      toRestore.forEach((row) => {
+        const baseline = maddenBaselineFor(row);
+        const rating = Math.max(68, Math.min(110, num(baseline.mine, row.match.rating)));
+        persistPlayer(row.match, { rating, newRating: rating, ratingChangeType: "Manual adjustment", ratingChangeNote: "Madden baseline restore" });
+        delete maddenRecentAdjustments[row.key];
+      });
+      storage.set("nflz-madden-recent-adjustments", maddenRecentAdjustments);
+      state.maddenPending = {};
+      state.maddenSetTo = {};
       render();
     });
     document.querySelector("#madden-clear-recent")?.addEventListener("click", () => {
@@ -3988,7 +5212,7 @@ function renderMadden() {
       entries.forEach(([key, recent]) => {
         const player = findPlayer(key);
         if (!player || !Number.isFinite(Number(recent.oldRating))) return;
-        persistPlayer(player, { rating: Number(recent.oldRating), newRating: Number(recent.oldRating) });
+        persistPlayer(player, { rating: Number(recent.oldRating), newRating: Number(recent.oldRating), ratingChangeType: "Manual adjustment", ratingChangeNote: "Undo Madden adjustment" });
       });
       Object.keys(maddenRecentAdjustments).forEach((key) => delete maddenRecentAdjustments[key]);
       storage.set("nflz-madden-recent-adjustments", maddenRecentAdjustments);
@@ -4011,12 +5235,14 @@ function renderMadden() {
   const setToCount = Object.keys(state.maddenSetTo).filter((key) => findPlayer(key) && num(state.maddenSetTo[key]) !== num(findPlayer(key)?.rating)).length;
   const recentCount = Object.keys(maddenRecentAdjustments).length;
   const suggestedCount = filteredRows.filter((row) => row.match && row.key && !maddenRecentAdjustments[row.key] && maddenSuggestedRating(row) !== num(row.match.rating)).length;
+  const baselineRestoreCount = filteredRows.filter((row) => row.match && maddenBaselineFor(row) && num(row.match.rating) !== num(maddenBaselineFor(row).mine)).length;
   return `<section class="panel madden-panel">
     <div class="toolbar madden-toolbar">
       <div><h2>Madden Rating Comparison</h2><p>${maddenRows.length} EA Madden 27 non-specialist rows loaded. ${matched.length} exact matches, ${review.length} review matches, ${unmatched.length} need review/add.</p></div>
       <div class="filters">
         <button id="madden-set-adjusted" class="mini-action primary">Set Adjusted${setToCount ? ` ${setToCount}` : ""}</button>
         ${suggestedCount ? `<button id="madden-approve-suggested" class="mini-action primary" title="Skips rows already marked recently adjusted.">Approve All Suggested (${suggestedCount})</button>` : ""}
+        ${baselineRestoreCount ? `<button id="madden-restore-baseline" class="mini-action danger" title="Restores rows in this filtered Madden view to the pasted good Mine ratings.">Restore Good Mine Ratings (${baselineRestoreCount})</button>` : ""}
         ${pendingCount ? `<button id="madden-apply-all" class="mini-action">Apply ${pendingCount} Pending</button>` : ""}
         ${recentCount ? `<button id="madden-undo-recent" class="mini-action danger" title="Restores recently adjusted Madden players to their previous ratings.">Undo Recent Madden (${recentCount})</button>` : ""}
         ${recentCount ? `<button id="madden-clear-recent" class="mini-action">Clear Recent (${recentCount})</button>` : ""}
@@ -4080,7 +5306,7 @@ function scheduleTeamLine(teamName, score, side, winner = false) {
 function scheduleGameCard(game, gameKey) {
   const projection = scheduleProjection(game);
   const winProfile = projectionWinProfile(game, projection);
-  const winAbbrev = projection.favorite ? teamByName(projection.favorite)?.teamAbbrev || projection.favorite : "PK";
+  const winAbbrev = projection.favorite ? teamAbbrevFor(projection.favorite) : "PK";
   const oddsText = projection.favorite ? `${fmt(winProfile.favoriteChance * 100, 1)}% ${winAbbrev} Win` : "50.0% Pick'em";
   const averages = scheduleMetricAverages();
   const hfa = scheduleHomeAdvantage(game, projection.mode);
@@ -4099,9 +5325,9 @@ function scheduleGameCard(game, gameKey) {
     </div>
     <div class="schedule-bubbles">
       ${scheduleBubble("My Spread", spreadLabel(game), "", relativeMetricStyle(projection.spread, averages.spread, 8))}
-      ${scheduleBubble("Odds", oddsText, "", relativeMetricStyle(winProfile.favoriteChance * 100, 55, 22))}
+      ${scheduleBubble("ODDS", oddsText, "", relativeMetricStyle(winProfile.favoriteChance * 100, 55, 22))}
       ${scheduleBubble("Total", fmt(projection.total, 1), "", relativeMetricStyle(projection.total, averages.total, 16))}
-      ${scheduleBubble("HFA", `+${fmt(hfa, 1)}`, "", relativeMetricStyle(hfa, projection.mode === "preseason" ? 0.8 : 1.5, 3))}
+      ${scheduleBubble("HFA", `+${fmt(hfa, 1)}`, "", relativeMetricStyle(hfa, 1.5, 3))}
     </div>
     ${scheduleMarketCards(game, projection)}
     ${schedulePickPanel(game, gameKey, projection)}
@@ -4164,7 +5390,7 @@ function scheduleBreakdown() {
       <div class="schedule-detail-metrics">
         ${metric("My Spread", spreadLabel(game), game.favorite || "Pick'em")}
         ${metric("Total", fmt(projection.total, 1), "Projected points")}
-        ${metric("Win Odds", `${fmt(winProfile.favoriteChance * 100, 1)}%`, winProfile.favorite ? `${teamByName(winProfile.favorite)?.teamAbbrev || winProfile.favorite} win` : "Pick'em")}
+        ${metric("Win Odds", `${fmt(winProfile.favoriteChance * 100, 1)}%`, winProfile.favorite ? `${teamAbbrevFor(winProfile.favorite)} win` : "Pick'em")}
         ${metric("Model ML", winProfile.favorite === game.visitor ? `${visitorAbbrev} ${winProfile.visitorMl}` : winProfile.favorite === game.home ? `${homeAbbrev} ${winProfile.homeMl}` : "PK", `${visitorAbbrev} ${winProfile.visitorMl} / ${homeAbbrev} ${winProfile.homeMl}`)}
         ${metric("HFA", `+${fmt(hfa, 1)}`, "Home adjustment")}
       </div>
@@ -4191,11 +5417,18 @@ function scheduleBreakdown() {
 function renderSchedule() {
   const weeks = scheduleWeekOptions(true);
   const teams = ["All Teams", ...unique(scheduleGames().flatMap((g) => [g.visitor, g.home]))];
-  if (state.scheduleView === "week" && state.scheduleWeek === "All Weeks") state.scheduleWeek = selectedSiteWeek() || "All Weeks";
+  if (state.scheduleWeek === "Current Week") state.scheduleWeek = selectedSiteWeek() || "All Weeks";
+  const validScheduleWeeks = new Set(weeks.map(([value]) => value));
+  if (!validScheduleWeeks.has(state.scheduleWeek)) state.scheduleWeek = selectedSiteWeek() || "All Weeks";
   let games = scheduleGames().filter(matches);
   if (state.scheduleView === "week" && state.scheduleWeek !== "All Weeks") games = games.filter((g) => scheduleWeekMatches(g, state.scheduleWeek));
   if (state.scheduleTeam !== "All Teams") games = games.filter((g) => normalizeTeamName(g.visitor) === normalizeTeamName(state.scheduleTeam) || normalizeTeamName(g.home) === normalizeTeamName(state.scheduleTeam));
-  const cardsByWeek = games.reduce((groups, game) => {
+  const totalGames = games.length;
+  const visibleLimit = Number.isFinite(Number(state.scheduleVisibleLimit)) ? Number(state.scheduleVisibleLimit) : 80;
+  const visibleGames = games.slice(0, Math.max(1, visibleLimit));
+  const hiddenGameCount = Math.max(0, totalGames - visibleGames.length);
+  const gameCountText = hiddenGameCount ? `${visibleGames.length} of ${totalGames} games shown` : `${totalGames} games shown`;
+  const cardsByWeek = visibleGames.reduce((groups, game) => {
     const key = game.week ? scheduleWeekGroupKey(game.week) : "Unscheduled";
     groups[key] = groups[key] || [];
     groups[key].push(game);
@@ -4203,19 +5436,36 @@ function renderSchedule() {
   }, {});
   const weekGroups = Object.entries(cardsByWeek).sort(([a], [b]) => weekSortValue(a) - weekSortValue(b));
   setTimeout(() => {
-    wireSelect("schedule-view", "scheduleView");
+    document.querySelector("#schedule-view")?.addEventListener("change", (event) => {
+      state.scheduleView = event.target.value;
+      state.scheduleVisibleLimit = 80;
+      render();
+    });
     wireScheduleControls();
     document.querySelector("#scan-draftkings-odds")?.addEventListener("click", scanDraftKingsOdds);
-    document.querySelector("#scan-espn-scores")?.addEventListener("click", scanEspnScores);
+    document.querySelectorAll(".scan-espn-scores").forEach((button) => button.addEventListener("click", scanEspnScores));
     document.querySelector("#schedule-week")?.addEventListener("change", (event) => {
       state.scheduleWeek = event.target.value;
+      state.scheduleVisibleLimit = 80;
       if (event.target.value !== "All Weeks") {
         state.siteWeek = event.target.value;
         storage.set("nflz-site-week", state.siteWeek);
       }
       render();
     });
-    wireSelect("schedule-team", "scheduleTeam");
+    document.querySelector("#schedule-team")?.addEventListener("change", (event) => {
+      state.scheduleTeam = event.target.value;
+      state.scheduleVisibleLimit = 80;
+      render();
+    });
+    document.querySelector("#schedule-show-more")?.addEventListener("click", () => {
+      state.scheduleVisibleLimit = visibleLimit + 80;
+      render();
+    });
+    document.querySelector("#schedule-show-all")?.addEventListener("click", () => {
+      state.scheduleVisibleLimit = Number.MAX_SAFE_INTEGER;
+      render();
+    });
     document.querySelectorAll(".game-pick-select").forEach((sel) => sel.addEventListener("change", () => {
       saveGameAction(sel.dataset.game, { [sel.dataset.field]: sel.value });
       render();
@@ -4231,7 +5481,7 @@ function renderSchedule() {
       render();
     }));
     document.querySelector(".schedule-groups")?.addEventListener("click", (event) => {
-      if (event.target.closest("select, input, button, label")) return;
+      if (isScheduleInteractiveTarget(event.target)) return;
       const card = event.target.closest(".schedule-card");
       if (!card) return;
       state.selectedScheduleKey = card.dataset.scheduleKey;
@@ -4239,6 +5489,7 @@ function renderSchedule() {
     });
     document.querySelectorAll(".schedule-card").forEach((card) => card.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
+      if (isScheduleInteractiveTarget(event.target)) return;
       event.preventDefault();
       state.selectedScheduleKey = card.dataset.scheduleKey;
       render();
@@ -4254,14 +5505,13 @@ function renderSchedule() {
   return `
     <section class="panel schedule-panel">
       <div class="toolbar schedule-toolbar">
-        <div><h2>Sim Schedule</h2><p>${games.length} games shown. Cards wrap to the page width; each game still keeps rating, favorite, odds, HFA, and pick controls.</p></div>
+        <div><h2>Season Schedule</h2><p class="schedule-count-line"><span>${gameCountText}. Cards wrap to the page width; each game still keeps rating, favorite, odds, HFA, and pick controls.</span><button class="mini-action scan-espn-scores" ${state.scoreScanStatus === "checking" ? "disabled" : ""}>Scan Scores</button></p></div>
         <div class="filters">
           ${optionSelect("schedule-view", state.scheduleView, [["season", "Season"], ["week", "Week"], ["team", "Team"]])}
           ${optionSelect("schedule-week", state.scheduleWeek, weeks)}
           ${select("schedule-team", state.scheduleTeam, teams)}
           ${optionSelect("schedule-sim-mode", state.scheduleSimMode, [["auto", `Auto (${scheduleActiveMode({ week: selectedSiteWeek(), preseason: String(selectedSiteWeek()).startsWith("Pre") })})`], ["preseason", "Preseason Mode"], ["regular", "Regular Mode"]])}
           <button id="scan-draftkings-odds" class="mini-action primary" ${state.draftKingsScanStatus === "checking" ? "disabled" : ""}>Scan DraftKings Odds</button>
-          <button id="scan-espn-scores" class="mini-action" ${state.scoreScanStatus === "checking" ? "disabled" : ""}>Scan ESPN Scores</button>
           <button id="schedule-controls-toggle" class="mini-action">${state.scheduleControlsOpen ? "Hide Sliders" : "Show Sliders"}</button>
           <button id="schedule-reset-controls" class="mini-action">Reset Sliders</button>
         </div>
@@ -4275,6 +5525,7 @@ function renderSchedule() {
           <div class="schedule-card-grid">${weekGames.map((game) => scheduleGameCard(game, scheduleGameKey(game, game.calendarIndex ?? state.data.schedule.indexOf(game)))).join("")}</div>
         </section>`).join("") || "<p class='note'>No games match the current filters.</p>"}
       </div>
+      ${hiddenGameCount ? `<div class="schedule-show-more"><button id="schedule-show-more" class="mini-action">Show ${Math.min(80, hiddenGameCount)} More Games</button><button id="schedule-show-all" class="mini-action">Show All ${totalGames}</button></div>` : ""}
       ${scheduleBreakdown()}
     </section>
   `;
@@ -4333,8 +5584,8 @@ function simStandingRows() {
     home.games += 1;
     if (probs.favorite === game.visitor) visitor.favored += 1;
     if (probs.favorite === game.home) home.favored += 1;
-    visitor.sosTotal += num(scheduleComposite(teamByName(game.home), "regular"), 84);
-    home.sosTotal += num(scheduleComposite(teamByName(game.visitor), "regular"), 84);
+    visitor.sosTotal += num(scheduleComposite(teamByName(game.home), "regular", game.week), 84);
+    home.sosTotal += num(scheduleComposite(teamByName(game.visitor), "regular", game.week), 84);
   });
   const finalRows = Object.values(rows).map((row) => ({ ...row, losses: 17 - row.wins, sos: row.games ? row.sosTotal / row.games : 0 }));
   finalRows.forEach((row) => {
@@ -4477,23 +5728,48 @@ function pickResultBadge(result) {
   return `<span class="pick-grade ${result.toLowerCase()}">${esc(result)}</span>`;
 }
 
-function gradeSpreadPick(pick, game, action) {
-  if (!pick || action.awayScore === "" || action.homeScore === "") return "";
-  const match = pick.match(/^(.+?)\s+([+-])([\d.]+)$/);
-  if (!match) return "";
+function spreadTeamTokenMatches(teamToken, teamName) {
+  const compact = (value) => String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const token = compact(teamToken);
+  if (!token) return false;
+  const abbrev = teamAbbrevFor(teamName, teamName);
+  const aliases = new Set([
+    compact(teamName),
+    compact(normalizeTeamName(teamName)),
+    compact(abbrev),
+  ]);
+  if (aliases.has("ARI")) aliases.add("ARZ");
+  if (aliases.has("ARZ")) aliases.add("ARI");
+  if (aliases.has("LAR")) aliases.add("LA");
+  if (aliases.has("LAC")) aliases.add("LA");
+  return aliases.has(token);
+}
+
+function spreadPickContext(pick, game, action) {
+  if (!pick || action.awayScore === "" || action.homeScore === "") return null;
+  const match = String(pick).trim().match(/^(.+?)\s+([+-])\s*([\d.]+)/);
+  if (!match) return null;
   const teamToken = match[1].trim();
   const sign = match[2];
   const line = num(match[3]);
-  const awayAbbrev = teamByName(game.visitor)?.teamAbbrev || game.visitor;
-  const homeAbbrev = teamByName(game.home)?.teamAbbrev || game.home;
-  const team = teamToken === awayAbbrev || teamToken === game.visitor ? game.visitor : teamToken === homeAbbrev || teamToken === game.home ? game.home : "";
-  if (!team) return "";
+  const team = spreadTeamTokenMatches(teamToken, game.visitor) ? game.visitor : spreadTeamTokenMatches(teamToken, game.home) ? game.home : "";
+  if (!team || !Number.isFinite(line)) return null;
   const teamScore = team === game.visitor ? num(action.awayScore) : num(action.homeScore);
   const oppScore = team === game.visitor ? num(action.homeScore) : num(action.awayScore);
   const adjusted = teamScore - oppScore + (sign === "+" ? line : -line);
-  if (adjusted > 0) return "Win";
-  if (adjusted < 0) return "Loss";
+  return { team, sign, line, adjusted };
+}
+
+function gradeSpreadPick(pick, game, action) {
+  const context = spreadPickContext(pick, game, action);
+  if (!context) return "";
+  if (context.adjusted > 0) return "Win";
+  if (context.adjusted < 0) return "Loss";
   return "Push";
+}
+
+function spreadCoverMargin(pick, game, action) {
+  return spreadPickContext(pick, game, action)?.adjusted ?? null;
 }
 
 function gradeTotalPick(pick, action) {
@@ -4509,6 +5785,22 @@ function gradeTotalPick(pick, action) {
 function gradeMlPick(pick, action) {
   if (!pick || !action.resultWinner) return "";
   return pick === action.resultWinner ? "Win" : "Loss";
+}
+
+function pickChoiceWithContext(label, context) {
+  return `<span class="pick-choice"><b>${esc(label || "-")}</b>${context ? `<em>${esc(context)}</em>` : ""}</span>`;
+}
+
+function spreadPickDisplay(pick, game, action) {
+  if (!pick) return "-";
+  const margin = spreadCoverMargin(pick, game, action);
+  return pickChoiceWithContext(pick, margin === null ? "" : `Cover ${margin > 0 ? "+" : ""}${fmt(margin, 1)}`);
+}
+
+function totalPickDisplay(pick, action) {
+  if (!pick) return "-";
+  const total = action.awayScore !== "" && action.homeScore !== "" ? num(action.awayScore) + num(action.homeScore) : null;
+  return pickChoiceWithContext(pick, total === null ? "" : `Total ${fmt(total, 0)}`);
 }
 
 function pickStats(rows, field) {
@@ -4538,7 +5830,7 @@ function renderPicksTracker() {
   const allStats = ["ml", "spread", "total"].map((field) => ({ field, ...pickStats(rows, field) }));
   const statCard = (label, stat) => `<div class="pick-stat"><span>${esc(label)}</span><strong>${fmt(stat.pct * 100, 1)}%</strong><em>${stat.wins}-${stat.losses}${stat.pushes ? `-${stat.pushes}` : ""}</em></div>`;
   return `<section class="panel picks-panel">
-    <div class="toolbar"><div><h2>Picks Tracker</h2><p>Tracks Model Z picks from Sim Schedule. Picks grade once the result winner and final score are entered or scanned.</p></div></div>
+    <div class="toolbar"><div><h2>Picks Tracker</h2><p>Tracks Model Z picks from Season Schedule. Picks grade once the result winner and final score are entered or scanned.</p></div></div>
     <div class="pick-stats-row">${statCard("ML", allStats[0])}${statCard("Spread", allStats[1])}${statCard("Total", allStats[2])}</div>
     ${groups.map((group) => {
       const groupRows = rows.filter((row) => row.type === group);
@@ -4552,9 +5844,9 @@ function renderPicksTracker() {
           <td>${teamCellByName(game.visitor)} at ${teamCellByName(game.home)}</td>
           <td>${esc(action.ml ? teamByName(action.ml)?.teamAbbrev || action.ml : "-")}</td>
           <td>${pickResultBadge(mlResult)}</td>
-          <td>${esc(action.spread || "-")}</td>
+          <td>${spreadPickDisplay(action.spread, game, action)}</td>
           <td>${pickResultBadge(spreadResult)}</td>
-          <td>${esc(action.total || "-")}</td>
+          <td>${totalPickDisplay(action.total, action)}</td>
           <td>${pickResultBadge(totalResult)}</td>
           <td>${action.awayScore !== "" && action.homeScore !== "" ? `${esc(action.awayScore)}-${esc(action.homeScore)}` : "-"}</td>
         </tr>`))}</div>
@@ -4641,9 +5933,9 @@ async function scanDraftKingsOdds() {
     const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/draftkings-odds-scan" : "/api/draftkings-odds-scan";
     const response = await fetch(apiUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
-    window.DRAFTKINGS_ODDS = await response.json();
+    window.DRAFTKINGS_ODDS = mergeDraftKingsOddsScan(await response.json(), window.DRAFTKINGS_ODDS);
     state.draftKingsScanStatus = "review";
-    state.draftKingsScanMessage = `Updated ${window.DRAFTKINGS_ODDS.games?.length || 0} DraftKings odds rows from ESPN.`;
+    state.draftKingsScanMessage = `Updated ${window.DRAFTKINGS_ODDS.freshGames || 0} DraftKings odds rows from ESPN; preserved ${window.DRAFTKINGS_ODDS.preservedPastGames || 0} past-game rows.`;
   } catch (error) {
     if (window.DRAFTKINGS_ODDS?.games?.length) {
       state.draftKingsScanStatus = "review";
@@ -4666,10 +5958,22 @@ function draftKingsStatusNote() {
 
 function applyScannedScores(payload) {
   let applied = 0;
+  const dateDistanceDays = (a, b) => {
+    if (!a || !b) return Infinity;
+    const left = dateOnly(a);
+    const right = dateOnly(b);
+    return Math.abs(left.getTime() - right.getTime()) / 86400000;
+  };
   (payload?.games || []).filter((game) => game.completed && game.winner).forEach((result) => {
     const match = scheduleGames()
       .map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) }))
-      .find((row) => row.game.visitor === result.visitor && row.game.home === result.home && row.game.date === result.date);
+      .find((row) => {
+        const sameTeams = normalizeTeamName(row.game.visitor) === normalizeTeamName(result.visitor) && normalizeTeamName(row.game.home) === normalizeTeamName(result.home);
+        if (!sameTeams) return false;
+        if (row.game.date === result.date) return true;
+        if (result.week && String(row.game.week) === String(result.week)) return true;
+        return dateDistanceDays(row.game.date, result.date) <= 1;
+      });
     if (!match) return;
     saveGameAction(match.key, {
       resultWinner: result.winner,
@@ -4916,8 +6220,29 @@ function renderWeeklyQbFormulaControls() {
   `;
 }
 
+function normalizeFantasyPositionLabel(label) {
+  const text = String(label || "").trim();
+  const upper = text.toUpperCase();
+  if (["QB", "RB", "WR", "TE"].includes(upper)) return upper;
+  if (upper === "HB") return "RB";
+  if (upper === "DST" || upper === "DEF" || upper.includes("DEFENSE")) return "Defense";
+  if (upper === "K" || upper.includes("KICK")) return "Kicker";
+  return text;
+}
+
 function fantasyRankPositions(kind) {
-  return Object.keys(fantasyRankBundle(kind));
+  const imported = Object.keys(fantasyRankBundle(kind)).map(normalizeFantasyPositionLabel);
+  const core = ["QB", "RB", "WR", "TE", "Defense", "Kicker"];
+  return [...new Set([...core, ...imported].filter(Boolean))];
+}
+
+function fantasyRankItem(kind, position) {
+  const bundle = fantasyRankBundle(kind);
+  const normalized = normalizeFantasyPositionLabel(position);
+  return bundle[position]
+    || bundle[normalized]
+    || Object.entries(bundle).find(([key]) => normalizeFantasyPositionLabel(key) === normalized)?.[1]
+    || { rows: [], sheet: normalized };
 }
 
 function fantasyDisplay(value, digits = 1) {
@@ -4990,17 +6315,61 @@ function teamRankingsByTeam(teamName) {
   return (window.TEAM_RANKINGS_SCAN?.teams || []).find((team) => normalizeTeamName(team.team) === normalized) || null;
 }
 
+function teamDepthRating(team, group, depth = 1, fallback = "") {
+  const teamName = typeof team === "string" ? team : team?.team;
+  const player = schedulePlayersFor(teamName, group)[depth - 1];
+  const value = player?.rating;
+  return Number.isFinite(Number(value)) ? Number(value) : fallback;
+}
+
+function weightedRatingAverage(parts, fallback = "") {
+  const score = weightedAverage(parts.map(([value, weight = 1]) => ({ value, weight })));
+  return Number.isFinite(Number(score)) ? score : fallback;
+}
+
+function matchupWeight(key) {
+  const saved = state.weeklyMatchupWeights || {};
+  if (saved[key] !== undefined || defaultWeeklyMatchupWeights[key] !== undefined) {
+    return num(saved[key], defaultWeeklyMatchupWeights[key] ?? 100) / 100;
+  }
+  const fallbackKey = key.replace(/\d+$/, "");
+  if (saved[fallbackKey] !== undefined) return num(saved[fallbackKey], 100) / 100;
+  return 0;
+}
+
 function qbDefenseRatingForTeam(team) {
   if (!team) return "";
-  const parts = [
-    [teamPositionScore(team, "CB"), 0.38],
-    [teamPositionScore(team, "S"), 0.28],
-    [teamPositionScore(team, "EDGE Def"), 0.18],
-    [teamPositionScore(team, "LB Only"), 0.08],
-    [teamPositionScore(team, "DL\n(DT + EDGE)"), 0.08],
-  ];
-  const score = parts.reduce((sum, [value, weight]) => Number.isFinite(Number(value)) ? sum + Number(value) * weight : sum, 0);
-  return score > 0 ? score : "";
+  return weightedRatingAverage([
+    ...["IDL", "EDGE", "LB", "CB", "S"].flatMap((group) => [1, 2, 3, 4, 5].map((depth) => [teamDepthRating(team, group, depth), matchupWeight(`vQB_${group}${depth}`)])),
+  ], teamPositionScore(team, "Defense") || 84);
+}
+
+function rbDefenseRatingForTeam(team) {
+  if (!team) return "";
+  return weightedRatingAverage([
+    ...["IDL", "EDGE", "LB"].flatMap((group) => [1, 2, 3, 4, 5].map((depth) => [teamDepthRating(team, group, depth), matchupWeight(`vRB_${group}${depth}`)])),
+  ], teamPositionScore(team, "Defense") || 84);
+}
+
+function wrDefenseRatingForTeam(team) {
+  if (!team) return "";
+  return weightedRatingAverage([
+    ...["CB", "S"].flatMap((group) => [1, 2, 3, 4, 5].map((depth) => [teamDepthRating(team, group, depth), matchupWeight(`vWR_${group}${depth}`)])),
+  ], teamPositionScore(team, "Defensive Backs") || teamPositionScore(team, "Defense") || 84);
+}
+
+function teDefenseRatingForTeam(team) {
+  if (!team) return "";
+  return weightedRatingAverage([
+    ...["EDGE", "LB", "S", "CB"].flatMap((group) => [1, 2, 3, 4, 5].map((depth) => [teamDepthRating(team, group, depth), matchupWeight(`vTE_${group}${depth}`)])),
+  ], teamPositionScore(team, "Defense") || 84);
+}
+
+function receiverMatchupRating(player, opponentTeam) {
+  const group = groupPosition(player.position);
+  if (group !== "WR" || !opponentTeam) return "";
+  const depth = Math.max(1, Math.min(3, num(player.depth, 3)));
+  return teamDepthRating(opponentTeam, "CB", depth, wrDefenseRatingForTeam(opponentTeam));
 }
 
 function weeklyQbStatPack(player, workbookRow) {
@@ -5079,7 +6448,7 @@ function weeklyQbScoreBreakdown(row, mode = "blend") {
 function buildWeeklyQbRows(workbookRows) {
   const week = selectedSiteWeek() || fantasyRankBundle("weekly")?.QB?.week || window.FANTASY_RANKINGS?.weeklyWeek || 1;
   const teams = state.data?.teams || [];
-  const allQbs = state.players.filter((player) => groupPosition(player.position) === "QB" || player.position === "QB");
+  const allQbs = state.players.filter((player) => player.team !== "Free Agent" && (groupPosition(player.position) === "QB" || player.position === "QB"));
   const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByWr = teams.map((team) => ({ team, score: teamPositionScore(team, "WR") })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByVqb = teams.map((team) => ({ team, score: qbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
@@ -5107,14 +6476,14 @@ function buildWeeklyQbRows(workbookRows) {
     const statVqbRank = rankNumber(rankedTeamsByStatVqb, (item) => item.score, opponentStatVqbRow) || "";
     const salary = Number(workbookRow?.extras?.Salary);
     const extras = {
-      "Opp vQB Rating": Number.isFinite(Number(oppVqbRating)) && oppVqbRating > 0 ? Number(oppVqbRating.toFixed(1)) : "",
+      "Opp vQB Rating": Number.isFinite(Number(oppVqbRating)) && Number(oppVqbRating) > 0 ? Number(Number(oppVqbRating).toFixed(1)) : "",
       "Matchup Rating (Low is good)": Number.isFinite(Number(matchupRating)) ? matchupRating : 16.5,
       "Stat vQB Rank": statVqbRank,
       "Player Rating Rank": "",
       "Value Rank": "",
       "FPros Name": workbookRow?.extras?.["FPros Name"] || "",
       "Salary": Number.isFinite(salary) && salary > 0 ? salary : "",
-      "OL Rating": Number.isFinite(Number(olRating)) ? Number(olRating.toFixed(3)) : "",
+      "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(3)) : "",
       "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, olRow),
       "PPG Rank": rankNumber(rankedByPpg, (item) => item.score, ppgRow),
       "WR Group Rating": Number.isFinite(Number(wrRating)) ? Number(wrRating.toFixed(3)) : "",
@@ -5205,7 +6574,435 @@ function weeklySkillTeamContext(position, team) {
   return team.offenseAverage || 84;
 }
 
+function weeklyRbStatPack(player, workbook = {}) {
+  const wb = (label) => fantasyDetailValue(workbook || {}, label);
+  const depth = Math.max(1, Math.min(4, num(player.depth, 3)));
+  const snapBase = 70 - (2 * (depth - 1));
+  const targetBase = 3.8 - (0.3 * (depth - 1));
+  const rzBase = 1.3 - (0.1 * (depth - 1));
+  const season = {
+    snapPct: num(wb("Typical Snap %"), snapBase),
+    targets: num(wb("Typical Targets"), targetBase),
+    rz: num(wb("Typical Red Zone Opportunities"), rzBase),
+  };
+  const last5 = {
+    snapPct: num(wb("!!LAST 5!!\nTypical Snap %") || wb("!!Last 5!!\nTypical Snap %"), season.snapPct),
+    targets: num(wb("!!LAST 5!!\nTypical Targets") || wb("!!Last 5!!\nTypical Targets"), season.targets),
+    rz: num(wb("!!LAST 5!!\nTypical Red Zone Opportunities") || wb("!!Last 5!!\nTypical Red Zone Opportunities"), season.rz),
+  };
+  return { season, last5 };
+}
+
+function weeklySkillOptions() {
+  return { ...defaultWeeklySkillOptions, ...state.weeklySkillOptions };
+}
+
+function weeklySkillLast5Blend(mode = "blend") {
+  const options = weeklySkillOptions();
+  if (!options.useProduction) return 0;
+  if (mode === "season" || !options.useLast5) return 0;
+  if (mode === "last5") return 1;
+  return 0.68;
+}
+
+function weeklySkillProductionValue(value, fallback) {
+  return weeklySkillOptions().useProduction ? num(value, fallback) : fallback;
+}
+
+function weeklyGameForTeam(teamName, week = selectedSiteWeek()) {
+  const teamKey = normalizeScheduleTeam(teamName);
+  return scheduleGames().find((item) => scheduleWeekMatches(item, week) && (normalizeScheduleTeam(item.visitor) === teamKey || normalizeScheduleTeam(item.home) === teamKey)) || null;
+}
+
+function weeklyTeamImpliedTotal(teamName, opponent = "") {
+  const game = weeklyGameForTeam(teamName);
+  if (!game) return "";
+  const projection = scheduleProjection(game);
+  const teamKey = normalizeScheduleTeam(teamName);
+  const isHome = normalizeScheduleTeam(game.home) === teamKey;
+  const value = isHome ? projection.home : projection.visitor;
+  return Number.isFinite(Number(value)) ? Number(Number(value).toFixed(1)) : "";
+}
+
+function weeklyGameScriptValue(teamName) {
+  const game = weeklyGameForTeam(teamName);
+  if (!game) return "";
+  const teamKey = normalizeScheduleTeam(teamName);
+  const isHome = normalizeScheduleTeam(game.home) === teamKey;
+  const projection = scheduleProjection(game);
+  const margin = isHome ? projection.home - projection.visitor : projection.visitor - projection.home;
+  return Number(margin.toFixed(1));
+}
+
+function weeklySkillExtraFactorMultiplier(row, position) {
+  const options = weeklySkillOptions();
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const active = (options.extraFactors || []).filter((key) => num(weights[key], 0) !== 0);
+  if (!active.length) return 1;
+  return active.reduce((factor, key) => {
+    const weight = num(weights[key], 0) / 100;
+    if (key === "gameScript") {
+      const margin = num(row.extras["Game Script"], 0);
+      const positionLean = position === "RB" ? margin : -margin * 0.35;
+      return factor * Math.max(0.92, Math.min(1.08, 1 + (positionLean / 80) * weight));
+    }
+    if (key === "teamTotal") {
+      return factor * Math.max(0.92, Math.min(1.1, 1 + ((num(row.extras["Team Total"], 22) - 22) / 100) * weight));
+    }
+    if (key === "opponentTd") {
+      if (!options.useStatRanks) return factor;
+      const rank = num(row.extras[position === "RB" ? "Rush TDs Allowed Rank" : "Pass TDs Allowed Rank"], 16.5);
+      return factor * Math.max(0.92, Math.min(1.08, 1 + ((16.5 - rank) / 170) * weight));
+    }
+    return factor;
+  }, 1);
+}
+
+function weeklyRbScoreBreakdown(row, mode = "blend") {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const scaleExp = (exp, key) => exp * (num(weights[key], 100) / 100);
+  const scaleTerm = (value, key) => value * (num(weights[key], 100) / 100);
+  const depthRaw = row.depth;
+  const depthN = Number.isFinite(Number(depthRaw)) ? Number(depthRaw) : 100;
+  const dBkt = Math.max(1, Math.min(4, depthN || 3));
+  const depthStep = dBkt - 1;
+  const injFlag = /inj|ir|out/i.test(String(row.injury || ""));
+  const oppRank = num(row.extras["Opp vRB Rank"], 16.5);
+  const olRank = num(row.extras["OL Rank"], 16.5);
+  const rating = num(row.rating, 75);
+  const ypgRank = num(row.extras["Team YPG Rank"], 16.5);
+  const ppgRank = num(row.extras["PPG Rank"], 16.5);
+  const wLast5 = weeklySkillLast5Blend(mode);
+  const snapPct = ((1 - wLast5) * weeklySkillProductionValue(row.extras["Typical Snap %"], 70)) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], weeklySkillProductionValue(row.extras["Typical Snap %"], 70)));
+  const targetsEffBase = ((1 - wLast5) * weeklySkillProductionValue(row.extras["Typical Targets"], 3.8)) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], weeklySkillProductionValue(row.extras["Typical Targets"], 3.8)));
+  const rzEffBase = ((1 - wLast5) * weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.3)) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.3)));
+  const playOK = (row.team === "Free Agent" || depthN <= 0 || depthN === 100 || injFlag || oppRank === 100) ? 0 : 1;
+  const depthF = Math.max(0.55, 1 - scaleTerm(0.08 * depthStep, "depth"));
+  const jF = Math.max(0.75, Math.min(1.25, 0.9 + scaleTerm(0.3 * (rating - 75) / 25, "talent")));
+  const matchF = Math.max(0.82, Math.min(1.18, 1 + scaleTerm((16.5 - oppRank) / 95, "matchup")));
+  const olF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - olRank) / 180, "oline")));
+  const ypgF = Math.max(0.93, Math.min(1.07, 1 + (16.5 - ypgRank) / 220));
+  const ppgF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - ppgRank) / 180, "ppg")));
+  const snapF = Math.max(0.45, Math.min(1.15, 1 + scaleTerm((snapPct / 70) - 1, "usage")));
+  const targetsEff = scaleTerm(targetsEffBase, "usage") * (jF ** 0.25) * (ypgF ** 0.2);
+  const rzEff = scaleTerm(rzEffBase, "redZone") * (ppgF ** 0.3);
+  const carries = (15 * depthF * snapF * (jF ** scaleExp(0.35, "talent")) * (matchF ** scaleExp(0.38, "matchup")) * (ypgF ** 0.14)) ** 0.98;
+  const ypc = 4.25 * (jF ** scaleExp(0.35, "talent")) * (matchF ** scaleExp(0.3, "matchup")) * (olF ** scaleExp(0.38, "oline")) * (ypgF ** 0.28);
+  const rushYds = carries * ypc;
+  const rec = (targetsEff * 0.72) ** 0.98;
+  const recYds = rec * (7.3 * (jF ** scaleExp(0.2, "talent")) * (matchF ** scaleExp(0.22, "matchup")) * (ypgF ** 0.19));
+  const tds = (rzEff * 0.17 * (jF ** scaleExp(1.2, "talent")) * (matchF ** scaleExp(0.88, "matchup")) * olF * (ppgF ** scaleExp(0.55, "ppg"))) ** 0.95;
+  const extraF = weeklySkillExtraFactorMultiplier(row, "RB");
+  const standardBase = Math.max(0, 0.1 * rushYds + 0.1 * recYds + 6 * tds);
+  const standard = playOK * standardBase * extraF;
+  const half = playOK * Math.max(0, standardBase + 0.5 * rec) * extraF;
+  const full = playOK * Math.max(0, standardBase + rec) * extraF;
+  return {
+    mode,
+    snapPct,
+    targets: targetsEffBase,
+    rz: rzEffBase,
+    carries,
+    rushYds,
+    rec,
+    recYds,
+    tds,
+    extraF,
+    standard: Number(standard.toFixed(1)),
+    half: Number(half.toFixed(1)),
+    full: Number(full.toFixed(1)),
+  };
+}
+
+function buildWeeklyRbRows(workbookRows) {
+  const week = selectedSiteWeek() || 1;
+  const teams = state.data?.teams || [];
+  const players = state.players.filter((player) => groupPosition(player.position) === "RB" || player.position === "RB");
+  const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamsByVrb = teams.map((team) => ({ team, score: rbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  const useStatRanks = weeklySkillOptions().useStatRanks;
+  const rankedTeamYpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(team.team).offYardsRank) : team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamPpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(team.team).offPointsRank) : team.offenseRating })).filter((row) => Number.isFinite(Number(row.score)));
+  const rows = players.filter((player) => player.team !== "Free Agent").map((player) => {
+    const workbook = workbookRowByName(workbookRows, player.player) || {};
+    const team = teamByName(player.team);
+    const opponent = scheduleOpponent(player.team, week);
+    const opponentTeam = teamByName(opponent);
+    const stats = weeklyRbStatPack(player, workbook);
+    const olRating = team ? teamPositionScore(team, "OL") : 84;
+    const vrbRating = rbDefenseRatingForTeam(opponentTeam);
+    const extras = {
+      ...(workbook.extras || {}),
+      "Opp vRB Rating": Number.isFinite(Number(vrbRating)) ? Number(Number(vrbRating).toFixed(1)) : "",
+      "Opp vRB Rank": rankNumber(rankedTeamsByVrb, (item) => item.score, { team: opponentTeam, score: vrbRating }, false) || 16.5,
+      "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(1)) : "",
+      "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, { team, score: olRating }) || 16.5,
+      "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(player.team).offYardsRank) : team?.offenseAverage }) || 16.5,
+      "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : team?.offenseRating }) || 16.5,
+      "Game Script": weeklyGameScriptValue(player.team),
+      "Team Total": weeklyTeamImpliedTotal(player.team, opponent),
+      "Rush TDs Allowed Rank": teamRankingsByTeam(opponent)?.rushTdAllowedRank || "",
+      "Typical Snap %": Number(stats.season.snapPct.toFixed(1)),
+      "Typical Targets": Number(stats.season.targets.toFixed(2)),
+      "Typical Red Zone Opportunities": Number(stats.season.rz.toFixed(2)),
+      "!!LAST 5!!\nTypical Snap %": Number(stats.last5.snapPct.toFixed(1)),
+      "!!LAST 5!!\nTypical Targets": Number(stats.last5.targets.toFixed(2)),
+      "!!LAST 5!!\nTypical Red Zone Opportunities": Number(stats.last5.rz.toFixed(2)),
+      "Stat Source": "Depth/rating formula; RB Footballguys scan pending",
+    };
+    const row = {
+      ...workbook,
+      player: player.player,
+      position: "RB",
+      team: player.team,
+      opponent,
+      rating: num(player.rating, 68),
+      depth: player.depth,
+      injury: player.injury,
+      _playerKey: sourceKey(player),
+      extras,
+    };
+    const blend = weeklyRbScoreBreakdown(row, "blend");
+    const season = weeklyRbScoreBreakdown(row, "season");
+    const last5 = weeklyRbScoreBreakdown(row, "last5");
+    row.score = blend.half;
+    row.standardScore = blend.standard;
+    row.halfPprScore = blend.half;
+    row.fullPprScore = blend.full;
+    row.seasonScore = season.half;
+    row.last5Score = last5.half;
+    row.value = row.score;
+    row.extras["Std"] = blend.standard;
+    row.extras["Half PPR"] = blend.half;
+    row.extras["Full PPR"] = blend.full;
+    row.extras["Carries"] = Number(blend.carries.toFixed(1));
+    row.extras["Rush Yds"] = Number(blend.rushYds.toFixed(1));
+    row.extras["Receptions"] = Number(blend.rec.toFixed(1));
+    row.extras["Rec Yds"] = Number(blend.recYds.toFixed(1));
+    row.extras["TDs"] = Number(blend.tds.toFixed(2));
+    return row;
+  });
+  rows.forEach((row) => {
+    row.rank = rankNumber(rows, (item) => item.score, row);
+    row.scoreRank = row.rank;
+    row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
+    row.extras["Player Rating Rank"] = rankNumber(rows, (item) => item.rating, row);
+    row.extras["Std Rank"] = rankNumber(rows, (item) => item.standardScore, row);
+    row.extras["Half PPR Rank"] = rankNumber(rows, (item) => item.halfPprScore, row);
+    row.extras["Full PPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
+  });
+  return rows;
+}
+
+function receiverBaseUsage(position, depth) {
+  const d = Math.max(1, Math.min(4, num(depth, 3)));
+  if (position === "TE") {
+    return {
+      targets: [6.4, 4.2, 2.4, 1.2][d - 1],
+      snapPct: [80, 60, 35, 20][d - 1],
+      rz: [0.9, 0.6, 0.35, 0.2][d - 1],
+    };
+  }
+  return {
+    targets: [8, 6.5, 5, 2.5][d - 1],
+    snapPct: [90, 82, 68, 40][d - 1],
+    rz: [1.2, 0.9, 0.6, 0.3][d - 1],
+  };
+}
+
+function weeklyReceiverStatPack(player, position, workbook = {}) {
+  const wb = (label) => fantasyDetailValue(workbook || {}, label);
+  const base = receiverBaseUsage(position, player.depth);
+  const season = {
+    targets: num(wb("Typical Targets"), base.targets),
+    snapPct: num(wb("Typical Snap %"), base.snapPct),
+    rz: num(wb("Typical Red Zone Opportunities"), base.rz),
+  };
+  const last5 = {
+    targets: num(wb("!!LAST 5!!\nTypical Targets") || wb("!!Last 5!!\nTypical Targets"), season.targets),
+    snapPct: num(wb("!!LAST 5!!\nTypical Snap %") || wb("!!Last 5!!\nTypical Snap %"), season.snapPct),
+    rz: num(wb("!!LAST 5!!\nTypical Red Zone Opportunities") || wb("!!Last 5!!\nTypical Red Zone Opportunities"), season.rz),
+  };
+  return { season, last5, base };
+}
+
+function weeklyWrScoreBreakdown(row, mode = "blend") {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const scaleExp = (exp, key) => exp * (num(weights[key], 100) / 100);
+  const scaleTerm = (value, key) => value * (num(weights[key], 100) / 100);
+  const depthN = Number.isFinite(Number(row.depth)) ? Number(row.depth) : 100;
+  const dBkt = Math.max(1, Math.min(4, depthN || 3));
+  const injFlag = /inj|ir|out/i.test(String(row.injury || ""));
+  const oppWr = num(row.extras["Opp vWR Rank"], 16.5);
+  const matchVal = num(row.extras["CB Matchup Rating"], num(row.extras["Opp vWR Rating"], 84));
+  const wrRate = num(row.rating, 75);
+  const ppgRank = num(row.extras["PPG Rank"], 16.5);
+  const simPpg = num(row.extras["Team PPG"], 50);
+  const qbRat = num(row.extras["QB Rating"], 75);
+  const qbRank = num(row.extras["QB Rank"], 16.5);
+  const cbDepthRate = num(row.extras["CB Matchup Rating"], matchVal);
+  const passTDRank = num(row.extras["Pass TDs Allowed Rank"], 16.5);
+  const wRec = weeklySkillLast5Blend(mode);
+  const targets = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Targets"], 8)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], weeklySkillProductionValue(row.extras["Typical Targets"], 8)));
+  const snapPct = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Snap %"], 90)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], weeklySkillProductionValue(row.extras["Typical Snap %"], 90)));
+  const rzBase = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.2)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.2)));
+  const playOK = (row.team === "Free Agent" || depthN <= 0 || depthN === 100 || injFlag || oppWr === 100 || matchVal === 100) ? 0 : 1;
+  const depthF = Math.max(0.45, 1 - scaleTerm(0.1 * (dBkt - 1), "depth"));
+  const qbF = (Math.max(0.85, Math.min(1.15, 1 + scaleTerm((qbRat - 75) / 180, "qb"))) * Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - qbRank) / 170, "qb")))) ** 0.5;
+  const matchF = Math.max(0.72, Math.min(1.38, 1 + scaleTerm((50 - matchVal) / 70, "matchup")));
+  const cbF = Math.max(0.9, Math.min(1.1, 1 + (50 - cbDepthRate) / 300));
+  const mF = matchF * cbF;
+  const ypgF = Math.max(0.93, Math.min(1.07, 1 + (16.5 - num(row.extras["Team YPG Rank"], 16.5)) / 220));
+  const ppgF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - ppgRank) / 180, "ppg")));
+  const passTDF = Math.max(0.92, Math.min(1.07, 1 + (16.5 - passTDRank) / 200));
+  const wrF = Math.max(0.78, Math.min(1.28, 0.9 + scaleTerm(0.38 * (wrRate - 75) / 25, "talent")));
+  const usageF = Math.max(0.45, Math.min(1.2, 1 + scaleTerm((snapPct / 75) - 1, "usage")));
+  const targetEff = scaleTerm(targets, "usage") * depthF * usageF * (mF ** scaleExp(0.72, "matchup")) * (qbF ** scaleExp(0.2, "qb")) * (wrF ** scaleExp(0.35, "talent")) * (ypgF ** 0.15);
+  const rz = scaleTerm(rzBase, "redZone") * depthF * (mF ** scaleExp(0.82, "matchup")) * (ppgF ** 0.25);
+  const rec = targetEff * 0.64;
+  const recYds = rec * (11.7 * (mF ** scaleExp(0.55, "matchup")) * (wrF ** scaleExp(0.32, "talent")) * (qbF ** scaleExp(0.18, "qb")));
+  const tds = (rz * 0.125 * (mF ** scaleExp(1.08, "matchup")) * (wrF ** scaleExp(0.55, "talent")) * qbF * ppgF * passTDF * ((snapPct / 75) ** scaleExp(0.12, "usage"))) ** 0.95;
+  const extraF = weeklySkillExtraFactorMultiplier(row, "WR");
+  const standard = playOK * Math.max(0, 0.1 * recYds + 6 * tds) * extraF;
+  const half = playOK * Math.max(0, 0.1 * recYds + 6 * tds + 0.5 * rec) * extraF;
+  const full = playOK * Math.max(0, 0.1 * recYds + 6 * tds + rec) * extraF;
+  return { mode, targets: targetEff, snapPct, rz, rec, recYds, tds, standard: Number(Math.max(0, standard).toFixed(1)), half: Number(Math.max(0, half).toFixed(1)), full: Number(Math.max(0, full).toFixed(1)) };
+}
+
+function weeklyTeScoreBreakdown(row, mode = "blend") {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const scaleExp = (exp, key) => exp * (num(weights[key], 100) / 100);
+  const scaleTerm = (value, key) => value * (num(weights[key], 100) / 100);
+  const depthN = Number.isFinite(Number(row.depth)) ? Number(row.depth) : 100;
+  const dBkt = Math.max(1, Math.min(4, depthN || 3));
+  const injFlag = /inj|ir|out/i.test(String(row.injury || ""));
+  const qbRat = num(row.extras["QB Rating"], 75);
+  const qbRank = num(row.extras["QB Rank"], 16.5);
+  const oppTE = num(row.extras["Opp vTE Rank"], 16.5);
+  const matchVal = num(row.extras["Opp vTE Rating"], 84);
+  const pRating = num(row.rating, 75);
+  const olRank = num(row.extras["OL Rank"], 16.5);
+  const ppgRank = num(row.extras["PPG Rank"], 16.5);
+  const wRec = weeklySkillLast5Blend(mode);
+  const targets = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Targets"], receiverBaseUsage("TE", dBkt).targets)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], weeklySkillProductionValue(row.extras["Typical Targets"], receiverBaseUsage("TE", dBkt).targets)));
+  const snapPct = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Snap %"], receiverBaseUsage("TE", dBkt).snapPct)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], weeklySkillProductionValue(row.extras["Typical Snap %"], receiverBaseUsage("TE", dBkt).snapPct)));
+  const rzBase = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], receiverBaseUsage("TE", dBkt).rz)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], receiverBaseUsage("TE", dBkt).rz)));
+  const playOK = row.team === "Free Agent" || depthN <= 0 || depthN === 100 || injFlag ? 0 : 1;
+  const depthF = Math.max(0.5, 1 - scaleTerm(0.12 * (dBkt - 1), "depth"));
+  const qbF = (Math.max(0.85, Math.min(1.15, 1 + scaleTerm((qbRat - 75) / 190, "qb"))) * Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - qbRank) / 180, "qb")))) ** 0.5;
+  const posF = (Math.max(0.86, Math.min(1.14, 1 + scaleTerm((16.5 - oppTE) / 140, "matchup"))) * Math.max(0.88, Math.min(1.12, 1 + scaleTerm((84 - matchVal) / 260, "matchup")))) ** 0.5;
+  const olF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - olRank) / 180, "oline")));
+  const ppgF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - ppgRank) / 180, "ppg")));
+  const usageF = Math.max(0.45, Math.min(1.18, 1 + scaleTerm((snapPct / 70) - 1, "usage")));
+  const targetEff = scaleTerm(targets, "usage") * depthF * usageF * (qbF ** scaleExp(0.2, "qb")) * (ppgF ** 0.15);
+  const rz = scaleTerm(rzBase, "redZone") * depthF * (ppgF ** 0.25);
+  const rec = targetEff * 0.67;
+  const recYds = rec * (10.4 * (qbF ** scaleExp(0.2, "qb")) * (posF ** scaleExp(0.32, "matchup")) * (olF ** scaleExp(0.12, "oline")) * Math.max(0.92, Math.min(1.08, 1 + scaleTerm((pRating - 75) / 350, "talent"))));
+  const tds = (rz * 0.12 * qbF * posF * ppgF * ((snapPct / 75) ** scaleExp(0.12, "usage"))) ** 0.95;
+  const extraF = weeklySkillExtraFactorMultiplier(row, "TE");
+  const standardBase = Math.max(0, 0.1 * recYds + 6 * tds);
+  const standard = playOK * standardBase * extraF;
+  const half = playOK * Math.max(0, standardBase + 0.5 * rec) * extraF;
+  const full = playOK * Math.max(0, standardBase + rec) * extraF;
+  return { mode, targets: targetEff, snapPct, rz, rec, recYds, tds, standard: Number(standard.toFixed(1)), half: Number(half.toFixed(1)), full: Number(full.toFixed(1)) };
+}
+
+function buildWeeklyReceiverRows(position, workbookRows) {
+  const week = selectedSiteWeek() || 1;
+  const teams = state.data?.teams || [];
+  const players = state.players.filter((player) => groupPosition(player.position) === position || player.position === position);
+  const rankedTeamsByVwr = teams.map((team) => ({ team, score: wrDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamsByVte = teams.map((team) => ({ team, score: teDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamsByQb = teams.map((team) => ({ team, score: teamPositionScore(team, "QB") })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
+  const useStatRanks = weeklySkillOptions().useStatRanks;
+  const rankedTeamYpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(team.team).offYardsRank) : team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamPpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(team.team).offPointsRank) : team.offenseRating })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedPassTdAllowed = teams.map((team) => ({ team, score: teamRankingsByTeam(team.team)?.passTdAllowedRank })).filter((row) => Number.isFinite(Number(row.score)));
+  const rows = players.filter((player) => player.team !== "Free Agent").map((player) => {
+    const workbook = workbookRowByName(workbookRows, player.player) || {};
+    const team = teamByName(player.team);
+    const opponent = scheduleOpponent(player.team, week);
+    const opponentTeam = teamByName(opponent);
+    const stats = weeklyReceiverStatPack(player, position, workbook);
+    const qbRating = teamPositionScore(team, "QB");
+    const olRating = teamPositionScore(team, "OL");
+    const matchupRating = position === "WR" ? wrDefenseRatingForTeam(opponentTeam) : teDefenseRatingForTeam(opponentTeam);
+    const matchupRows = position === "WR" ? rankedTeamsByVwr : rankedTeamsByVte;
+    const matchupRankLabel = position === "WR" ? "Opp vWR Rank" : "Opp vTE Rank";
+    const matchupRatingLabel = position === "WR" ? "Opp vWR Rating" : "Opp vTE Rating";
+    const extras = {
+      ...(workbook.extras || {}),
+      [matchupRatingLabel]: Number.isFinite(Number(matchupRating)) ? Number(Number(matchupRating).toFixed(1)) : "",
+      [matchupRankLabel]: rankNumber(matchupRows, (item) => item.score, { team: opponentTeam, score: matchupRating }, false) || 16.5,
+      "CB Matchup Rating": position === "WR" ? Number(num(receiverMatchupRating(player, opponentTeam), matchupRating).toFixed(1)) : "",
+      "QB Rating": Number.isFinite(Number(qbRating)) ? Number(Number(qbRating).toFixed(1)) : "",
+      "QB Rank": rankNumber(rankedTeamsByQb, (item) => item.score, { team, score: qbRating }) || 16.5,
+      "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(1)) : "",
+      "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, { team, score: olRating }) || 16.5,
+      "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(player.team).offYardsRank) : team?.offenseAverage }) || 16.5,
+      "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : team?.offenseRating }) || 16.5,
+      "Pass TDs Allowed Rank": rankNumber(rankedPassTdAllowed, (item) => item.score, { team: opponentTeam, score: teamRankingsByTeam(opponent)?.passTdAllowedRank }, true) || 16.5,
+      "Game Script": weeklyGameScriptValue(player.team),
+      "Team Total": weeklyTeamImpliedTotal(player.team, opponent),
+      "Team PPG": Number(num(team?.offenseRating, 84).toFixed(1)),
+      "Typical Snap %": Number(stats.season.snapPct.toFixed(1)),
+      "Typical Targets": Number(stats.season.targets.toFixed(2)),
+      "Typical Red Zone Opportunities": Number(stats.season.rz.toFixed(2)),
+      "!!LAST 5!!\nTypical Snap %": Number(stats.last5.snapPct.toFixed(1)),
+      "!!LAST 5!!\nTypical Targets": Number(stats.last5.targets.toFixed(2)),
+      "!!LAST 5!!\nTypical Red Zone Opportunities": Number(stats.last5.rz.toFixed(2)),
+      "Stat Source": "Depth/rating formula; Footballguys usage scan pending",
+    };
+    const row = {
+      ...workbook,
+      player: player.player,
+      position,
+      team: player.team,
+      opponent,
+      rating: num(player.rating, 68),
+      depth: player.depth,
+      injury: player.injury,
+      _playerKey: sourceKey(player),
+      extras,
+    };
+    const scorer = position === "WR" ? weeklyWrScoreBreakdown : weeklyTeScoreBreakdown;
+    const blend = scorer(row, "blend");
+    const season = scorer(row, "season");
+    const last5 = scorer(row, "last5");
+    row.score = blend.half;
+    row.standardScore = blend.standard;
+    row.halfPprScore = blend.half;
+    row.fullPprScore = blend.full;
+    row.seasonScore = season.half;
+    row.last5Score = last5.half;
+    row.value = row.score;
+    row.extras["Std"] = blend.standard;
+    row.extras["Half PPR"] = blend.half;
+    row.extras["Full PPR"] = blend.full;
+    row.extras["Targets"] = Number(blend.targets.toFixed(1));
+    row.extras["Snap %"] = Number(blend.snapPct.toFixed(1));
+    row.extras["RZone"] = Number(blend.rz.toFixed(2));
+    row.extras["Receptions"] = Number(blend.rec.toFixed(1));
+    row.extras["Rec Yds"] = Number(blend.recYds.toFixed(1));
+    row.extras["TDs"] = Number(blend.tds.toFixed(2));
+    return row;
+  });
+  rows.forEach((row) => {
+    row.rank = rankNumber(rows, (item) => item.score, row);
+    row.scoreRank = row.rank;
+    row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
+    row.extras["Player Rating Rank"] = rankNumber(rows, (item) => item.rating, row);
+    row.extras["Std Rank"] = rankNumber(rows, (item) => item.standardScore, row);
+    row.extras["Half PPR Rank"] = rankNumber(rows, (item) => item.halfPprScore, row);
+    row.extras["Full PPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
+  });
+  return rows;
+}
+
 function buildWeeklySkillRows(position, workbookRows) {
+  if (position === "RB") return buildWeeklyRbRows(workbookRows);
+  if (position === "WR" || position === "TE") return buildWeeklyReceiverRows(position, workbookRows);
   const week = selectedSiteWeek() || 1;
   const players = state.players.filter((player) => groupPosition(player.position) === position || player.position === position);
   const rows = players.map((player) => {
@@ -5267,13 +7064,30 @@ function maddenKickerForTeam(teamName) {
 
 function buildWeeklyDefenseRows(workbookRows) {
   const week = selectedSiteWeek() || 1;
+  const teamRows = state.data?.teams || [];
+  const rankedDefense = teamRows.map((team) => ({ team, score: team.defenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedOppOff = teamRows.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedOppQb = teamRows.map((team) => ({ team, score: teamPositionScore(team, "QB") })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = (state.data?.teams || []).map((team) => {
     const workbook = workbookRows.find((row) => normalizeTeamName(row.team || row.player) === normalizeTeamName(team.team)) || {};
     const opponent = scheduleOpponent(team.team, week);
     const opponentTeam = teamByName(opponent);
-    const matchupFactor = Math.max(0.82, Math.min(1.18, 1 + ((84 - num(opponentTeam?.offenseAverage, 84)) / 115)));
+    const ranks = teamRankingsByTeam(team.team);
+    const opponentRanks = teamRankingsByTeam(opponent);
     const rushPressure = averageFinite([teamPositionScore(team, "EDGE Def"), teamPositionScore(team, "IDL")], team.defenseAverage);
-    const score = 5.2 + ((num(team.defenseAverage, 84) - 76) * 0.18) + ((num(rushPressure, 84) - 84) * 0.06);
+    const sacksRank = num(ranks?.sacksRank, 16.5);
+    const takeawaysRank = num(ranks?.takeawaysRank, 16.5);
+    const oppOffRating = num(opponentTeam?.offenseAverage, 84);
+    const oppQbRating = num(teamPositionScore(opponentTeam, "QB"), 84);
+    const oppPpgRank = num(opponentRanks?.offPointsRank, 16.5);
+    const score = 6
+      + ((num(team.defenseAverage, 84) - 84) * 0.16)
+      + ((num(rushPressure, 84) - 84) * 0.08)
+      + ((84 - oppOffRating) * 0.12)
+      + ((84 - oppQbRating) * 0.08)
+      + ((16.5 - sacksRank) * 0.08)
+      + ((16.5 - takeawaysRank) * 0.08)
+      + ((oppPpgRank - 16.5) * 0.05);
     const row = {
       ...workbook,
       position: "Defense",
@@ -5285,11 +7099,18 @@ function buildWeeklyDefenseRows(workbookRows) {
         ...(workbook.extras || {}),
         "Defense Rating": Number(num(team.defenseAverage, 84).toFixed(1)),
         "Pass Rush": Number(num(rushPressure, 84).toFixed(1)),
-        "Opponent Off Rating": Number(num(opponentTeam?.offenseAverage, 84).toFixed(1)),
-        "Opp QB Rating": Number(num(teamPositionScore(opponentTeam, "QB"), 84).toFixed(1)),
+        "Defense Rank": rankNumber(rankedDefense, (item) => item.score, { team, score: team.defenseAverage }) || "",
+        "Opponent Off Rating": Number(oppOffRating.toFixed(1)),
+        "Opponent Off Rank": rankNumber(rankedOppOff, (item) => item.score, { team: opponentTeam, score: oppOffRating }) || "",
+        "Opp QB Rating": Number(oppQbRating.toFixed(1)),
+        "Opp QB Rank": rankNumber(rankedOppQb, (item) => item.score, { team: opponentTeam, score: oppQbRating }) || "",
+        "Sacks Rank": Number.isFinite(Number(ranks?.sacksRank)) ? ranks.sacksRank : "",
+        "Takeaways Rank": Number.isFinite(Number(ranks?.takeawaysRank)) ? ranks.takeawaysRank : "",
+        "Opp PPG Rank": Number.isFinite(Number(opponentRanks?.offPointsRank)) ? opponentRanks.offPointsRank : "",
+        "Stat Source": ranks?.sacksRank || ranks?.takeawaysRank ? "TeamRankings + ratings" : "Ratings fallback",
       },
     };
-    const generatedScore = Number(Math.max(0, score * matchupFactor).toFixed(1));
+    const generatedScore = Number(Math.max(0, score).toFixed(1));
     row.score = Number.isFinite(Number(workbook.score)) ? Number(workbook.score) : generatedScore;
     row.seasonScore = Number.isFinite(Number(workbook.seasonScore)) ? Number(workbook.seasonScore) : row.score;
     row.last5Score = Number.isFinite(Number(workbook.last5Score)) ? Number(workbook.last5Score) : row.score;
@@ -5305,13 +7126,18 @@ function buildWeeklyDefenseRows(workbookRows) {
 
 function buildWeeklyKickerRows(workbookRows) {
   const week = selectedSiteWeek() || 1;
+  const teams = state.data?.teams || [];
+  const rankedOffense = teams.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = (state.data?.teams || []).map((team) => {
     const madden = maddenKickerForTeam(team.team);
     const workbook = workbookRows.find((row) => normalizeTeamName(row.team) === normalizeTeamName(team.team)) || {};
     const opponent = scheduleOpponent(team.team, week);
     const tier = kickerStadiumTiers[team.team] ?? 0;
     const rating = Number.isFinite(Number(madden?.ovr)) ? Number(madden.ovr) : num(workbook.rating, 68);
-    const score = 5.6 + ((rating - 68) * 0.08) + ((num(team.offenseAverage, 84) - 84) * 0.05) + (tier * 0.75);
+    const goForItPenalty = num(fantasyDetailValue(workbook, "Go For It Penalty"), 2);
+    const longFg = num(fantasyDetailValue(workbook, "50+ FGs"), Math.max(0, (rating - 70) / 6));
+    const fgVolume = Math.max(1, 4 + ((num(team.offenseAverage, 84) - 84) / 10));
+    const score = (rating / 10) + goForItPenalty + (longFg / 4) + (fgVolume * 1.5) + (tier * 2);
     const row = {
       ...workbook,
       position: "Kicker",
@@ -5322,6 +7148,10 @@ function buildWeeklyKickerRows(workbookRows) {
       extras: {
         ...(workbook.extras || {}),
         "Madden K Rating": rating,
+        "Team Offense Rank": rankNumber(rankedOffense, (item) => item.score, { team, score: team.offenseAverage }) || "",
+        "Go For It Penalty": Number(goForItPenalty.toFixed(1)),
+        "50+ FGs": Number(longFg.toFixed(1)),
+        "FG Volume": Number(fgVolume.toFixed(1)),
         "Kicker Stadium Tier": tier,
         "Team Offense": Number(num(team.offenseAverage, 84).toFixed(1)),
         "Stat Source": madden ? "Madden + stadium tier" : "Fallback + stadium tier",
@@ -5445,7 +7275,7 @@ function fantasyColumnTip(label, key) {
     last5Score: "Same formula using last-five-games-played production only.",
     name: "Player from the current app depth chart pool.",
     team: "Current team from the app depth chart.",
-    opponent: "Opponent from the selected Sim Schedule week.",
+    opponent: "Opponent from the selected Season Schedule week.",
     rating: "Current app player rating from Depth Charts.",
     depth: "Current depth-chart spot; injured players fall out of normal depth.",
     last5Score: "Projected score using last-five-games-played stat inputs.",
@@ -5545,13 +7375,21 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Last 5", "last5Score", "num cf", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Std", "extra:Std", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+      fantasyColumn("Full", "extra:Full PPR", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
       fantasyColumn("Season", "seasonScore", "num cf", { group: "Score", heat: true, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("Blend", "score", "num cf", { group: "Score", heat: true, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("Last 5 Rk", "last5Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("vQB", "extra:Opp vQB Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["QB"], sortDir: "asc" }),
       fantasyColumn("vQB Rk", "extra:Matchup Rating (Low is good)", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
       fantasyColumn("Stat vQB Rk", "extra:Stat vQB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
+      fantasyColumn("vRB Rk", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB"], sortDir: "asc" }),
+      fantasyColumn("vWR Rk", "extra:Opp vWR Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("vTE Rk", "extra:Opp vTE Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
       fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, positions: ["QB"], sortDir: "desc" }),
+      fantasyColumn("Snap %", "extra:!!LAST 5!!\nTypical Snap %", "num cf", { group: "Production", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+      fantasyColumn("Targets", "extra:!!LAST 5!!\nTypical Targets", "num cf", { group: "Production", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+      fantasyColumn("RZone", "extra:!!LAST 5!!\nTypical Red Zone Opportunities", "num cf", { group: "Production", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
       fantasyColumn("PYds", "extra:!!LAST 5!! Typical Pass Yards", "num cf", { group: "Production", heat: true, digits: 0, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("PYds Bonus", "extra:!!LAST 5!! Pass Yards Bonus Score", "num cf", { group: "Bonuses", heat: true, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("PTD", "extra:!!LAST 5!! Typical Pass TDs", "num cf", { group: "Production", heat: true, positions: ["QB"], sortDir: "desc" }),
@@ -5600,16 +7438,110 @@ function fantasyColumns(kind, position, view) {
     ];
     return base;
   }
+  if (position === "RB") {
+    return [
+      fantasyColumn("", "compareSelect", "compare-col", { group: "Player", noSort: true }),
+      fantasyColumn("Rk", "scoreRank", "rank-col cf", { group: "Player", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Half", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc", tip: "Default RB score is half PPR from rush yards, receiving yards, TDs, receptions, depth, talent, matchup, OL, and team context." }),
+      fantasyColumn("Std", "extra:Std", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Full", "extra:Full PPR", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Half Rk", "extra:Half PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Last 5", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("vRB", "extra:Opp vRB Rating", "num cf", { group: "Matchup", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("vRB Rk", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Player Rk", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("OL Rk", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("YPG Rk", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("PPG Rk", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Game Script", "extra:Game Script", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
+      fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
+      fantasyColumn("Rush TD Rk", "extra:Rush TDs Allowed Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Snap %", "extra:Typical Snap %", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Targets", "extra:Typical Targets", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("RZone", "extra:Typical Red Zone Opportunities", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Carries", "extra:Carries", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Rush Yds", "extra:Rush Yds", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Rec", "extra:Receptions", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Rec Yds", "extra:Rec Yds", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("TDs", "extra:TDs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
+    ];
+  }
+  if (position === "WR" || position === "TE") {
+    const posLabel = position === "WR" ? "vWR" : "vTE";
+    const matchupRank = position === "WR" ? "Opp vWR Rank" : "Opp vTE Rank";
+    const matchupRating = position === "WR" ? "Opp vWR Rating" : "Opp vTE Rating";
+    return [
+      fantasyColumn("", "compareSelect", "compare-col", { group: "Player", noSort: true }),
+      fantasyColumn("Rk", "scoreRank", "rank-col cf", { group: "Player", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Half", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Std", "extra:Std", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Full", "extra:Full PPR", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Half Rk", "extra:Half PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Last 5", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn(posLabel, `extra:${matchupRating}`, "num cf", { group: "Matchup", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn(`${posLabel} Rk`, `extra:${matchupRank}`, "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("CB Match", "extra:CB Matchup Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Player Rk", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("QB Rt", "extra:QB Rating", "num cf", { group: "Team Context", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("QB Rk", "extra:QB Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("OL Rk", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
+      fantasyColumn("YPG Rk", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("PPG Rk", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Pass TD Rk", "extra:Pass TDs Allowed Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("Game Script", "extra:Game Script", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
+      fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
+      fantasyColumn("Snap %", "extra:Typical Snap %", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Targets", "extra:Typical Targets", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("RZone", "extra:Typical Red Zone Opportunities", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Rec", "extra:Receptions", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Rec Yds", "extra:Rec Yds", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("TDs", "extra:TDs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
+    ].filter((col) => !col.positions || col.positions.includes(position));
+  }
   if (position === "Defense") {
     return [
-      fantasyColumn("Rank", "scoreRank", "num", { digits: 0, reverse: true }),
-      fantasyColumn("Team", "name", "sticky-name"),
-      fantasyColumn("Opp", "opponent"),
-      fantasyColumn("Score", "score", "num cf", { heat: true }),
-      fantasyColumn("Defense", "rating", "num cf", { heat: true, reverse: true }),
-      fantasyColumn("Opp QB", "extra:Opp QB Rating", "num cf", { heat: true, reverse: true }),
-      fantasyColumn("Opp Off", "extra:Opponent Off Rating", "num cf", { heat: true }),
-      fantasyColumn("Value", "value", "num cf", { heat: true }),
+      fantasyColumn("Rank", "scoreRank", "rank-col cf", { group: "Team", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Team", "name", "sticky-name", { group: "Team", sortDir: "asc" }),
+      fantasyColumn("Opp", "opponent", "", { group: "Team", sortDir: "asc" }),
+      fantasyColumn("Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Defense", "rating", "num cf", { group: "Defense", heat: true, digits: 1, sortDir: "desc" }),
+      fantasyColumn("Def Rk", "extra:Defense Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Pass Rush", "extra:Pass Rush", "num cf", { group: "Defense", heat: true, sortDir: "desc" }),
+      fantasyColumn("Sacks Rk", "extra:Sacks Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Take Rk", "extra:Takeaways Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Opp QB", "extra:Opp QB Rating", "num cf", { group: "Opponent", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Opp QB Rk", "extra:Opp QB Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Opp Off", "extra:Opponent Off Rating", "num cf", { group: "Opponent", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Opp PPG Rk", "extra:Opp PPG Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
+    ];
+  }
+  if (position === "Kicker") {
+    return [
+      fantasyColumn("Rank", "scoreRank", "rank-col cf", { group: "Player", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Madden K", "extra:Madden K Rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Off Rk", "extra:Team Offense Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Go 4th", "extra:Go For It Penalty", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("50+ FGs", "extra:50+ FGs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("FG Vol", "extra:FG Volume", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Stadium", "extra:Kicker Stadium Tier", "num cf rank-col", { group: "Environment", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
     ];
   }
   return [
@@ -5875,6 +7807,465 @@ function wireWeeklyQbFormulaControls() {
   });
 }
 
+const weeklySkillSliderTips = {
+  depth: "Depth chart role and availability.",
+  matchup: "Opponent position strength.",
+  talent: "Your player rating.",
+  oline: "Blocking help from line.",
+  ppg: "Team scoring environment.",
+  qb: "Quarterback support for catchers.",
+  usage: "Snaps, carries, targets.",
+  redZone: "High-value touchdown chances.",
+  gameScript: "Projected lead or trail.",
+  teamTotal: "Projected team points.",
+  opponentTd: "Opponent touchdown weakness.",
+};
+
+const weeklySkillFactorOptions = [
+  ["gameScript", "Game Script"],
+  ["teamTotal", "Team Total"],
+  ["opponentTd", "Opponent TD Allowed"],
+];
+
+function weeklySkillToggleButton(key, label) {
+  const active = Boolean(state.weeklySkillOptions[key]);
+  const disabled = key === "useLast5" && !state.weeklySkillOptions.useProduction;
+  return `<button class="formula-toggle ${active ? "active" : ""}" data-skill-option="${esc(key)}" ${disabled ? "disabled" : ""}><span>${esc(label)}</span></button>`;
+}
+
+function weeklySkillSlider(key, label, min = 0, max = 200) {
+  const rawValue = num(state.weeklySkillWeights[key], defaultWeeklySkillWeights[key] ?? 100);
+  const value = Math.max(min, Math.min(max, Math.round(rawValue / 10) * 10));
+  const productionKeys = ["usage", "redZone"];
+  const disabled = productionKeys.includes(key) && !state.weeklySkillOptions.useProduction;
+  return `
+    <label class="formula-slider ${disabled ? "disabled" : ""}" title="${esc(weeklySkillSliderTips[key] || "Adjusts this score factor.")}">
+      <span>${esc(label)}</span>
+      <input type="range" min="${min}" max="${max}" step="10" value="${esc(value)}" data-skill-weight="${esc(key)}" ${disabled ? "disabled" : ""} />
+      <b>${esc(value)}%</b>
+    </label>
+  `;
+}
+
+function renderWeeklySkillFormulaControls(position) {
+  if (!["RB", "WR", "TE"].includes(position)) return "";
+  const open = Boolean(state.weeklySkillControlsOpen);
+  const extraFactors = state.weeklySkillOptions.extraFactors || [];
+  const baseSliders = [
+    ["depth", "Depth"],
+    ["matchup", "Opponent"],
+    ["talent", "Talent"],
+    ["oline", "O-Line"],
+    ["ppg", "PPG"],
+    ...(position === "RB" ? [] : [["qb", "QB Context"]]),
+    ["usage", "Usage"],
+    ["redZone", "Red Zone"],
+  ];
+  const availableFactors = weeklySkillFactorOptions.filter(([key]) => !extraFactors.includes(key));
+  return `
+    <section class="formula-control-panel ${open ? "" : "collapsed"}">
+      <div class="formula-control-head">
+        <h3>${esc(position)} Score Controls</h3>
+        <div class="formula-control-actions">
+          ${state.weeklySkillDefaultMessage ? `<span class="formula-save-note">${esc(state.weeklySkillDefaultMessage)}</span>` : ""}
+          <button id="weekly-skill-toggle-controls" class="mini-action">${open ? "Hide" : "Show"}</button>
+          ${open ? `<button id="weekly-skill-set-default" class="mini-action">Set Default</button>` : ""}
+          ${open ? `<button id="weekly-skill-reset-formula" class="mini-action">Reset Formula</button>` : ""}
+        </div>
+      </div>
+      ${open ? `
+      <div class="formula-toggle-row">
+        ${weeklySkillToggleButton("useStatRanks", "Use StatRanks")}
+        ${weeklySkillToggleButton("useLast5", "Use Last 5")}
+        ${weeklySkillToggleButton("useProduction", "Use Production")}
+      </div>
+      <p class="formula-help">Hover a slider for its meaning. Add optional factors only when you want them active.</p>
+      <div class="formula-slider-grid skill-formula-grid">
+        ${baseSliders.map(([key, label]) => weeklySkillSlider(key, label)).join("")}
+        ${extraFactors.map((key) => weeklySkillSlider(key, weeklySkillFactorOptions.find(([id]) => id === key)?.[1] || key)).join("")}
+      </div>
+      <div class="factor-add-row">
+        <button id="weekly-skill-add-factor" class="mini-action" ${availableFactors.length ? "" : "disabled"}>+</button>
+        ${optionSelect("weekly-skill-factor-select", availableFactors[0]?.[0] || "", availableFactors.length ? availableFactors : [["", "No more suggested factors"]])}
+        <span>Suggested factors: game script, team total, opponent TD weakness.</span>
+      </div>
+      ` : ""}
+    </section>
+  `;
+}
+
+function wireWeeklySkillFormulaControls() {
+  document.querySelector("#weekly-skill-toggle-controls")?.addEventListener("click", () => {
+    state.weeklySkillControlsOpen = !state.weeklySkillControlsOpen;
+    storage.set("nflz-weekly-skill-controls-open", state.weeklySkillControlsOpen);
+    render();
+  });
+  document.querySelectorAll("[data-skill-option]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.skillOption;
+      if (key === "useLast5" && !state.weeklySkillOptions.useProduction) return;
+      state.weeklySkillOptions[key] = !state.weeklySkillOptions[key];
+      if (key === "useProduction" && !state.weeklySkillOptions.useProduction) {
+        state.weeklySkillOptions.useLast5 = false;
+      }
+      state.weeklySkillDefaultMessage = "";
+      storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+      render();
+    });
+  });
+  document.querySelectorAll("[data-skill-weight]").forEach((input) => {
+    input.addEventListener("input", () => {
+      state.weeklySkillWeights[input.dataset.skillWeight] = Number(input.value);
+      state.weeklySkillDefaultMessage = "";
+      storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+      const valueLabel = input.closest(".formula-slider")?.querySelector("b");
+      if (valueLabel) valueLabel.textContent = `${input.value}%`;
+    });
+    input.addEventListener("change", () => {
+      state.weeklySkillWeights[input.dataset.skillWeight] = Number(input.value);
+      state.weeklySkillDefaultMessage = "";
+      storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+      render();
+    });
+  });
+  document.querySelector("#weekly-skill-set-default")?.addEventListener("click", () => {
+    const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+    const options = { ...defaultWeeklySkillOptions, ...state.weeklySkillOptions };
+    storage.set("nflz-weekly-skill-default-weights", weights);
+    storage.set("nflz-weekly-skill-default-options", options);
+    state.weeklySkillWeights = { ...weights };
+    state.weeklySkillOptions = { ...options };
+    state.weeklySkillDefaultMessage = "Default saved";
+    storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+    storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+    render();
+  });
+  document.querySelector("#weekly-skill-reset-formula")?.addEventListener("click", () => {
+    state.weeklySkillWeights = weeklySkillDefaultWeights();
+    state.weeklySkillOptions = weeklySkillDefaultOptions();
+    state.weeklySkillDefaultMessage = "Reset to default";
+    storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+    storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+    render();
+  });
+  document.querySelector("#weekly-skill-add-factor")?.addEventListener("click", () => {
+    const key = document.querySelector("#weekly-skill-factor-select")?.value;
+    if (!key) return;
+    const next = new Set(state.weeklySkillOptions.extraFactors || []);
+    next.add(key);
+    state.weeklySkillOptions.extraFactors = [...next];
+    state.weeklySkillWeights[key] = state.weeklySkillWeights[key] ?? 100;
+    storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+    storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+    render();
+  });
+}
+
+function matchupRows() {
+  const teams = state.data?.teams || [];
+  const week = state.weeklyMatchupWeek === "auto" ? selectedSiteWeek() : state.weeklyMatchupWeek;
+  const vqbRows = teams.map((team) => ({ team, score: qbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  const vrbRows = teams.map((team) => ({ team, score: rbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  const vwrRows = teams.map((team) => ({ team, score: wrDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  const vteRows = teams.map((team) => ({ team, score: teDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
+  return teams.map((team) => {
+    const stat = teamRankingsByTeam(team.team);
+    const opponent = scheduleOpponent(team.team, week);
+    const row = {
+      team: team.team,
+      opponent,
+      vQB: qbDefenseRatingForTeam(team),
+      vRB: rbDefenseRatingForTeam(team),
+      vWR: wrDefenseRatingForTeam(team),
+      vTE: teDefenseRatingForTeam(team),
+      statVQB: stat?.passAllowedStatAvg || "",
+      rushAllowed: stat?.rushAllowedStatAvg || "",
+      passAllowed: stat?.passAllowedStatAvg || "",
+      passTdAllowedRank: stat?.passTdAllowedRank || "",
+      rushTdAllowedRank: stat?.rushTdAllowedRank || "",
+    };
+    row.vQBRank = rankNumber(vqbRows, (item) => item.score, { team, score: row.vQB }, false);
+    row.vRBRank = rankNumber(vrbRows, (item) => item.score, { team, score: row.vRB }, false);
+    row.vWRRank = rankNumber(vwrRows, (item) => item.score, { team, score: row.vWR }, false);
+    row.vTERank = rankNumber(vteRows, (item) => item.score, { team, score: row.vTE }, false);
+    return row;
+  });
+}
+
+function matchupSortValue(row, key) {
+  if (key === "team" || key === "opponent") return row[key] || "";
+  return num(row[key], 9999);
+}
+
+function matchupWeightGroupsForKind(kind) {
+  const groups = {
+    vQB: ["IDL", "EDGE", "LB", "CB", "S"],
+    vRB: ["IDL", "EDGE", "LB"],
+    vWR: ["CB", "S"],
+    vTE: ["EDGE", "LB", "S", "CB"],
+  };
+  return groups[kind] || [];
+}
+
+function weeklyMatchupDepthSlider(kind, group, depth) {
+  const key = `${kind}_${group}${depth}`;
+  const value = Math.round(num(state.weeklyMatchupWeights[key], defaultWeeklyMatchupWeights[key] ?? 0));
+  return `
+    <label class="formula-slider matchup-depth-slider ${value === 0 ? "disabled zero-weight" : ""} ${positionChipClass(group)}" title="${esc(group)}${esc(depth)} weight for ${esc(kind)}">
+      <span>${esc(group)}${esc(depth)}</span>
+      <b>${esc(value)}%</b>
+      <input type="range" min="0" max="200" step="5" value="${esc(value)}" data-matchup-weight="${esc(key)}" />
+    </label>
+  `;
+}
+
+function matchupGroups(kind) {
+  return matchupWeightGroupsForKind(kind).map((group) => ({ group, include: 5 }));
+}
+
+function renderWeeklyMatchupWeightControls() {
+  const kind = state.weeklyMatchupWeightView || "vQB";
+  const groups = matchupWeightGroupsForKind(kind);
+  return `
+    <section class="formula-control-panel matchup-weight-panel">
+      <div class="formula-control-head">
+        <div>
+          <h3>Matchup Weights</h3>
+          <span>Depth-specific inputs. Set a slot to 0% to exclude it.</span>
+        </div>
+        <select id="weekly-matchup-weight-view">
+          ${["vQB", "vRB", "vWR", "vTE"].map((item) => `<option value="${item}" ${item === kind ? "selected" : ""}>${item} formula</option>`).join("")}
+        </select>
+      </div>
+      <div class="matchup-weight-groups">
+        ${groups.map((group) => `
+          <div class="matchup-weight-row ${positionChipClass(group)}">
+            <strong>${esc(group)}</strong>
+            <div>${[1, 2, 3, 4, 5].map((depth) => weeklyMatchupDepthSlider(kind, group, depth)).join("")}</div>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function matchupScoreForKind(team, kind) {
+  if (kind === "vQB") return qbDefenseRatingForTeam(team);
+  if (kind === "vRB") return rbDefenseRatingForTeam(team);
+  if (kind === "vWR") return wrDefenseRatingForTeam(team);
+  if (kind === "vTE") return teDefenseRatingForTeam(team);
+  return "";
+}
+
+function matchupRankForKind(team, kind) {
+  const teams = state.data?.teams || [];
+  const rows = teams.map((item) => ({ team: item, score: matchupScoreForKind(item, kind) })).filter((row) => Number.isFinite(Number(row.score)));
+  return rankNumber(rows, (item) => item.score, { team, score: matchupScoreForKind(team, kind) }, false);
+}
+
+function matchupDetailButton(value, kind, teamName, label = "") {
+  return `<button class="matchup-detail-button" data-matchup-detail-team="${esc(teamName)}" data-matchup-detail-kind="${esc(kind)}" title="Show players used in ${esc(kind)}">${esc(label || fantasyDisplay(value, Number.isInteger(Number(value)) ? 0 : 1))}</button>`;
+}
+
+function matchupCell(row, key, kind, allRows, digits = 1) {
+  const value = row[key];
+  const values = allRows.map((item) => item[key]);
+  const numeric = values.map(Number).filter(Number.isFinite);
+  const style = numeric.length ? cfStyle(value, Math.min(...numeric), Math.max(...numeric), true) : "";
+  return `<td class="num cf" ${style}>${matchupDetailButton(value, kind, row.team)}</td>`;
+}
+
+function matchupDetailRows(teamName, kind) {
+  const team = teamByName(teamName);
+  if (!team) return [];
+  return matchupGroups(kind).map((config) => {
+    const players = schedulePlayersFor(team.team, config.group).slice(0, 7);
+    return {
+      ...config,
+      players: players.map((player, index) => ({
+        player,
+        included: index < config.include && matchupWeight(`${kind}_${config.group}${index + 1}`) > 0,
+        weight: index < config.include ? matchupWeight(`${kind}_${config.group}${index + 1}`) : 0,
+      })),
+    };
+  });
+}
+
+function renderMatchupDetailModal() {
+  const detail = state.selectedMatchupDetail;
+  if (!detail) return "";
+  const team = teamByName(detail.team);
+  if (!team) return "";
+  const kind = detail.kind;
+  const score = matchupScoreForKind(team, kind);
+  const rank = matchupRankForKind(team, kind);
+  const groups = matchupDetailRows(team.team, kind);
+  const groupCards = groups.map((group) => `
+    <section class="matchup-detail-group">
+      <h3><span class="pos-chip ${positionChipClass(group.group)}">${esc(group.group)}</span> <span>${group.players.filter((item) => item.included).length} weighted</span></h3>
+      <div class="matchup-player-list">
+        ${group.players.map((item, index) => {
+          const p = item.player;
+          return `<div class="matchup-player-row ${item.included ? "" : "not-counted"}">
+            <b>${esc(group.group)}${index + 1}</b>
+            <span>${playerAvatar(p)} ${esc(p.player)}</span>
+            <em>${ratingBadge(p.rating)}</em>
+            <small>${item.included ? `${Math.round(item.weight * 100)}% weight` : "reference only"}</small>
+          </div>`;
+        }).join("") || "<p class='note'>No available players found for this group.</p>"}
+      </div>
+    </section>
+  `).join("");
+  return `
+    <div class="modal matchup-detail-modal">
+      <div class="modal-card matchup-detail-card">
+        <button id="matchup-detail-close" class="modal-close" title="Close">x</button>
+        <div class="player-hero enhanced">
+          <div class="player-team-watermark">${teamLogo(team.team, team.teamAbbrev)}</div>
+          ${teamLogo(team.team, team.teamAbbrev)}
+          <div class="player-hero-copy">
+            <h2>${esc(team.team)} ${esc(kind)}</h2>
+            <p><span>Players counted in the matchup rating</span></p>
+          </div>
+          <div class="player-hero-rating">${ratingBadge(score)}<span>#${esc(rank || "-")} easiest</span></div>
+        </div>
+        <div class="metrics compact">
+          ${metric("Rating", fantasyDisplay(score, 1), kind)}
+          ${metric("Rank", rank ? `#${rank}` : "-", "lower is easier")}
+          ${metric("Week", state.weeklyMatchupWeek === "auto" ? siteWeekLabel() : weekOptionLabel(state.weeklyMatchupWeek), "view")}
+        </div>
+        <div class="matchup-detail-grid">${groupCards}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderWeeklyMatchups() {
+  const allRows = matchupRows().filter((row) => matches(row));
+  const sortKey = state.weeklyMatchupSort || "team";
+  const rows = [...allRows].sort((a, b) => {
+    const av = matchupSortValue(a, sortKey);
+    const bv = matchupSortValue(b, sortKey);
+    return Number.isFinite(Number(av)) && Number.isFinite(Number(bv))
+      ? Number(av) - Number(bv)
+      : String(av).localeCompare(String(bv));
+  });
+  const dataRows = rows.map((row) => `
+    <tr>
+      <td class="sticky-name">${teamCellFull(row.team)}</td>
+      <td>${row.opponent ? teamCellFull(row.opponent) : "-"}</td>
+      ${matchupCell(row, "vQB", "vQB", allRows, 1)}
+      ${matchupCell(row, "vQBRank", "vQB", allRows, 0)}
+      ${matchupCell(row, "vRB", "vRB", allRows, 1)}
+      ${matchupCell(row, "vRBRank", "vRB", allRows, 0)}
+      ${matchupCell(row, "vWR", "vWR", allRows, 1)}
+      ${matchupCell(row, "vWRRank", "vWR", allRows, 0)}
+      ${matchupCell(row, "vTE", "vTE", allRows, 1)}
+      ${matchupCell(row, "vTERank", "vTE", allRows, 0)}
+      ${fantasyCellWithClass(row.passAllowed, allRows.map((item) => item.passAllowed), true, 1)}
+      ${fantasyCellWithClass(row.rushAllowed, allRows.map((item) => item.rushAllowed), true, 1)}
+      ${fantasyCellWithClass(row.passTdAllowedRank, allRows.map((item) => item.passTdAllowedRank), true, 0, "rank-col")}
+      ${fantasyCellWithClass(row.rushTdAllowedRank, allRows.map((item) => item.rushTdAllowedRank), true, 0, "rank-col")}
+    </tr>
+  `);
+  setTimeout(() => {
+    document.querySelector("#scan-team-rankings")?.addEventListener("click", scanTeamRankings);
+    document.querySelector("#weekly-matchup-week")?.addEventListener("change", (event) => {
+      state.weeklyMatchupWeek = event.target.value;
+      storage.set("nflz-weekly-matchup-week", state.weeklyMatchupWeek);
+      render();
+    });
+    document.querySelector("#weekly-matchup-weight-view")?.addEventListener("change", (event) => {
+      state.weeklyMatchupWeightView = event.target.value;
+      storage.set("nflz-weekly-matchup-weight-view", state.weeklyMatchupWeightView);
+      render();
+    });
+    document.querySelectorAll("[data-matchup-detail-team]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedMatchupDetail = { team: button.dataset.matchupDetailTeam, kind: button.dataset.matchupDetailKind };
+      render();
+    }));
+    document.querySelector("#matchup-detail-close")?.addEventListener("click", () => {
+      state.selectedMatchupDetail = null;
+      render();
+    });
+    document.querySelector(".matchup-detail-modal")?.addEventListener("click", (event) => {
+      if (event.target.classList.contains("matchup-detail-modal")) {
+        state.selectedMatchupDetail = null;
+        render();
+      }
+    });
+    if (state.selectedMatchupDetail) {
+      document.onkeydown = (event) => {
+        if (event.key === "Escape") {
+          state.selectedMatchupDetail = null;
+          render();
+        }
+      };
+    }
+    document.querySelectorAll("[data-matchup-sort]").forEach((button) => button.addEventListener("click", () => {
+      state.weeklyMatchupSort = button.dataset.matchupSort;
+      render();
+    }));
+    document.querySelectorAll("[data-matchup-weight]").forEach((input) => {
+      input.addEventListener("input", () => {
+        state.weeklyMatchupWeights[input.dataset.matchupWeight] = Number(input.value);
+        storage.set("nflz-weekly-matchup-weights", state.weeklyMatchupWeights);
+        const valueLabel = input.closest(".formula-slider")?.querySelector("b");
+        if (valueLabel) valueLabel.textContent = `${input.value}%`;
+        input.closest(".formula-slider")?.classList.toggle("disabled", Number(input.value) === 0);
+        input.closest(".formula-slider")?.classList.toggle("zero-weight", Number(input.value) === 0);
+      });
+      input.addEventListener("change", () => {
+        storage.set("nflz-weekly-matchup-weights", state.weeklyMatchupWeights);
+        render();
+      });
+    });
+    document.querySelector("#matchup-reset")?.addEventListener("click", () => {
+      state.weeklyMatchupWeights = { ...defaultWeeklyMatchupWeights };
+      storage.set("nflz-weekly-matchup-weights", state.weeklyMatchupWeights);
+      render();
+    });
+    wireFantasyScroll();
+  });
+  const header = (label, key) => `<button class="fantasy-sort-header" data-matchup-sort="${esc(key)}" title="Click to sort ${esc(label)}. Lower rank means easier fantasy matchup."><span>${esc(label)}</span></button>`;
+  return `
+    <section class="panel fantasy-rank-panel weekly-matchups-panel">
+      <div class="toolbar fantasy-rank-toolbar">
+        <div>
+          <h2>Weekly Matchups</h2>
+          <p>Review the matchup ratings feeding weekly fantasy ranks. Lower matchup rating/rank is better for the offensive player facing that defense.</p>
+        </div>
+        <div class="filters">
+          ${optionSelect("weekly-matchup-week", state.weeklyMatchupWeek, [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)])}
+          <button id="matchup-reset" class="mini-action">Reset Weights</button>
+          <button id="scan-team-rankings" class="mini-action primary" ${state.teamRankingsScanStatus === "checking" ? "disabled" : ""}>Scan Team Rankings</button>
+        </div>
+      </div>
+      <div class="scan-strip">${teamRankingsStatusNote()}</div>
+      ${renderWeeklyMatchupWeightControls()}
+      <div class="table-scroll fantasy-rank-scroll">
+        ${table([
+          { label: header("Team", "team") },
+          { label: header("Opp", "opponent") },
+          { label: header("vQB", "vQB"), cls: "num" },
+          { label: header("vQB Rk", "vQBRank"), cls: "num" },
+          { label: header("vRB", "vRB"), cls: "num" },
+          { label: header("vRB Rk", "vRBRank"), cls: "num" },
+          { label: header("vWR", "vWR"), cls: "num" },
+          { label: header("vWR Rk", "vWRRank"), cls: "num" },
+          { label: header("vTE", "vTE"), cls: "num" },
+          { label: header("vTE Rk", "vTERank"), cls: "num" },
+          { label: header("Pass Allowed", "passAllowed"), cls: "num" },
+          { label: header("Rush Allowed", "rushAllowed"), cls: "num" },
+          { label: header("Pass TD Rk", "passTdAllowedRank"), cls: "num" },
+          { label: header("Rush TD Rk", "rushTdAllowedRank"), cls: "num" },
+        ], dataRows)}
+      </div>
+      ${renderMatchupDetailModal()}
+    </section>
+  `;
+}
+
 function renderFantasyRanks(kind) {
   const isWeekly = kind === "weekly";
   const positionKey = isWeekly ? "weeklyFantasyPosition" : "seasonFantasyPosition";
@@ -5884,9 +8275,10 @@ function renderFantasyRanks(kind) {
   const limitKey = isWeekly ? "weeklyFantasyLimit" : "seasonFantasyLimit";
   const titleText = isWeekly ? "Weekly Fantasy Rankings" : "Season Long Fantasy Ranks";
   const positions = fantasyRankPositions(kind);
-  if (!positions.includes(state[positionKey])) state[positionKey] = positions[0] || "QB";
+  const normalizedPosition = normalizeFantasyPositionLabel(state[positionKey]);
+  state[positionKey] = positions.includes(normalizedPosition) ? normalizedPosition : positions[0] || "QB";
   const isWeeklyQb = isWeekly && state[positionKey] === "QB";
-  const item = fantasyRankBundle(kind)[state[positionKey]] || { rows: [] };
+  const item = fantasyRankItem(kind, state[positionKey]);
   const sortOptions = isWeekly
     ? [["score", "Score"], ["scoreRank", "Score Rank"], ["last5Score", "Last 5 Score"], ["value", "Value"], ["rating", "Player Rating"], ["depth", "Depth"]]
     : [["rank", "Rank"], ["score", "Score"], ["value", "Value"], ["adp", "ADP"], ["rating", "Player Rating"], ["depth", "Depth"]];
@@ -5925,6 +8317,7 @@ function renderFantasyRanks(kind) {
     });
     wireFantasyCompare();
     if (isWeeklyQb) wireWeeklyQbFormulaControls();
+    if (isWeekly && ["RB", "WR", "TE"].includes(state[positionKey])) wireWeeklySkillFormulaControls();
     wireFantasyScroll();
   });
   return `
@@ -5948,6 +8341,7 @@ function renderFantasyRanks(kind) {
       </div>
       ${isWeekly ? `<div class="scan-strip">${teamRankingsStatusNote()}${snapsStatsStatusNote()}</div>` : ""}
       ${isWeeklyQb ? renderWeeklyQbFormulaControls() : ""}
+      ${isWeekly ? renderWeeklySkillFormulaControls(state[positionKey]) : ""}
       <div class="table-scroll fantasy-rank-scroll">
         ${fantasyRankTable(columns, rows, filtered, state[positionKey], state[sortKey], state[directionKey])}
       </div>
@@ -6193,7 +8587,7 @@ function sortPffRows(rows) {
     if (key === "confidence") return num(item.confidence, -1);
     if (key === "current") return num(item.current, -999);
     if (key === "suggested") return num(item.suggested, -999);
-    if (key === "suggestedDelta") return Math.abs(num(item.suggestedDelta, 0));
+    if (key === "suggestedDelta") return num(item.suggestedDelta, -999);
     return item.row.team;
   };
   return [...rows].sort((a, b) => {
@@ -6227,7 +8621,7 @@ function markPffRecentAdjustment(key, player, rating, pffRow) {
 function applyPffSuggestion(item) {
   if (!item?.player || item.suggested == null || item.suggested === num(item.player.rating)) return false;
   markPffRecentAdjustment(item.key, item.player, item.suggested, item.row);
-  persistPlayer(item.player, { rating: item.suggested, newRating: item.suggested });
+  persistPlayer(item.player, { rating: item.suggested, newRating: item.suggested, ratingChangeType: "PFF import", ratingChangeNote: item.row?.rank ? `PFF #${item.row.rank}${item.row.total ? `/${item.row.total}` : ""}` : "PFF suggestion" });
   return true;
 }
 
@@ -6240,14 +8634,45 @@ function renderPffSuggestionCell(item) {
   </span>`;
 }
 
+function renderPffImportPanel() {
+  const position = cleanPffPosition(state.pffPastePosition || "EDGE");
+  const importedRows = pffManualRows()
+    .filter((row) => groupPosition(row.modelPosition || row.pffPosition) === position)
+    .sort((a, b) => num(a.rank, 999) - num(b.rank, 999));
+  const previewRows = importedRows.slice(0, 12).map((row) => `<tr>
+    <td class="num">#${esc(row.rank)}</td>
+    <td>${esc(row.name || row.player)}</td>
+    <td>${esc(row.team)}</td>
+    <td class="num">${fmt(row.grade, 1)}</td>
+    <td class="num">${row.snaps ? fmt(row.snaps, 0) : "-"}</td>
+    <td class="num">${Number.isFinite(Number(row.snapPercentile)) ? `${fmt(row.snapPercentile, 0)}%` : "-"}</td>
+  </tr>`).join("");
+  return `<section class="formula-card pff-import-panel">
+    <div class="toolbar"><h3>PFF Rank Paste</h3>${optionSelect("pff-paste-position", position, pffPastePositions)}</div>
+    <textarea id="pff-paste-text" class="pff-paste-box compact" placeholder="Paste the full PFF position table here. It can be the copied page text or tab-separated table."></textarea>
+    <div class="depth-top-actions"><button id="pff-import-paste" class="mini-action primary">Import PFF Ranks</button><button id="pff-clear-imports" class="mini-action danger">Clear All PFF Imports</button><a class="mini-action" href="https://www.pff.com/nfl/grades/position/ed" target="_blank" rel="noreferrer">Open PFF</a></div>
+    ${state.pffManualNotice ? `<p class="depth-check-note depth-check-success">${esc(state.pffManualNotice)}</p>` : ""}
+    <div class="pff-import-summary">
+      <strong>${importedRows.length ? `${importedRows.length} ${esc(position)} rows currently imported` : `No ${esc(position)} PFF rows imported yet`}</strong>
+      <span>${importedRows.length ? "These rows feed PFF Review and Madden Comparison immediately." : "Paste a PFF position table above, then click Import PFF Ranks."}</span>
+      ${importedRows.length ? `<div class="table-scroll pff-import-summary-scroll"><table><thead><tr><th>Rank</th><th>Player</th><th>Team</th><th>Grade</th><th>Snaps</th><th>Snap Pct</th></tr></thead><tbody>${previewRows}</tbody></table></div>` : ""}
+    </div>
+  </section>`;
+}
+
 function renderPff() {
   const reviewAll = buildPffReviewRows().filter((item) => matches({ ...item.row, matched: item.player?.player || "" }));
+  const selectedPffPosition = cleanPffPosition(state.pffPastePosition || "EDGE");
+  const selectedReviewAll = reviewAll.filter((item) => groupPosition(item.row.modelPosition || item.row.pffPosition) === selectedPffPosition);
   const oldRows = state.data.pff.filter(matches).sort((a, b) => Math.abs(num(b.delta)) - Math.abs(num(a.delta))).slice(0, 160).map((p) => {
     const delta = num(p.delta);
     return `<tr><td>${p.position}</td><td>${p.player}</td><td class="num">${fmt(p.pff, 0)}</td><td class="num">${fmt(p.oldRating, 0)}</td><td class="num">${fmt(p.newRating, 0)}</td><td class="num delta ${delta >= 0 ? "plus" : "minus"}">${delta > 0 ? "+" : ""}${fmt(delta, 0)}</td></tr>`;
   });
   if (state.pffView === "madden") {
     setTimeout(() => {
+      document.querySelector("#pff-paste-position")?.addEventListener("change", (event) => { state.pffPastePosition = cleanPffPosition(event.target.value); render(); });
+      document.querySelector("#pff-import-paste")?.addEventListener("click", importPffPaste);
+      document.querySelector("#pff-clear-imports")?.addEventListener("click", clearPffImports);
       document.querySelectorAll("[data-pff-view]").forEach((button) => button.addEventListener("click", () => { state.pffView = button.dataset.pffView; state.pffLimit = 500; render(); }));
     });
     return `<section class="panel pff-review-panel">
@@ -6257,10 +8682,11 @@ function renderPff() {
       <div class="live-tabs pff-tabs">
         ${[["review", `PFF Review ${reviewAll.length}`], ["recent", `Recently Adjusted ${Object.keys(pffRecentAdjustments).length}`], ["madden", "Madden Comparison"], ["workbook", "Workbook Import"]].map(([id, label]) => `<button class="${state.pffView === id ? "active" : ""}" data-pff-view="${id}">${esc(label)}</button>`).join("")}
       </div>
+      ${renderPffImportPanel()}
       <div class="pff-secondary-view">${renderMadden()}</div>
     </section>`;
   }
-  const viewRows = state.pffView === "workbook" ? [] : state.pffView === "recent" ? reviewAll.filter((item) => item.key && pffRecentAdjustments[item.key]) : reviewAll;
+  const viewRows = state.pffView === "workbook" ? [] : state.pffView === "recent" ? reviewAll.filter((item) => item.key && pffRecentAdjustments[item.key]) : selectedReviewAll;
   const sortedRows = sortPffRows(viewRows);
   const visibleRows = sortedRows.slice(0, state.pffLimit);
   const actionableCount = visibleRows.filter((item) => item.player && item.suggested != null && item.suggested !== num(item.player.rating)).length;
@@ -6282,8 +8708,9 @@ function renderPff() {
     </tr>`;
   }).join("");
   setTimeout(() => {
-    document.querySelector("#pff-paste-position")?.addEventListener("change", (event) => { state.pffPastePosition = event.target.value; });
+    document.querySelector("#pff-paste-position")?.addEventListener("change", (event) => { state.pffPastePosition = cleanPffPosition(event.target.value); render(); });
     document.querySelector("#pff-import-paste")?.addEventListener("click", importPffPaste);
+    document.querySelector("#pff-clear-imports")?.addEventListener("click", clearPffImports);
     document.querySelectorAll("[data-pff-view]").forEach((button) => button.addEventListener("click", () => { state.pffView = button.dataset.pffView; state.pffLimit = 500; render(); }));
     document.querySelectorAll("[data-pff-sort]").forEach((button) => button.addEventListener("click", () => {
       const key = button.dataset.pffSort;
@@ -6311,7 +8738,7 @@ function renderPff() {
   });
   return `<section class="panel pff-review-panel">
     <div class="toolbar fantasy-rank-toolbar">
-      <div><h2>PFF Update</h2><p>PFF-only suggested rating review from pasted position ranks, weighted by percentile, snaps, position profile, and current rating range.</p></div>
+      <div><h2>PFF Update</h2><p>PFF-only suggested rating review for ${esc(selectedPffPosition)}, weighted by percentile, snaps, position profile, and current rating range.</p></div>
       <div class="filters">
         ${actionableCount ? `<button id="pff-approve-suggested" class="mini-action primary">Approve Visible Suggested (${actionableCount})</button>` : ""}
         ${Object.keys(pffRecentAdjustments).length ? `<button id="pff-clear-recent" class="mini-action">Clear Recent (${Object.keys(pffRecentAdjustments).length})</button>` : ""}
@@ -6321,12 +8748,7 @@ function renderPff() {
       ${[["review", `PFF Review ${reviewAll.length}`], ["recent", `Recently Adjusted ${Object.keys(pffRecentAdjustments).length}`], ["madden", "Madden Comparison"], ["workbook", "Workbook Import"]].map(([id, label]) => `<button class="${state.pffView === id ? "active" : ""}" data-pff-view="${id}">${esc(label)}</button>`).join("")}
     </div>
     ${state.pffView !== "workbook" ? `
-      <section class="formula-card pff-import-panel">
-        <div class="toolbar"><h3>PFF Rank Paste</h3>${select("pff-paste-position", state.pffPastePosition, pffPastePositions)}</div>
-        <textarea id="pff-paste-text" class="pff-paste-box compact" placeholder="Paste PFF position table here"></textarea>
-        <div class="depth-top-actions"><button id="pff-import-paste" class="mini-action primary">Import PFF Ranks</button><a class="mini-action" href="https://www.pff.com/nfl/grades/position/ed" target="_blank" rel="noreferrer">Open PFF</a></div>
-        ${state.pffManualNotice ? `<p class="depth-check-note depth-check-success">${esc(state.pffManualNotice)}</p>` : ""}
-      </section>
+      ${renderPffImportPanel()}
       <div class="madden-list-control"><span>Showing ${visibleRows.length} of ${sortedRows.length}</span>${visibleRows.length < sortedRows.length ? `<button id="pff-show-more" class="mini-action">Show 500 More</button><button id="pff-show-all" class="mini-action">Show All</button>` : ""}</div>
       <div class="table-scroll fantasy-rank-scroll pff-review-scroll">
         <table class="pff-review-table"><thead><tr>
@@ -6405,11 +8827,12 @@ function storageBucketLabel(key) {
 
 function backupPayload() {
   const objectFallbacks = ["overrides", "picks", "fantasyOrder", "depthCandidateRemovals", "depthIgnored", "depthResolved", "pffManualRanks", "pffRecentAdjustments", "maddenMatchOverrides", "maddenRecentAdjustments"];
+  const stringFallbacks = ["ratingHistoryStartAt"];
   return {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     source: "Browser local storage backup",
-    data: Object.fromEntries(Object.entries(backupKeys).map(([name, key]) => [name, storage.get(key, objectFallbacks.includes(name) ? {} : [])])),
+    data: Object.fromEntries(Object.entries(backupKeys).map(([name, key]) => [name, storage.get(key, stringFallbacks.includes(name) ? "" : objectFallbacks.includes(name) ? {} : [])])),
   };
 }
 
@@ -6694,6 +9117,7 @@ function choiceCardClean(p) {
 choiceCard = choiceCardClean;
 
 function render() {
+  scheduleProjectionCache = new Map();
   const page = pages.find(([id]) => id === state.page);
   title.textContent = page[1];
   renderNav();
@@ -6705,6 +9129,7 @@ function render() {
     schedule: renderSchedule,
     picks: renderPicksTracker,
     standings: renderStandings,
+    weeklyMatchups: renderWeeklyMatchups,
     weeklyFantasy: () => renderFantasyRanks("weekly"),
     seasonFantasy: () => renderFantasyRanks("season"),
     statRanks: renderStatRanks,
@@ -6733,7 +9158,7 @@ document.addEventListener?.("click", (event) => {
     handleDepthCheckActionClick(event);
     return;
   }
-  if (event.target.closest("select")) return;
+  if (isScheduleInteractiveTarget(event.target)) return;
   const card = event.target.closest(".schedule-card");
   if (card) {
     state.selectedScheduleKey = card.dataset.scheduleKey;
@@ -6748,6 +9173,7 @@ document.addEventListener?.("click", (event) => {
 
 document.addEventListener?.("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
+  if (isScheduleInteractiveTarget(event.target)) return;
   const card = event.target.closest(".schedule-card");
   if (!card) return;
   event.preventDefault();
@@ -6766,7 +9192,13 @@ importBackupFile?.addEventListener("change", (event) => {
 const load = window.NFL_MODEL_Z_DATA ? Promise.resolve(window.NFL_MODEL_Z_DATA) : fetch("data.json").then((response) => response.json());
 load.then((data) => {
   state.data = data;
+  const staleFreeAgentFixes = repairStaleOurLadsFreeAgentOverrides(data);
+  const knownRosterFixes = repairKnownRosterExceptions(data);
   state.players = applyOverrides(data.players);
+  const repairNotes = [];
+  if (staleFreeAgentFixes) repairNotes.push(`${staleFreeAgentFixes} stale OurLads Free Agent override${staleFreeAgentFixes === 1 ? "" : "s"}`);
+  if (knownRosterFixes) repairNotes.push(`${knownRosterFixes} known roster exception${knownRosterFixes === 1 ? "" : "s"}`);
+  if (repairNotes.length) state.depthCheckNotice = `Repaired ${repairNotes.join(" and ")} from saved depth chart data.`;
   render();
 }).catch(() => {
   content.innerHTML = `<section class="panel"><h2>Data did not load</h2><p class="note">Serve this folder locally so the browser can read data.json.</p></section>`;

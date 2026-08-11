@@ -1,5 +1,5 @@
 window.FOOTBALLGUYS_GAME_LOGS = {
-  "fetchedAt": "2026-08-06T20:37:15.020Z",
+  "fetchedAt": "2026-08-08T23:14:42.874Z",
   "source": "footballguys.com",
   "year": 2025,
   "notes": "Quarterback game logs only. Zero-only cells are treated as did not play and are excluded from averages.",
