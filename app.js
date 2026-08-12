@@ -1,20 +1,14 @@
-const pages = [
-  ["home", "Quick Actions"],
-  ["live", "Live Rankings"],
-  ["depth", "Depth Charts"],
-  ["top30", "Top 30s by Position"],
-  ["schedule", "Season Schedule"],
-  ["picks", "Picks Tracker"],
-  ["standings", "Sim Standings"],
-  ["weeklyMatchups", "Weekly Matchups"],
-  ["weeklyFantasy", "Weekly Fantasy Rankings"],
-  ["seasonFantasy", "Season Long Fantasy Ranks"],
-  ["statRanks", "Stat Ranks"],
-  ["data", "Data"],
-  ["start", "Start 'Em, Sit 'Em"],
-  ["pff", "PFF Update"],
-  ["qb", "H2H QB Challenge", "low"],
+const navSections = [
+  { title: "", pages: [["home", "Quick Actions"]] },
+  { title: "Player Database", pages: [["live", "Live Rankings"], ["depth", "Depth Charts"], ["top30", "Top 30s by Position"]] },
+  { title: "Picks Center", pages: [["schedule", "Season Schedule"], ["picks", "Picks Tracker"]] },
+  { title: "Season Projector", pages: [["standings", "Season Projector"]] },
+  { title: "Fantasy Hub", pages: [["start", "My Fantasy Teams"], ["weeklyFantasy", "Weekly Fantasy Rankings"], ["seasonFantasy", "Season Long Fantasy Rankings"]] },
+  { title: "Data", pages: [["weeklyMatchups", "Weekly Matchups"], ["pff", "PFF Update"], ["statRanks", "Stat Ranks"], ["data", "Data Diagnostics"]] },
+  { title: "Interactive", pages: [["qb", "H2H QB Challenge", "low"]] },
 ];
+
+const pages = navSections.flatMap((section) => section.pages);
 
 const storage = {
   get(key, fallback) {
@@ -38,6 +32,9 @@ const backupKeys = {
   depthCandidateRemovals: "nflz-depth-candidate-removals",
   depthIgnored: "nflz-depth-ignored-results",
   depthResolved: "nflz-depth-resolved-results",
+  injuryResolved: "nflz-injury-resolved-results",
+  fantasyFavorites: "nflz-fantasy-favorites",
+  fantasyTeams: "nflz-my-fantasy-teams",
   pffManualRanks: "nflz-pff-manual-ranks",
   pffRecentAdjustments: "nflz-pff-recent-adjustments",
   addedPlayers: "nflz-added-players",
@@ -293,6 +290,8 @@ const state = {
   homeFieldAdvantages: { ...defaultHomeFieldAdvantages, ...storage.get("nflz-home-field-advantages", {}) },
   siteWeek: storage.get("nflz-site-week", "auto"),
   selectedScheduleKey: "",
+  selectedPlayoffGame: null,
+  selectedTeamBreakdown: "",
   standingView: "league",
   weeklyFantasyPosition: "QB",
   weeklyFantasyView: "regular",
@@ -300,6 +299,8 @@ const state = {
   weeklyFantasySortDirection: "desc",
   weeklyFantasyCompareKeys: storage.get("nflz-weekly-compare-keys", []),
   weeklyFantasyCompareOnly: false,
+  weeklyFantasyDepthFilter: "All Depths",
+  weeklyFantasyTeamFilter: "All Teams",
   weeklyQbOptions: { ...weeklyQbDefaultOptions(), ...storage.get("nflz-weekly-qb-options", {}) },
   weeklyQbWeights: { ...weeklyQbDefaultWeights(), ...storage.get("nflz-weekly-qb-weights", {}) },
   weeklyQbControlsOpen: storage.get("nflz-weekly-qb-controls-open", true),
@@ -319,6 +320,12 @@ const state = {
   seasonFantasySort: "rank",
   seasonFantasySortDirection: "asc",
   seasonFantasyLimit: 150,
+  seasonFantasyDepthFilter: "All Depths",
+  seasonFantasyTeamFilter: "All Teams",
+  fantasyFavorites: storage.get("nflz-fantasy-favorites", []),
+  fantasyScheduleDetail: null,
+  fantasyProsAdpScanStatus: "idle",
+  fantasyProsAdpScanMessage: "",
   teamRankingsScanStatus: "idle",
   teamRankingsScanMessage: "",
   statRanksSort: { key: "team", direction: "asc" },
@@ -340,6 +347,8 @@ const state = {
   maddenSetTo: {},
   maddenLimit: 500,
   fantasyLeague: 0,
+  myFantasyWeek: storage.get("nflz-my-fantasy-week", "auto"),
+  myFantasyLeagueView: storage.get("nflz-my-fantasy-league-view", "all"),
   qbPosition: "QB",
   qbDepth: 1,
   qbUser: "",
@@ -352,6 +361,8 @@ const state = {
   quickRankLimit: 20,
   quickTeamRankScope: "Whole Team",
   quickTeamRankLimit: 20,
+  quickDepthTeam: "Arizona Cardinals",
+  quickDepthScope: "Starters",
   quickGameWeek: "All Weeks",
   quickGameKey: "",
   quickWinner: "",
@@ -369,9 +380,11 @@ const overrides = storage.get("nflz-player-overrides", {});
 const savedChallenges = storage.get("nflz-challenges", []);
 const savedPicks = storage.get("nflz-picks", {});
 const savedFantasy = storage.get("nflz-fantasy-order", {});
+let savedFantasyTeams = storage.get("nflz-my-fantasy-teams", null);
 const depthCandidateRemovals = storage.get("nflz-depth-candidate-removals", {});
 const depthIgnoredResults = storage.get("nflz-depth-ignored-results", {});
 const depthResolvedResults = storage.get("nflz-depth-resolved-results", {});
+const injuryResolvedResults = storage.get("nflz-injury-resolved-results", {});
 const pffManualRanks = storage.get("nflz-pff-manual-ranks", {});
 const pffRecentAdjustments = storage.get("nflz-pff-recent-adjustments", {});
 const maddenMatchOverrides = storage.get("nflz-madden-match-overrides", {});
@@ -466,6 +479,7 @@ function importFullBackup(file) {
       storage.set(backupKeys.challenges, data.challenges || []);
       storage.set(backupKeys.picks, data.picks || {});
       storage.set(backupKeys.fantasyOrder, data.fantasyOrder || {});
+      storage.set(backupKeys.fantasyTeams, data.fantasyTeams || []);
       storage.set(backupKeys.depthCandidateRemovals, data.depthCandidateRemovals || {});
       storage.set(backupKeys.depthIgnored, data.depthIgnored || {});
       storage.set(backupKeys.depthResolved, data.depthResolved || {});
@@ -572,7 +586,7 @@ const ratingScaleColor = (value, min = 68, max = 100, reverse = false) => {
   const red = [248, 207, 207];
   const yellow = [255, 244, 194];
   const green = [207, 242, 214];
-  const useRatingAnchors = max >= 95;
+  const useRatingAnchors = min >= 60 && max <= 115 && max >= 95;
   const low = useRatingAnchors ? 68 : min;
   const mid = useRatingAnchors ? 84 : (min + max) / 2;
   const high = useRatingAnchors ? 100 : max;
@@ -600,6 +614,10 @@ const gradeFromScore = (value) => {
   if (n >= 70) return "D";
   return "F";
 };
+
+function uid(prefix = "id") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
 function sourceKey(player) {
   return player?._sourceKey || playerKey(player);
@@ -723,6 +741,40 @@ function assignDepthSlots(players = []) {
     });
   });
   return nextPlayers;
+}
+
+function depthOrderedPlayers(players = []) {
+  const group = [...players].filter(Boolean);
+  const occupied = new Set();
+  const placed = [];
+  const sortByRating = (a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
+  const locked = group.filter(playerDepthLock).sort((a, b) => playerDepthLock(a) - playerDepthLock(b) || sortByRating(a, b));
+  const unlocked = group.filter((player) => !playerDepthLock(player)).sort(sortByRating);
+  locked.forEach((player) => {
+    let slot = playerDepthLock(player);
+    while (occupied.has(slot)) slot += 1;
+    occupied.add(slot);
+    placed.push({ player, slot });
+  });
+  let slot = 1;
+  unlocked.forEach((player) => {
+    while (occupied.has(slot)) slot += 1;
+    occupied.add(slot);
+    placed.push({ player, slot });
+  });
+  return placed.sort((a, b) => a.slot - b.slot || sortByRating(a.player, b.player)).map((item) => item.player);
+}
+
+function depthOrderedByPosition(players = []) {
+  const groups = new Map();
+  players.forEach((player) => {
+    const key = String(player?.position || "");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(player);
+  });
+  return [...groups.entries()]
+    .sort(([a], [b]) => depthPositionRank(a) - depthPositionRank(b) || a.localeCompare(b))
+    .flatMap(([, group]) => depthOrderedPlayers(group));
 }
 
 function lockPlayerDepth(player, depth) {
@@ -1060,10 +1112,15 @@ function pill(value, cls = "") {
 
 function renderNav() {
   const weekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
-  nav.innerHTML = pages.map(([id, label, low]) => `
-    <button class="nav-btn ${state.page === id ? "active" : ""} ${low || ""}" data-page="${id}">
-      <span>${label}</span><span>${state.page === id ? "*" : ""}</span>
-    </button>
+  nav.innerHTML = navSections.map((section) => `
+    <div class="nav-section ${section.title ? "" : "primary"} nav-section-${esc((section.title || "quick").toLowerCase().replace(/[^a-z0-9]+/g, "-"))}">
+      ${section.title ? `<h4>${esc(section.title)}</h4>` : ""}
+      ${section.pages.map(([id, label, low]) => `
+        <button class="nav-btn ${state.page === id ? "active" : ""} ${low || ""}" data-page="${id}">
+          <span>${label}</span><span>${state.page === id ? "*" : ""}</span>
+        </button>
+      `).join("")}
+    </div>
   `).join("");
   document.querySelector("#week-status")?.remove();
   document.querySelector(".brand")?.insertAdjacentHTML("afterend", `
@@ -2435,6 +2492,33 @@ function findInjuryCheckPlayer(item) {
     || state.players.find((p) => cleanPlayerName(p.player) === cleanPlayerName(item.player));
 }
 
+function injuryCheckResolvedKey(item) {
+  const parts = [
+    item?.playerKey || cleanPlayerName(item?.player || ""),
+    normalizeTeamName(item?.team || ""),
+    String(item?.espnTag || "").trim().toLowerCase(),
+    String(item?.espnCommentDate || "").trim().toLowerCase(),
+    String(item?.espnReturnDate || "").trim().toLowerCase(),
+    String(item?.espnComment || "").replace(/\s+/g, " ").trim().toLowerCase(),
+  ];
+  return parts.join("|");
+}
+
+function markInjuryCheckResolved(item, shouldSave = true) {
+  const key = injuryCheckResolvedKey(item);
+  if (!key.trim()) return;
+  injuryResolvedResults[key] = {
+    appliedAt: new Date().toISOString(),
+    player: item?.player || "",
+    team: item?.team || "",
+  };
+  if (shouldSave) storage.set("nflz-injury-resolved-results", injuryResolvedResults);
+}
+
+function unresolvedInjuryCheckResults(results) {
+  return (results || []).filter((item) => !injuryResolvedResults[injuryCheckResolvedKey(item)]);
+}
+
 function runInjuryCheck() {
   if (!window.ESPN_INJURY_CHECK?.results) {
     state.injuryCheck = { status: "empty", results: [], error: "No ESPN injury scan file is loaded. Run refresh-espn-injury-check.bat, reload the app, then scan again.", source: "codex" };
@@ -2443,7 +2527,7 @@ function runInjuryCheck() {
   }
   state.injuryCheck = {
     status: "review",
-    results: window.ESPN_INJURY_CHECK.results.map((item) => ({ ...item })),
+    results: unresolvedInjuryCheckResults(window.ESPN_INJURY_CHECK.results).map((item) => ({ ...item })),
     error: "",
     source: "codex",
     fetchedAt: window.ESPN_INJURY_CHECK.fetchedAt,
@@ -2561,6 +2645,7 @@ function applyInjuryCheckResult(index, options = {}) {
   persistPlayer(player, patch, { deferRefresh: options.skipRender });
   item.applied = true;
   item.appliedTo = `${status}${patch.week ? ` / ${patch.week}` : ""}`;
+  markInjuryCheckResolved(item, !options.skipRender);
   if (!options.skipRender) render();
 }
 
@@ -2579,7 +2664,9 @@ async function applyShownInjuryCheckResults() {
     await yieldToBrowser();
   }
   storage.set("nflz-player-overrides", overrides);
+  storage.set("nflz-injury-resolved-results", injuryResolvedResults);
   state.players = applyOverrides(state.data.players);
+  state.injuryCheck.results = unresolvedInjuryCheckResults(state.injuryCheck.results);
   pffPlayerMatchIndexCache = null;
   render();
 }
@@ -2834,13 +2921,13 @@ function playerGroupForSchedule(player) {
 function schedulePlayersFor(teamName, group, week = selectedSiteWeek()) {
   const exactPositions = new Set(["LT", "LG", "C", "RG", "RT"]);
   const wantedTeam = normalizeScheduleTeam(teamName);
-  return state.players
+  const filtered = state.players
     .filter((player) => {
       if (normalizeScheduleTeam(player.team) !== wantedTeam || !isPlayerAvailable(player, week) || !Number.isFinite(Number(player.rating))) return false;
       if (exactPositions.has(group)) return player.position === group;
       return playerGroupForSchedule(player) === group;
-    })
-    .sort((a, b) => num(a.depth, 999) - num(b.depth, 999) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
+    });
+  return depthOrderedPlayers(filtered);
 }
 
 function weightedAverage(values) {
@@ -3512,6 +3599,55 @@ function quickTeamRankRows(scope, limit) {
     .slice(0, limit);
 }
 
+function quickDepthOptions() {
+  const positions = liveBasePositions();
+  return ["Starters", "All", "Offense", "Defense", ...positions];
+}
+
+function quickDepthGroupConfig(scope) {
+  const offense = [["QB", 1], ["RB", 2], ["WR", 4], ["TE", 2], ["LT", 1], ["LG", 1], ["C", 1], ["RG", 1], ["RT", 1]];
+  const defense = [["IDL", 3], ["EDGE", 3], ["LB", 3], ["CB", 3], ["S", 2]];
+  if (scope === "Starters") return [...offense, ...defense];
+  if (scope === "Offense") return offense.map(([group]) => [group, 99]);
+  if (scope === "Defense") return defense.map(([group]) => [group, 99]);
+  if (scope === "All") return [...offense, ...defense].map(([group]) => [group, 99]);
+  return [[scope, 99]];
+}
+
+function quickDepthPlayers() {
+  const teamName = state.quickDepthTeam || "Arizona Cardinals";
+  const scope = state.quickDepthScope || "Starters";
+  const seen = new Set();
+  return quickDepthGroupConfig(scope).flatMap(([group, limit]) => {
+    const players = schedulePlayersFor(teamName, group).slice(0, limit);
+    return players.map((player, index) => ({ player, group, groupDepth: index + 1 }));
+  }).filter(({ player }) => {
+    const key = sourceKey(player);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function renderQuickDepthChart() {
+  const teamOptions = (state.data?.teams || []).map((team) => team.team);
+  if (!teamOptions.includes(state.quickDepthTeam)) state.quickDepthTeam = "Arizona Cardinals";
+  const rows = quickDepthPlayers();
+  return `
+    <div class="quick-three">${select("quick-depth-team", state.quickDepthTeam, teamOptions)}${select("quick-depth-scope", state.quickDepthScope, quickDepthOptions())}<button class="quick-bubble" data-page="depth">Open Full Depth</button></div>
+    <div class="quick-depth-list">
+      ${rows.map(({ player, group, groupDepth }) => `
+        <button class="quick-rank-row quick-depth-row player-open" data-player-key="${esc(sourceKey(player))}">
+          <b>${esc(group)}${esc(groupDepth)}</b>
+          <span class="quick-rank-player">${playerAvatar(player)}<span>${esc(player.player)}</span></span>
+          <em>${teamCell(player)}</em>
+          ${ratingBadge(player.rating)}
+        </button>
+      `).join("") || "<p class='note'>No players found for this depth filter.</p>"}
+    </div>
+  `;
+}
+
 function renderQuickPlayerPicker(player) {
   const matches = quickPlayerMatches(24);
   const resultText = state.quickPlayerQuery.trim()
@@ -3608,23 +3744,8 @@ function wireQuickActions() {
     if (player) persistPlayer(player, { week: event.target.value });
     render();
   });
-  document.querySelector("#quick-game-week")?.addEventListener("change", (event) => {
-    state.quickGameWeek = event.target.value;
-    state.quickGameKey = "";
-    state.quickWinner = "";
-    render();
-  });
-  document.querySelector("#quick-game")?.addEventListener("change", (event) => {
-    state.quickGameKey = event.target.value;
-    state.quickWinner = "";
-    render();
-  });
-  document.querySelector("#quick-winner")?.addEventListener("change", (event) => { state.quickWinner = event.target.value; });
-  document.querySelector("#quick-save-result")?.addEventListener("click", () => {
-    if (!state.quickGameKey || !state.quickWinner) return;
-    saveGameAction(state.quickGameKey, { resultWinner: state.quickWinner, ml: gameAction(state.quickGameKey).ml || state.quickWinner });
-    render();
-  });
+  document.querySelector("#quick-depth-team")?.addEventListener("change", (event) => { state.quickDepthTeam = event.target.value; render(); });
+  document.querySelector("#quick-depth-scope")?.addEventListener("change", (event) => { state.quickDepthScope = event.target.value; render(); });
   document.querySelector("#quick-rank-scope")?.addEventListener("change", (event) => { state.quickRankScope = event.target.value; render(); });
   document.querySelector("#quick-rank-limit")?.addEventListener("change", (event) => { state.quickRankLimit = Number(event.target.value); render(); });
   document.querySelector("#quick-team-rank-scope")?.addEventListener("change", (event) => { state.quickTeamRankScope = event.target.value; render(); });
@@ -3640,14 +3761,6 @@ function renderHome() {
   const teamRankScopes = ["Whole Team", "Offense", "Defense", "QB", "RB", "WR", "TE", "OT", "OG", "C", "IOL", "OL", "OLINE", "IDL", "EDGE Def", "DL\n(DT + EDGE)", "LB Only", "LB + EDGE", "CB", "S", "Defensive Backs"];
   const normalizedTeamScope = state.quickTeamRankScope === "OLINE" ? "OL" : state.quickTeamRankScope;
   const teamRanked = quickTeamRankRows(normalizedTeamScope, state.quickTeamRankLimit);
-  const weeks = scheduleWeekOptions(true);
-  const games = scheduleGames()
-    .map((game, index) => ({ game, key: scheduleGameKey(game, index) }))
-    .filter(({ game }) => scheduleWeekMatches(game, state.quickGameWeek));
-  if (!state.quickGameKey && games[0]) state.quickGameKey = games[0].key;
-  const selectedGame = games.find((item) => item.key === state.quickGameKey)?.game || games[0]?.game;
-  const selectedGameKey = games.find((item) => item.game === selectedGame)?.key || state.quickGameKey;
-  const currentPick = gameAction(selectedGameKey).ml || selectedGame?.officialPick || "";
   const playerDisabled = player ? "" : "disabled";
   setTimeout(wireQuickActions);
   return `
@@ -3692,17 +3805,16 @@ function renderHome() {
             </article>
           </div>
         </section>
-        <article class="quick-card span-2">
-          <div class="quick-card-title"><span>07</span><h3>Add Game Result</h3></div>
-          <div class="quick-three">${optionSelect("quick-game-week", state.quickGameWeek, weeks)}<select id="quick-game">${games.map(({ game, key }) => `<option value="${esc(key)}" ${key === selectedGameKey ? "selected" : ""}>${esc(weekDisplay(game.week))} - ${esc(game.visitor)} at ${esc(game.home)}</option>`).join("")}</select><select id="quick-winner"><option value="">Winner</option>${selectedGame ? [selectedGame.visitor, selectedGame.home].map((team) => `<option ${(state.quickWinner || currentPick) === team ? "selected" : ""}>${esc(team)}</option>`).join("") : ""}</select></div>
-          <button id="quick-save-result" class="quick-bubble">Save Result</button>
+      <article class="quick-card quick-card-third">
+          <div class="quick-card-title"><span>07</span><h3>Quick Depth Chart</h3></div>
+          ${renderQuickDepthChart()}
         </article>
-        <article class="quick-card span-2">
+        <article class="quick-card quick-card-third">
           <div class="quick-card-title"><span>08</span><h3>Positional Rankings</h3></div>
           <div class="quick-three">${select("quick-rank-scope", state.quickRankScope, rankScopes)}${select("quick-rank-limit", state.quickRankLimit, [10, 20, 30, 50, 100])}<button class="quick-bubble" data-page="top30">Open Top 30s</button></div>
           <div class="quick-rank-list">${ranked.map((p, index) => `<button class="quick-rank-row player-open" data-player-key="${esc(sourceKey(p))}"><b>${index + 1}</b><span class="quick-rank-player">${playerAvatar(p)}<span>${esc(p.player)}</span></span><em>${teamCell(p)}</em><strong>${fmt(p.rating, 0)}</strong></button>`).join("")}</div>
         </article>
-        <article class="quick-card span-2">
+        <article class="quick-card quick-card-third">
           <div class="quick-card-title"><span>09</span><h3>Team Rankings</h3></div>
           <div class="quick-three">${select("quick-team-rank-scope", state.quickTeamRankScope, teamRankScopes)}${select("quick-team-rank-limit", state.quickTeamRankLimit, [10, 20, 32])}<button class="quick-bubble" data-page="live">Open Live Rankings</button></div>
           <div class="quick-rank-list">${teamRanked.map((row, index) => `<div class="quick-rank-row quick-team-row"><b>${index + 1}</b><span>${teamCellByName(row.team.team)}</span><em>${esc(state.quickTeamRankScope)}</em><strong>${fmt(row.score, 1)}</strong></div>`).join("")}</div>
@@ -3745,7 +3857,9 @@ function renderDepth() {
   `;
   const depthRowsForSide = (sidePlayers) => {
     const positionCounts = {};
-    const ordered = [...sidePlayers].sort((a, b) => depthPositionRank(a.position) - depthPositionRank(b.position) || Number(Boolean(playerUnavailableLabel(a, depthWeek))) - Number(Boolean(playerUnavailableLabel(b, depthWeek))) || num(a.depth, 999) - num(b.depth, 999) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
+    const available = depthOrderedByPosition(sidePlayers.filter((player) => !playerUnavailableLabel(player, depthWeek)));
+    const unavailable = [...sidePlayers].filter((player) => playerUnavailableLabel(player, depthWeek)).sort((a, b) => depthPositionRank(a.position) - depthPositionRank(b.position) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
+    const ordered = [...available, ...unavailable];
     return ordered.map((p, index) => {
       const unavailable = playerUnavailableLabel(p, depthWeek);
       if (!unavailable) positionCounts[p.position] = (positionCounts[p.position] || 0) + 1;
@@ -5598,11 +5712,11 @@ function standingSort(a, b) {
   return b.wins - a.wins || b.favored - a.favored || b.sos - a.sos || a.team.localeCompare(b.team);
 }
 
-function standingMiniTable(rows, showSeed = false) {
-  const winValues = rows.map((row) => row.wins);
-  const lossValues = rows.map((row) => row.losses);
-  const favValues = rows.map((row) => row.favored);
-  const sosRanks = rows.map((row) => row.sosRank);
+function standingMiniTable(rows, showSeed = false, scaleRows = rows) {
+  const winValues = scaleRows.map((row) => row.wins);
+  const lossValues = scaleRows.map((row) => row.losses);
+  const favValues = scaleRows.map((row) => row.favored);
+  const sosRanks = scaleRows.map((row) => row.sosRank);
   return table([
     ...(showSeed ? [{ label: "#", cls: "num" }] : []),
     { label: "Team" },
@@ -5612,7 +5726,7 @@ function standingMiniTable(rows, showSeed = false) {
     { label: "SOS Rk", cls: "num", title: "Strength of schedule rank. 1 is easiest." },
   ], rows.map((row, index) => `<tr>
     ${showSeed ? `<td class="num"><span class="rank mini-rank">${index + 1}</span></td>` : ""}
-    <td>${teamCellByName(row.team)}</td>
+    <td><button class="standings-team-link" data-standings-team="${esc(row.team)}">${teamCellByName(row.team)}</button></td>
     <td class="num standings-num strong cf" ${cfStyle(row.wins, Math.min(...winValues), Math.max(...winValues))}>${fmt(row.wins, 2)}</td>
     <td class="num standings-num cf" ${cfStyle(row.losses, Math.min(...lossValues), Math.max(...lossValues), true)}>${fmt(row.losses, 2)}</td>
     <td class="num cf" ${cfStyle(row.favored, Math.min(...favValues), Math.max(...favValues))}>${fmt(row.favored, 0)}</td>
@@ -5640,7 +5754,7 @@ function playoffGame(seedA, seedB, neutral = false) {
   const game = { week: "Playoff", visitor: away.team, home: home.team, date: "", homeAdvantage: neutral ? 0 : num(state.homeFieldAdvantages?.[home.team], defaultHomeFieldAdvantages[home.team] ?? 1.5) };
   const projection = scheduleProjection(game);
   const winner = projection.visitor > projection.home ? away : home;
-  return { home, away, projection, winner };
+  return { home, away, projection, winner, homeAdvantage: game.homeAdvantage };
 }
 
 function playoffGameCard(game, label = "") {
@@ -5649,11 +5763,18 @@ function playoffGameCard(game, label = "") {
   const homeAbbrev = teamByName(game.home.team)?.teamAbbrev || game.home.team;
   const awayWins = game.winner.team === game.away.team;
   const homeWins = game.winner.team === game.home.team;
-  return `<div class="sim-game-card">
+  const gamePayload = btoa(unescape(encodeURIComponent(JSON.stringify({
+    visitor: game.away.team,
+    home: game.home.team,
+    week: "Playoff",
+    date: "",
+    homeAdvantage: game.homeAdvantage ?? 0,
+  }))));
+  return `<button class="sim-game-card" data-playoff-game="${esc(gamePayload)}" title="Open game details">
     <span>${esc(label || "Projected")}</span>
     <div class="${awayWins ? "winner" : ""}">${teamLogo(game.away.team, awayAbbrev)}<b>${game.away.seed} ${esc(awayAbbrev)}</b><strong>${fmt(game.projection.visitor, 0)}</strong></div>
     <div class="${homeWins ? "winner" : ""}">${teamLogo(game.home.team, homeAbbrev)}<b>${game.home.seed} ${esc(homeAbbrev)}</b><strong>${fmt(game.projection.home, 0)}</strong></div>
-  </div>`;
+  </button>`;
 }
 
 function conferenceBracket(seeds) {
@@ -5678,14 +5799,13 @@ function simBracket(rows) {
   return `<section class="standings-bracket-card">
     <div class="standings-bracket-head"><h3>NFL Playoff Bracket 2026</h3><span>Projected</span></div>
     <div class="sim-bracket full">
-      <div class="sim-conf"><h4>AFC Seeds</h4>${afcBracket.seeded.map((row) => bracketTeamCard(row.seed, row, row.seed === 1)).join("")}</div>
       <div class="sim-round"><h4>AFC Wild Card</h4>${afcBracket.wc.map((game) => playoffGameCard(game, "Final")).join("")}</div>
       <div class="sim-round"><h4>AFC Divisional</h4>${afcBracket.divisional.map((game) => playoffGameCard(game, "Final")).join("")}</div>
-      <div class="sim-round"><h4>Conference</h4>${playoffGameCard(afcBracket.championship, "AFC Final")}${playoffGameCard(nfcBracket.championship, "NFC Final")}</div>
+      <div class="sim-round"><h4>AFC Conference</h4>${playoffGameCard(afcBracket.championship, "AFC Final")}</div>
       <div class="sim-bracket-center"><span>Super Bowl</span><strong>${champion ? esc(teamByName(champion.team)?.teamAbbrev || champion.team) : "TBD"}</strong>${champion ? teamLogo(champion.team, teamByName(champion.team)?.teamAbbrev) : ""}${playoffGameCard(superBowl, "Neutral")}</div>
+      <div class="sim-round"><h4>NFC Conference</h4>${playoffGameCard(nfcBracket.championship, "NFC Final")}</div>
       <div class="sim-round"><h4>NFC Divisional</h4>${nfcBracket.divisional.map((game) => playoffGameCard(game, "Final")).join("")}</div>
       <div class="sim-round"><h4>NFC Wild Card</h4>${nfcBracket.wc.map((game) => playoffGameCard(game, "Final")).join("")}</div>
-      <div class="sim-conf"><h4>NFC Seeds</h4>${nfcBracket.seeded.map((row) => bracketTeamCard(row.seed, row, row.seed === 1)).join("")}</div>
     </div>
   </section>`;
 }
@@ -5697,15 +5817,43 @@ function renderStandings() {
   const nfcDivisions = divisions.filter((division) => division.startsWith("NFC"));
   const afcSeeds = playoffSeeds(rows, "AFC");
   const nfcSeeds = playoffSeeds(rows, "NFC");
-  const divisionBubble = (division) => `<div class="division-bubble"><h4>${esc(division)}</h4>${standingMiniTable(rows.filter((row) => row.division === division).sort(standingSort), false)}</div>`;
+  const divisionBubble = (division) => `<div class="division-bubble"><h4>${esc(division)}</h4>${standingMiniTable(rows.filter((row) => row.division === division).sort(standingSort), false, rows)}</div>`;
+  setTimeout(() => {
+    document.querySelectorAll("[data-playoff-game]").forEach((button) => button.addEventListener("click", () => {
+      try {
+        state.selectedPlayoffGame = JSON.parse(decodeURIComponent(escape(atob(button.dataset.playoffGame))));
+        render();
+      } catch {}
+    }));
+    document.querySelectorAll("[data-standings-team]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedTeamBreakdown = button.dataset.standingsTeam;
+      render();
+    }));
+    document.querySelectorAll(".standings-panel .player-open").forEach((button) => button.addEventListener("click", () => {
+      state.selectedPlayerKey = button.dataset.playerKey;
+      render();
+    }));
+    wirePlayerModalControls();
+    document.querySelectorAll(".projector-modal-close").forEach((button) => button.addEventListener("click", () => {
+      state.selectedPlayoffGame = null;
+      state.selectedTeamBreakdown = "";
+      render();
+    }));
+    document.querySelectorAll(".projector-game-backdrop, .team-season-backdrop").forEach((backdrop) => backdrop.addEventListener("click", (event) => {
+      if (event.target !== backdrop) return;
+      state.selectedPlayoffGame = null;
+      state.selectedTeamBreakdown = "";
+      render();
+    }));
+  });
   return `<section class="panel standings-panel">
-    <div class="toolbar"><div><h2>Sim Standings</h2><p>Expected wins are built from current game win probabilities. Losses are 17 minus expected wins. SOS is average opponent projection strength.</p></div></div>
+    <div class="toolbar"><div><h2>Season Projector</h2><p>Expected wins are built from current game win probabilities. Losses are 17 minus expected wins. SOS is average opponent projection strength.</p></div></div>
     <div class="standings-dashboard">
-      <section class="standings-card league"><h3>Full League</h3><div class="table-scroll standings-mini-scroll">${standingMiniTable(rows, true)}</div></section>
+      <section class="standings-card league"><h3>Full League</h3><div class="table-scroll standings-mini-scroll">${standingMiniTable(rows, true, rows)}</div></section>
       <section class="standings-card playoff"><h3>Playoff View</h3>
         <div class="playoff-seed-columns">
-          <div><h4>AFC</h4>${standingMiniTable(afcSeeds, true)}</div>
-          <div><h4>NFC</h4>${standingMiniTable(nfcSeeds, true)}</div>
+          <div><h4>AFC</h4>${standingMiniTable(afcSeeds, true, rows)}</div>
+          <div><h4>NFC</h4>${standingMiniTable(nfcSeeds, true, rows)}</div>
         </div>
       </section>
       <section class="standings-card divisions"><h3>Divisions</h3>
@@ -5714,7 +5862,84 @@ function renderStandings() {
       </section>
     </div>
     ${simBracket(rows)}
+    ${renderPlayoffGameModal()}
+    ${renderTeamSeasonBreakdownModal(rows)}
+    ${renderPlayerModal()}
   </section>`;
+}
+
+function renderPlayoffGameModal() {
+  const game = state.selectedPlayoffGame;
+  if (!game) return "";
+  const projection = scheduleProjection(game);
+  const winProfile = projectionWinProfile(game, projection);
+  const visitor = teamByName(game.visitor);
+  const home = teamByName(game.home);
+  const visitorAbbrev = visitor?.teamAbbrev || teamAbbrevFor(game.visitor);
+  const homeAbbrev = home?.teamAbbrev || teamAbbrevFor(game.home);
+  const rows = ["QB", "RB", "WR", "TE", "OL", "IDL", "EDGE", "LB", "CB", "S"].map((label) => {
+    const away = visitor ? schedulePositionScore(visitor, label, "regular") : "";
+    const homeScore = home ? schedulePositionScore(home, label, "regular") : "";
+    return `<tr><td>${esc(label)}</td><td class="num cf" ${cfStyle(away, 68, 102)}>${fmt(away, 1)}</td><td class="num cf" ${cfStyle(homeScore, 68, 102)}>${fmt(homeScore, 1)}</td></tr>`;
+  });
+  return `<div class="schedule-detail-backdrop projector-game-backdrop">
+    <section class="schedule-detail">
+      <button class="modal-close projector-modal-close" title="Close">x</button>
+      <div class="schedule-detail-head">
+        <div><p class="eyebrow">Projected Playoff Game</p><h2>${esc(game.visitor)} at ${esc(game.home)}</h2><span>Neutral only for Super Bowl; otherwise lower seed hosts.</span></div>
+        <div class="projected-score">${scheduleScorePill(game.visitor, projection.visitor)}<em>at</em>${scheduleScorePill(game.home, projection.home)}</div>
+      </div>
+      <div class="schedule-detail-metrics">
+        ${metric("Spread", spreadLabel(game), "Model line")}
+        ${metric("Total", fmt(projection.total, 1), "Projected points")}
+        ${metric("Win Odds", `${fmt(winProfile.favoriteChance * 100, 1)}%`, winProfile.favorite ? `${teamAbbrevFor(winProfile.favorite)} win` : "Pick'em")}
+      </div>
+      <div class="schedule-detail-grid"><section><h3>Position Comparison</h3>${table([{ label: "Group" }, { label: visitorAbbrev, cls: "num" }, { label: homeAbbrev, cls: "num" }], rows)}</section></div>
+      ${scheduleStarterComparison(game)}
+    </section>
+  </div>`;
+}
+
+function renderTeamSeasonBreakdownModal(rows) {
+  const teamName = state.selectedTeamBreakdown;
+  if (!teamName) return "";
+  const team = teamByName(teamName);
+  const row = rows.find((item) => normalizeTeamName(item.team) === normalizeTeamName(teamName));
+  const games = scheduleGames().filter((game) => normalizeTeamName(game.visitor) === normalizeTeamName(teamName) || normalizeTeamName(game.home) === normalizeTeamName(teamName));
+  const topPlayers = (side) => state.players
+    .filter((player) => normalizeTeamName(player.team) === normalizeTeamName(teamName) && depthSideFor(player) === side && isPlayerAvailable(player))
+    .sort((a, b) => num(b.rating) - num(a.rating))
+    .slice(0, 5);
+  const gameRows = games.map((game) => {
+    const projection = scheduleProjection(game);
+    const winProfile = projectionWinProfile(game, projection);
+    const isHome = normalizeTeamName(game.home) === normalizeTeamName(teamName);
+    const score = isHome ? projection.home : projection.visitor;
+    const oppScore = isHome ? projection.visitor : projection.home;
+    const winPct = winProfile.favorite === teamName ? winProfile.favoriteChance : 1 - winProfile.favoriteChance;
+    const opp = isHome ? game.visitor : game.home;
+    return `<tr><td>${esc(weekDisplay(game.week))}</td><td>${teamCellByName(opp)}</td><td class="num">${fmt(score, 0)}-${fmt(oppScore, 0)}</td><td class="num cf" ${cfStyle(winPct * 100, 0, 100)}>${fmt(winPct * 100, 1)}%</td></tr>`;
+  });
+  const playerList = (players) => players.map((player) => `<button class="season-top-player player-open" data-player-key="${esc(sourceKey(player))}">${playerAvatar(player)}<span>${esc(player.player)}</span>${ratingBadge(player.rating)}</button>`).join("");
+  return `<div class="schedule-detail-backdrop team-season-backdrop">
+    <section class="schedule-detail team-season-detail">
+      <button class="modal-close projector-modal-close" title="Close">x</button>
+      <div class="schedule-detail-head">
+        <div><p class="eyebrow">Team Season Breakdown</p><h2>${teamLogo(team?.team || teamName, team?.teamAbbrev)}${esc(teamName)}</h2><span>${esc(row?.division || "")} / ${esc(row?.conference || "")}</span></div>
+      </div>
+      <div class="schedule-detail-metrics">
+        ${metric("Expected Wins", fmt(row?.wins, 2), `${fmt(row?.losses, 2)} losses`)}
+        ${metric("Favored", fmt(row?.favored, 0), "Games")}
+        ${metric("SOS Rank", fmt(row?.sosRank, 0), "1 is easiest")}
+        ${metric("Off / Def", `${fmt(team?.offenseAverage, 1)} / ${fmt(team?.defenseAverage, 1)}`, "Model ratings")}
+      </div>
+      <div class="schedule-detail-grid">
+        <section><h3>Season Games</h3><div class="table-scroll mini-scroll">${table([{ label: "Wk" }, { label: "Opp" }, { label: "Score", cls: "num" }, { label: "Win %", cls: "num" }], gameRows)}</div></section>
+        <section><h3>Top Offense</h3><div class="season-top-list">${playerList(topPlayers("Offense"))}</div><h3>Top Defense</h3><div class="season-top-list">${playerList(topPlayers("Defense"))}</div></section>
+        <section><h3>Starting Lineup</h3>${scheduleStarterComparison({ visitor: teamName, home: teamName, week: selectedSiteWeek() })}</section>
+      </div>
+    </section>
+  </div>`;
 }
 
 function gameSeasonType(game) {
@@ -5918,10 +6143,45 @@ async function scanWeeklyFantasySources() {
   await Promise.all([scanTeamRankings(), scanSnapsStats()]);
 }
 
+async function scanFantasyProsAdp() {
+  state.fantasyProsAdpScanStatus = "checking";
+  state.fantasyProsAdpScanMessage = "Scanning FantasyPros ADP";
+  render();
+  try {
+    const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/fantasypros-adp-scan" : "/api/fantasypros-adp-scan";
+    const response = await fetch(apiUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
+    window.FANTASYPROS_ADP = await response.json();
+    const total = Object.values(window.FANTASYPROS_ADP.players || {}).reduce((sum, rows) => sum + (rows?.length || 0), 0);
+    state.fantasyProsAdpScanStatus = "review";
+    state.fantasyProsAdpScanMessage = `Updated ${total} FantasyPros ADP rows across FullPPR, .5PPR, and NoPPR.`;
+  } catch (error) {
+    const cached = window.FANTASYPROS_ADP;
+    const total = Object.values(cached?.players || {}).reduce((sum, rows) => sum + (rows?.length || 0), 0);
+    if (total) {
+      state.fantasyProsAdpScanStatus = "review";
+      state.fantasyProsAdpScanMessage = `Using cached FantasyPros ADP for ${total} rows because the local scan server is not running. Open the local server URL or run refresh-fantasypros-adp.bat to refresh live.`;
+      render();
+      return;
+    }
+    state.fantasyProsAdpScanStatus = "error";
+    state.fantasyProsAdpScanMessage = error.message;
+  }
+  render();
+}
+
 function snapsStatsStatusNote() {
   const scan = window.FOOTBALLGUYS_GAME_LOGS;
   const status = state.snapsStatsScanStatus;
   const message = state.snapsStatsScanMessage || (scan?.fetchedAt ? `Footballguys cached ${new Date(scan.fetchedAt).toLocaleString()} for ${scan.players?.length || 0} QB rows.` : "No Footballguys snaps/stats scan loaded yet.");
+  return `<span class="scan-status ${status}">${esc(message)}</span>`;
+}
+
+function fantasyProsAdpStatusNote() {
+  const scan = window.FANTASYPROS_ADP;
+  const total = Object.values(scan?.players || {}).reduce((sum, rows) => sum + (rows?.length || 0), 0);
+  const status = state.fantasyProsAdpScanStatus;
+  const message = state.fantasyProsAdpScanMessage || (scan?.fetchedAt ? `FantasyPros ADP cached ${new Date(scan.fetchedAt).toLocaleString()} for ${total} rows.` : "No FantasyPros ADP scan loaded yet.");
   return `<span class="scan-status ${status}">${esc(message)}</span>`;
 }
 
@@ -6110,10 +6370,10 @@ function renderWeeklyQbScoreAudit(rows) {
     ["Season Score", "score", 1, "season"],
     ["Last 5 Score", "score", 1, "last5"],
     ["Rating", "rateP", 0],
-    ["vQB Rk", "matchRank", 0],
-    ["OL Rk", "olRank", 0],
-    ["PPG Rk", "ppgRank", 0],
-    ["WR Rk", "wrRank", 0],
+    ["vQB Rank", "matchRank", 0],
+    ["OL Rank", "olRank", 0],
+    ["PPG Rank", "ppgRank", 0],
+    ["WR Rank", "wrRank", 0],
     ["Season PYds", "seaPY", 1],
     ["Last 5 PYds", "lfivePY", 1],
     ["Blended PYds", "usePY", 1],
@@ -6295,6 +6555,23 @@ function footballguysLogFor(player) {
     || null;
 }
 
+function clayProjectionFor(player, position = "") {
+  const rows = window.CLAY_PROJECTIONS?.players || [];
+  const playerKey = fantasyMergeKey(player.player || player);
+  const wantedPosition = normalizeFantasyPositionLabel(position || groupPosition(player.position) || player.position || "");
+  const wantedTeam = normalizeTeamName(teamAbbrevFor(player.team, player.team));
+  return rows.find((row) => fantasyMergeKey(row.player) === playerKey && normalizeFantasyPositionLabel(row.position) === wantedPosition && normalizeTeamName(row.team) === wantedTeam)
+    || rows.find((row) => fantasyMergeKey(row.player) === playerKey && normalizeFantasyPositionLabel(row.position) === wantedPosition)
+    || rows.find((row) => fantasyMergeKey(row.player) === playerKey)
+    || null;
+}
+
+function clayPerGame(row, key, fallback = "") {
+  const games = Math.max(1, num(row?.games, 17));
+  const value = Number(row?.[key]);
+  return Number.isFinite(value) ? value / games : fallback;
+}
+
 function workbookRowByName(rows, playerName) {
   const key = fantasyMergeKey(playerName);
   return rows.find((row) => fantasyMergeKey(row.player) === key) || null;
@@ -6374,26 +6651,28 @@ function receiverMatchupRating(player, opponentTeam) {
 
 function weeklyQbStatPack(player, workbookRow) {
   const log = footballguysLogFor(player);
+  const useClay = !log || num(log.gamesPlayed, 0) < 8;
+  const clay = useClay ? clayProjectionFor(player, "QB") : null;
   const wb = (label) => fantasyDetailValue(workbookRow || {}, label);
   const fallbackPassYards = Number(wb("Typical Pass Yards"));
   const fallbackPassTds = Number(wb("Typical Pass TDs"));
   const fallbackRushAttempts = Number(wb("Typical Rush Attempts"));
   const fallbackRushTds = Number(wb("Typical Rush TDs"));
   const season = {
-    passYards: Number.isFinite(log?.averages?.passYards) ? log.averages.passYards : (Number.isFinite(fallbackPassYards) ? fallbackPassYards : 205 + Math.max(0, num(player.rating, 75) - 75) * 2.2),
-    passTds: Number.isFinite(log?.averages?.passTds) ? log.averages.passTds : (Number.isFinite(fallbackPassTds) ? fallbackPassTds : 1.15 + Math.max(0, num(player.rating, 75) - 75) * 0.035),
-    rushAttempts: Number.isFinite(log?.averages?.rushAttempts) ? log.averages.rushAttempts : (Number.isFinite(fallbackRushAttempts) ? fallbackRushAttempts : 2.2),
-    rushYards: Number.isFinite(log?.averages?.rushYards) ? log.averages.rushYards : 0,
-    rushTds: Number.isFinite(log?.averages?.rushTds) ? log.averages.rushTds : (Number.isFinite(fallbackRushTds) ? fallbackRushTds : 0.12),
+    passYards: Number.isFinite(log?.averages?.passYards) && !useClay ? log.averages.passYards : clayPerGame(clay, "passYards", Number.isFinite(fallbackPassYards) ? fallbackPassYards : 205 + Math.max(0, num(player.rating, 75) - 75) * 2.2),
+    passTds: Number.isFinite(log?.averages?.passTds) && !useClay ? log.averages.passTds : clayPerGame(clay, "passTds", Number.isFinite(fallbackPassTds) ? fallbackPassTds : 1.15 + Math.max(0, num(player.rating, 75) - 75) * 0.035),
+    rushAttempts: Number.isFinite(log?.averages?.rushAttempts) && !useClay ? log.averages.rushAttempts : clayPerGame(clay, "rushAttempts", Number.isFinite(fallbackRushAttempts) ? fallbackRushAttempts : 2.2),
+    rushYards: Number.isFinite(log?.averages?.rushYards) && !useClay ? log.averages.rushYards : clayPerGame(clay, "rushYards", 0),
+    rushTds: Number.isFinite(log?.averages?.rushTds) && !useClay ? log.averages.rushTds : clayPerGame(clay, "rushTds", Number.isFinite(fallbackRushTds) ? fallbackRushTds : 0.12),
   };
   const last5 = {
-    passYards: Number.isFinite(log?.last5Averages?.passYards) ? log.last5Averages.passYards : season.passYards,
-    passTds: Number.isFinite(log?.last5Averages?.passTds) ? log.last5Averages.passTds : season.passTds,
-    rushAttempts: Number.isFinite(log?.last5Averages?.rushAttempts) ? log.last5Averages.rushAttempts : season.rushAttempts,
-    rushYards: Number.isFinite(log?.last5Averages?.rushYards) ? log.last5Averages.rushYards : season.rushYards,
-    rushTds: Number.isFinite(log?.last5Averages?.rushTds) ? log.last5Averages.rushTds : season.rushTds,
+    passYards: Number.isFinite(log?.last5Averages?.passYards) && !useClay ? log.last5Averages.passYards : season.passYards,
+    passTds: Number.isFinite(log?.last5Averages?.passTds) && !useClay ? log.last5Averages.passTds : season.passTds,
+    rushAttempts: Number.isFinite(log?.last5Averages?.rushAttempts) && !useClay ? log.last5Averages.rushAttempts : season.rushAttempts,
+    rushYards: Number.isFinite(log?.last5Averages?.rushYards) && !useClay ? log.last5Averages.rushYards : season.rushYards,
+    rushTds: Number.isFinite(log?.last5Averages?.rushTds) && !useClay ? log.last5Averages.rushTds : season.rushTds,
   };
-  return { log, gamesPlayed: log?.gamesPlayed || 0, season, last5 };
+  return { log, clay, usedClay: Boolean(clay), gamesPlayed: log?.gamesPlayed || (clay ? clay.games : 0), season, last5 };
 }
 
 function weeklyQbScore(row) {
@@ -6445,8 +6724,8 @@ function weeklyQbScoreBreakdown(row, mode = "blend") {
   return { mode, statWeightLast5: wLast5, depthNum, depthFactor: depthF, matchRank, rateP, olRank, wrRank, ppgRank, seaPY, seaPTD, seaRA, seaRTD, lfivePY, lfivePTD, lfiveRA, lfiveRTD, usePY, usePTD, useRA, useRTD, jF, mF, oF, wF, pF, passYardsTerm, passTdsTerm, rushAttemptsTerm, rushTdsTerm, raw, score: Number(Math.max(0, raw).toFixed(1)) };
 }
 
-function buildWeeklyQbRows(workbookRows) {
-  const week = selectedSiteWeek() || fantasyRankBundle("weekly")?.QB?.week || window.FANTASY_RANKINGS?.weeklyWeek || 1;
+function buildWeeklyQbRows(workbookRows, weekOverride = null) {
+  const week = weekOverride || selectedSiteWeek() || fantasyRankBundle("weekly")?.QB?.week || window.FANTASY_RANKINGS?.weeklyWeek || 1;
   const teams = state.data?.teams || [];
   const allQbs = state.players.filter((player) => player.team !== "Free Agent" && (groupPosition(player.position) === "QB" || player.position === "QB"));
   const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
@@ -6513,7 +6792,7 @@ function buildWeeklyQbRows(workbookRows) {
       "!!LAST 5!!\nTypical Rush TDs Rounded Down": floorTo(statPack.last5.rushTds, 0.1),
       "!!LAST 5!!\nTypical Rush TDs Bonus Score": Number((statPack.last5.rushTds * 4).toFixed(3)),
       "Games Played": statPack.gamesPlayed,
-      "Stat Source": statPack.log ? "Footballguys" : "Fallback",
+      "Stat Source": statPack.usedClay ? "Clay projection*" : (statPack.log ? "Footballguys" : "Fallback"),
     };
     extras["Total Bonuses\n=sum(AC2,AI2,AO2,AU2)"] = Number((extras["Pass Yards Bonus Score"] + extras["Pass TDs Bonus Score"] + extras["Typical Rush Attempts Bonus Score"] + extras["Typical Rush TDs Bonus Score"]).toFixed(3));
     extras["!!LAST 5!!\nTotal Bonuses"] = Number((extras["!!LAST 5!!\nPass Yards Bonus Score"] + extras["!!LAST 5!!\nTypical Pass TDs Bonus Score"] + extras["!!LAST 5!!\nTypical Rush Attempts Bonus Score"] + extras["!!LAST 5!!\nTypical Rush TDs Bonus Score"]).toFixed(3));
@@ -6538,6 +6817,7 @@ function buildWeeklyQbRows(workbookRows) {
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
+    row.seasonRank = rankNumber(rows, (item) => item.seasonScore, row);
     row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
     row.extras["Player Rating Rank"] = rankNumber(rows, (item) => item.rating, row);
     row.extras["Value Rank"] = rankNumber(rows, (item) => item.value, row);
@@ -6580,17 +6860,21 @@ function weeklyRbStatPack(player, workbook = {}) {
   const snapBase = 70 - (2 * (depth - 1));
   const targetBase = 3.8 - (0.3 * (depth - 1));
   const rzBase = 1.3 - (0.1 * (depth - 1));
+  const clay = clayProjectionFor(player, "RB");
+  const clayTargets = clayPerGame(clay, "targets", "");
+  const clayTouchdowns = clay ? clayPerGame(clay, "rushTds", 0) + clayPerGame(clay, "recTds", 0) : "";
+  const clayRz = Number.isFinite(Number(clayTouchdowns)) ? Math.max(rzBase, Math.min(2.4, Number(clayTouchdowns) * 1.2)) : "";
   const season = {
     snapPct: num(wb("Typical Snap %"), snapBase),
-    targets: num(wb("Typical Targets"), targetBase),
-    rz: num(wb("Typical Red Zone Opportunities"), rzBase),
+    targets: num(wb("Typical Targets"), Number.isFinite(Number(clayTargets)) ? clayTargets : targetBase),
+    rz: num(wb("Typical Red Zone Opportunities"), Number.isFinite(Number(clayRz)) ? clayRz : rzBase),
   };
   const last5 = {
     snapPct: num(wb("!!LAST 5!!\nTypical Snap %") || wb("!!Last 5!!\nTypical Snap %"), season.snapPct),
     targets: num(wb("!!LAST 5!!\nTypical Targets") || wb("!!Last 5!!\nTypical Targets"), season.targets),
     rz: num(wb("!!LAST 5!!\nTypical Red Zone Opportunities") || wb("!!Last 5!!\nTypical Red Zone Opportunities"), season.rz),
   };
-  return { season, last5 };
+  return { season, last5, clay, usedClay: Boolean(clay && (!Number.isFinite(Number(wb("Typical Targets"))) || !Number.isFinite(Number(wb("Typical Red Zone Opportunities"))))) };
 }
 
 function weeklySkillOptions() {
@@ -6614,8 +6898,8 @@ function weeklyGameForTeam(teamName, week = selectedSiteWeek()) {
   return scheduleGames().find((item) => scheduleWeekMatches(item, week) && (normalizeScheduleTeam(item.visitor) === teamKey || normalizeScheduleTeam(item.home) === teamKey)) || null;
 }
 
-function weeklyTeamImpliedTotal(teamName, opponent = "") {
-  const game = weeklyGameForTeam(teamName);
+function weeklyTeamImpliedTotal(teamName, opponent = "", week = selectedSiteWeek()) {
+  const game = weeklyGameForTeam(teamName, week);
   if (!game) return "";
   const projection = scheduleProjection(game);
   const teamKey = normalizeScheduleTeam(teamName);
@@ -6624,8 +6908,8 @@ function weeklyTeamImpliedTotal(teamName, opponent = "") {
   return Number.isFinite(Number(value)) ? Number(Number(value).toFixed(1)) : "";
 }
 
-function weeklyGameScriptValue(teamName) {
-  const game = weeklyGameForTeam(teamName);
+function weeklyGameScriptValue(teamName, week = selectedSiteWeek()) {
+  const game = weeklyGameForTeam(teamName, week);
   if (!game) return "";
   const teamKey = normalizeScheduleTeam(teamName);
   const isHome = normalizeScheduleTeam(game.home) === teamKey;
@@ -6714,8 +6998,8 @@ function weeklyRbScoreBreakdown(row, mode = "blend") {
   };
 }
 
-function buildWeeklyRbRows(workbookRows) {
-  const week = selectedSiteWeek() || 1;
+function buildWeeklyRbRows(workbookRows, weekOverride = null) {
+  const week = weekOverride || selectedSiteWeek() || 1;
   const teams = state.data?.teams || [];
   const players = state.players.filter((player) => groupPosition(player.position) === "RB" || player.position === "RB");
   const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
@@ -6739,8 +7023,8 @@ function buildWeeklyRbRows(workbookRows) {
       "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, { team, score: olRating }) || 16.5,
       "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(player.team).offYardsRank) : team?.offenseAverage }) || 16.5,
       "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : team?.offenseRating }) || 16.5,
-      "Game Script": weeklyGameScriptValue(player.team),
-      "Team Total": weeklyTeamImpliedTotal(player.team, opponent),
+      "Game Script": weeklyGameScriptValue(player.team, week),
+      "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Rush TDs Allowed Rank": teamRankingsByTeam(opponent)?.rushTdAllowedRank || "",
       "Typical Snap %": Number(stats.season.snapPct.toFixed(1)),
       "Typical Targets": Number(stats.season.targets.toFixed(2)),
@@ -6748,7 +7032,7 @@ function buildWeeklyRbRows(workbookRows) {
       "!!LAST 5!!\nTypical Snap %": Number(stats.last5.snapPct.toFixed(1)),
       "!!LAST 5!!\nTypical Targets": Number(stats.last5.targets.toFixed(2)),
       "!!LAST 5!!\nTypical Red Zone Opportunities": Number(stats.last5.rz.toFixed(2)),
-      "Stat Source": "Depth/rating formula; RB Footballguys scan pending",
+      "Stat Source": stats.usedClay ? "Clay projection*" : "Depth/rating formula; RB Footballguys scan pending",
     };
     const row = {
       ...workbook,
@@ -6765,16 +7049,19 @@ function buildWeeklyRbRows(workbookRows) {
     const blend = weeklyRbScoreBreakdown(row, "blend");
     const season = weeklyRbScoreBreakdown(row, "season");
     const last5 = weeklyRbScoreBreakdown(row, "last5");
-    row.score = blend.half;
+    row.score = blend.full;
     row.standardScore = blend.standard;
     row.halfPprScore = blend.half;
     row.fullPprScore = blend.full;
-    row.seasonScore = season.half;
-    row.last5Score = last5.half;
+    row.seasonScore = season.full;
+    row.last5Score = last5.full;
     row.value = row.score;
     row.extras["Std"] = blend.standard;
+    row.extras["NoPPR"] = blend.standard;
     row.extras["Half PPR"] = blend.half;
+    row.extras[".5PPR"] = blend.half;
     row.extras["Full PPR"] = blend.full;
+    row.extras["FullPPR"] = blend.full;
     row.extras["Carries"] = Number(blend.carries.toFixed(1));
     row.extras["Rush Yds"] = Number(blend.rushYds.toFixed(1));
     row.extras["Receptions"] = Number(blend.rec.toFixed(1));
@@ -6785,11 +7072,15 @@ function buildWeeklyRbRows(workbookRows) {
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
+    row.seasonRank = rankNumber(rows, (item) => item.seasonScore, row);
     row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
     row.extras["Player Rating Rank"] = rankNumber(rows, (item) => item.rating, row);
     row.extras["Std Rank"] = rankNumber(rows, (item) => item.standardScore, row);
+    row.extras["NoPPR Rank"] = row.extras["Std Rank"];
     row.extras["Half PPR Rank"] = rankNumber(rows, (item) => item.halfPprScore, row);
+    row.extras[".5PPR Rank"] = row.extras["Half PPR Rank"];
     row.extras["Full PPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
+    row.extras["FullPPR Rank"] = row.extras["Full PPR Rank"];
   });
   return rows;
 }
@@ -6813,17 +7104,21 @@ function receiverBaseUsage(position, depth) {
 function weeklyReceiverStatPack(player, position, workbook = {}) {
   const wb = (label) => fantasyDetailValue(workbook || {}, label);
   const base = receiverBaseUsage(position, player.depth);
+  const clay = clayProjectionFor(player, position);
+  const clayTargets = clayPerGame(clay, "targets", "");
+  const clayTouchdowns = clay ? clayPerGame(clay, "rushTds", 0) + clayPerGame(clay, "recTds", 0) : "";
+  const clayRz = Number.isFinite(Number(clayTouchdowns)) ? Math.max(base.rz, Math.min(2.1, Number(clayTouchdowns) * 1.25)) : "";
   const season = {
-    targets: num(wb("Typical Targets"), base.targets),
+    targets: num(wb("Typical Targets"), Number.isFinite(Number(clayTargets)) ? clayTargets : base.targets),
     snapPct: num(wb("Typical Snap %"), base.snapPct),
-    rz: num(wb("Typical Red Zone Opportunities"), base.rz),
+    rz: num(wb("Typical Red Zone Opportunities"), Number.isFinite(Number(clayRz)) ? clayRz : base.rz),
   };
   const last5 = {
     targets: num(wb("!!LAST 5!!\nTypical Targets") || wb("!!Last 5!!\nTypical Targets"), season.targets),
     snapPct: num(wb("!!LAST 5!!\nTypical Snap %") || wb("!!Last 5!!\nTypical Snap %"), season.snapPct),
     rz: num(wb("!!LAST 5!!\nTypical Red Zone Opportunities") || wb("!!Last 5!!\nTypical Red Zone Opportunities"), season.rz),
   };
-  return { season, last5, base };
+  return { season, last5, base, clay, usedClay: Boolean(clay && (!Number.isFinite(Number(wb("Typical Targets"))) || !Number.isFinite(Number(wb("Typical Red Zone Opportunities"))))) };
 }
 
 function weeklyWrScoreBreakdown(row, mode = "blend") {
@@ -6907,8 +7202,8 @@ function weeklyTeScoreBreakdown(row, mode = "blend") {
   return { mode, targets: targetEff, snapPct, rz, rec, recYds, tds, standard: Number(standard.toFixed(1)), half: Number(half.toFixed(1)), full: Number(full.toFixed(1)) };
 }
 
-function buildWeeklyReceiverRows(position, workbookRows) {
-  const week = selectedSiteWeek() || 1;
+function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
+  const week = weekOverride || selectedSiteWeek() || 1;
   const teams = state.data?.teams || [];
   const players = state.players.filter((player) => groupPosition(player.position) === position || player.position === position);
   const rankedTeamsByVwr = teams.map((team) => ({ team, score: wrDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
@@ -6943,8 +7238,8 @@ function buildWeeklyReceiverRows(position, workbookRows) {
       "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(player.team).offYardsRank) : team?.offenseAverage }) || 16.5,
       "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : team?.offenseRating }) || 16.5,
       "Pass TDs Allowed Rank": rankNumber(rankedPassTdAllowed, (item) => item.score, { team: opponentTeam, score: teamRankingsByTeam(opponent)?.passTdAllowedRank }, true) || 16.5,
-      "Game Script": weeklyGameScriptValue(player.team),
-      "Team Total": weeklyTeamImpliedTotal(player.team, opponent),
+      "Game Script": weeklyGameScriptValue(player.team, week),
+      "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Team PPG": Number(num(team?.offenseRating, 84).toFixed(1)),
       "Typical Snap %": Number(stats.season.snapPct.toFixed(1)),
       "Typical Targets": Number(stats.season.targets.toFixed(2)),
@@ -6952,7 +7247,7 @@ function buildWeeklyReceiverRows(position, workbookRows) {
       "!!LAST 5!!\nTypical Snap %": Number(stats.last5.snapPct.toFixed(1)),
       "!!LAST 5!!\nTypical Targets": Number(stats.last5.targets.toFixed(2)),
       "!!LAST 5!!\nTypical Red Zone Opportunities": Number(stats.last5.rz.toFixed(2)),
-      "Stat Source": "Depth/rating formula; Footballguys usage scan pending",
+      "Stat Source": stats.usedClay ? "Clay projection*" : "Depth/rating formula; Footballguys usage scan pending",
     };
     const row = {
       ...workbook,
@@ -6970,16 +7265,19 @@ function buildWeeklyReceiverRows(position, workbookRows) {
     const blend = scorer(row, "blend");
     const season = scorer(row, "season");
     const last5 = scorer(row, "last5");
-    row.score = blend.half;
+    row.score = blend.full;
     row.standardScore = blend.standard;
     row.halfPprScore = blend.half;
     row.fullPprScore = blend.full;
-    row.seasonScore = season.half;
-    row.last5Score = last5.half;
+    row.seasonScore = season.full;
+    row.last5Score = last5.full;
     row.value = row.score;
     row.extras["Std"] = blend.standard;
+    row.extras["NoPPR"] = blend.standard;
     row.extras["Half PPR"] = blend.half;
+    row.extras[".5PPR"] = blend.half;
     row.extras["Full PPR"] = blend.full;
+    row.extras["FullPPR"] = blend.full;
     row.extras["Targets"] = Number(blend.targets.toFixed(1));
     row.extras["Snap %"] = Number(blend.snapPct.toFixed(1));
     row.extras["RZone"] = Number(blend.rz.toFixed(2));
@@ -6991,19 +7289,23 @@ function buildWeeklyReceiverRows(position, workbookRows) {
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
+    row.seasonRank = rankNumber(rows, (item) => item.seasonScore, row);
     row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
     row.extras["Player Rating Rank"] = rankNumber(rows, (item) => item.rating, row);
     row.extras["Std Rank"] = rankNumber(rows, (item) => item.standardScore, row);
+    row.extras["NoPPR Rank"] = row.extras["Std Rank"];
     row.extras["Half PPR Rank"] = rankNumber(rows, (item) => item.halfPprScore, row);
+    row.extras[".5PPR Rank"] = row.extras["Half PPR Rank"];
     row.extras["Full PPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
+    row.extras["FullPPR Rank"] = row.extras["Full PPR Rank"];
   });
   return rows;
 }
 
-function buildWeeklySkillRows(position, workbookRows) {
-  if (position === "RB") return buildWeeklyRbRows(workbookRows);
-  if (position === "WR" || position === "TE") return buildWeeklyReceiverRows(position, workbookRows);
-  const week = selectedSiteWeek() || 1;
+function buildWeeklySkillRows(position, workbookRows, weekOverride = null) {
+  if (position === "RB") return buildWeeklyRbRows(workbookRows, weekOverride);
+  if (position === "WR" || position === "TE") return buildWeeklyReceiverRows(position, workbookRows, weekOverride);
+  const week = weekOverride || selectedSiteWeek() || 1;
   const players = state.players.filter((player) => groupPosition(player.position) === position || player.position === position);
   const rows = players.map((player) => {
     const workbook = workbookRowByName(workbookRows, player.player) || {};
@@ -7049,6 +7351,8 @@ function buildWeeklySkillRows(position, workbookRows) {
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
+    row.seasonRank = rankNumber(rows, (item) => item.seasonScore, row);
+    row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
     row.extras["Player Rating Rank"] = rankNumber(rows, (item) => item.rating, row);
     row.extras["Matchup Rank"] = rankNumber(rows, (item) => item.extras["Matchup Rating"], row, false);
     row.extras["Team Context Rank"] = rankNumber(rows, (item) => item.extras["Team Context"], row);
@@ -7062,8 +7366,8 @@ function maddenKickerForTeam(teamName) {
     .find((row) => normalizeTeamName(row.team) === normalized) || null;
 }
 
-function buildWeeklyDefenseRows(workbookRows) {
-  const week = selectedSiteWeek() || 1;
+function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
+  const week = weekOverride || selectedSiteWeek() || 1;
   const teamRows = state.data?.teams || [];
   const rankedDefense = teamRows.map((team) => ({ team, score: team.defenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedOppOff = teamRows.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
@@ -7120,12 +7424,14 @@ function buildWeeklyDefenseRows(workbookRows) {
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
+    row.seasonRank = rankNumber(rows, (item) => item.seasonScore, row);
+    row.last5Rank = rankNumber(rows, (item) => item.last5Score, row);
   });
   return rows;
 }
 
-function buildWeeklyKickerRows(workbookRows) {
-  const week = selectedSiteWeek() || 1;
+function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
+  const week = weekOverride || selectedSiteWeek() || 1;
   const teams = state.data?.teams || [];
   const rankedOffense = teams.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = (state.data?.teams || []).map((team) => {
@@ -7171,11 +7477,11 @@ function buildWeeklyKickerRows(workbookRows) {
   return rows;
 }
 
-function weeklyFantasyPlayerPool(position, workbookRows) {
-  if (position === "QB") return buildWeeklyQbRows(workbookRows);
-  if (["RB", "WR", "TE"].includes(position)) return buildWeeklySkillRows(position, workbookRows);
-  if (position === "Defense") return buildWeeklyDefenseRows(workbookRows);
-  if (position === "Kicker") return buildWeeklyKickerRows(workbookRows);
+function weeklyFantasyPlayerPool(position, workbookRows, weekOverride = null) {
+  if (position === "QB") return buildWeeklyQbRows(workbookRows, weekOverride);
+  if (["RB", "WR", "TE"].includes(position)) return buildWeeklySkillRows(position, workbookRows, weekOverride);
+  if (position === "Defense") return buildWeeklyDefenseRows(workbookRows, weekOverride);
+  if (position === "Kicker") return buildWeeklyKickerRows(workbookRows, weekOverride);
   const workbookByName = new Map(workbookRows.map((row) => [fantasyMergeKey(row.player), row]));
   return state.players
     .filter((player) => groupPosition(player.position) === position || player.position === position)
@@ -7194,23 +7500,307 @@ function weeklyFantasyPlayerPool(position, workbookRows) {
     });
 }
 
+function fantasyAdpTeamMatches(adpRow, teamName) {
+  if (!teamName) return true;
+  const wanted = teamAbbrevFor(teamName, teamName);
+  return normalizeTeamName(adpRow.team) === normalizeTeamName(wanted)
+    || normalizeTeamName(adpRow.team) === normalizeTeamName(teamName);
+}
+
+function fantasyProsAdpRows(scoringKey) {
+  return window.FANTASYPROS_ADP?.players?.[scoringKey] || [];
+}
+
+function fantasyProsAdpFor(row, scoringKey) {
+  const rows = fantasyProsAdpRows(scoringKey);
+  const playerKey = fantasyMergeKey(row.player || row.team);
+  const position = row.position === "Kicker" ? "K" : row.position;
+  if (row.position === "Defense") {
+    const abbrev = teamAbbrevFor(row.team, row.team);
+    return rows.find((item) => item.position === "Defense" && (normalizeTeamName(item.team) === normalizeTeamName(abbrev) || fantasyMergeKey(item.player) === fantasyMergeKey(row.team)))
+      || rows.find((item) => item.position === "Defense" && normalizeTeamName(item.team) === normalizeTeamName(row.team))
+      || null;
+  }
+  return rows.find((item) => fantasyMergeKey(item.player) === playerKey && fantasyAdpTeamMatches(item, row.team))
+    || rows.find((item) => fantasyMergeKey(item.player) === playerKey && (!position || String(item.position || "").toUpperCase() === String(position || "").toUpperCase()))
+    || rows.find((item) => fantasyMergeKey(item.player) === playerKey)
+    || null;
+}
+
+function seasonDifficultyRankFor(row, position) {
+  const label = position === "QB"
+    ? "Matchup Rating (Low is good)"
+    : position === "RB"
+      ? "Opp vRB Rank"
+      : position === "WR"
+        ? "Opp vWR Rank"
+        : position === "TE"
+          ? "Opp vTE Rank"
+          : position === "Defense"
+            ? "Opponent Off Rank"
+            : "Team Offense Rank";
+  return num(fantasyDetailValue(row, label), 16.5);
+}
+
+function seasonProductionValueFor(row, position) {
+  if (!row) return "";
+  if (position === "QB") return averageFinite([
+    fantasyDetailValue(row, "Typical Pass Yards"),
+    fantasyDetailValue(row, "Typical Pass TDs"),
+    fantasyDetailValue(row, "Typical Rush Attempts"),
+    fantasyDetailValue(row, "Typical Rush TDs"),
+  ], "");
+  if (["RB", "WR", "TE"].includes(position)) return averageFinite([
+    fantasyDetailValue(row, "Typical Snap %"),
+    fantasyDetailValue(row, "Typical Targets"),
+    fantasyDetailValue(row, "Typical Red Zone Opportunities"),
+  ], "");
+  if (position === "Defense") return averageFinite([
+    fantasyDetailValue(row, "Pass Rush"),
+    fantasyDetailValue(row, "Sacks Rank"),
+    fantasyDetailValue(row, "Takeaways Rank"),
+  ], "");
+  return averageFinite([
+    fantasyDetailValue(row, "50+ FGs"),
+    fantasyDetailValue(row, "FG Volume"),
+  ], "");
+}
+
+function seasonBonusValueFor(row, position) {
+  if (!row) return "";
+  if (position === "QB") return fantasyDetailValue(row, "Total Bonuses\n=sum(AC2,AI2,AO2,AU2)");
+  if (["RB", "WR", "TE"].includes(position)) return averageFinite([
+    fantasyDetailValue(row, "Receptions"),
+    fantasyDetailValue(row, "Rec Yds"),
+    fantasyDetailValue(row, "TDs"),
+  ], "");
+  if (position === "Defense") return averageFinite([
+    fantasyDetailValue(row, "Sacks Rank"),
+    fantasyDetailValue(row, "Takeaways Rank"),
+  ], "");
+  return fantasyDetailValue(row, "Kicker Stadium Tier");
+}
+
+function seasonTeamContextValueFor(row, position) {
+  if (!row) return "";
+  if (position === "QB") return averageFinite([
+    fantasyDetailValue(row, "OL Rank"),
+    fantasyDetailValue(row, "PPG Rank"),
+    fantasyDetailValue(row, "WR Group Rank"),
+  ], "");
+  if (position === "RB") return averageFinite([
+    fantasyDetailValue(row, "OL Rank"),
+    fantasyDetailValue(row, "PPG Rank"),
+    fantasyDetailValue(row, "Team YPG Rank"),
+  ], "");
+  if (["WR", "TE"].includes(position)) return averageFinite([
+    fantasyDetailValue(row, "QB Rank"),
+    fantasyDetailValue(row, "PPG Rank"),
+    fantasyDetailValue(row, "Team YPG Rank"),
+  ], "");
+  if (position === "Defense") return averageFinite([
+    fantasyDetailValue(row, "Defense Rank"),
+    fantasyDetailValue(row, "Opp PPG Rank"),
+  ], "");
+  return fantasyDetailValue(row, "Team Offense Rank");
+}
+
+function fantasyFavoriteKey(row) {
+  return [row.position || "", fantasyMergeKey(row.player || row.team), normalizeTeamName(row.team || row.player || "")].join("|");
+}
+
+function fantasyStarCell(row) {
+  const key = fantasyFavoriteKey(row);
+  const active = state.fantasyFavorites.includes(key);
+  return `<button class="fantasy-star ${active ? "active" : ""}" data-fantasy-favorite="${esc(key)}" title="${active ? "Remove fantasy favorite" : "Mark fantasy favorite"}">${active ? "★" : "☆"}</button>`;
+}
+
+function purpleScaleStyle(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || !Number.isFinite(Number(min)) || !Number.isFinite(Number(max)) || Number(max) === Number(min)) {
+    return "";
+  }
+  const pct = Math.max(0, Math.min(1, (numeric - Number(min)) / (Number(max) - Number(min))));
+  const saturation = 26 + pct * 48;
+  const lightness = 98 - pct * 30;
+  return `style="background:hsl(270 ${saturation}% ${lightness}%);color:${pct > 0.72 ? "#fff" : "#071532"}"`;
+}
+
+function seasonScheduleChip(row, week, allRows = []) {
+  const opp = fantasyDetailValue(row, `W${week} Opp`);
+  const score = fantasyDetailValue(row, `W${week} Score`);
+  const vpos = fantasyDetailValue(row, `W${week} vPOS`);
+  if (!opp && !Number.isFinite(Number(score))) return "";
+  const vposStyle = Number.isFinite(Number(vpos)) ? cfStyle(vpos, 1, 32, true) : "";
+  const team = teamByName(opp);
+  const detail = [
+    row.player || row.team || "",
+    `Week ${week}`,
+    opp ? `vs ${teamAbbrevFor(opp, opp)}` : "",
+    Number.isFinite(Number(vpos)) ? `vPOS ${fantasyDisplay(vpos, 1)}` : "",
+    Number.isFinite(Number(score)) ? `Score ${fantasyDisplay(score, 1)}` : "",
+  ].filter(Boolean).join(" | ");
+  return `<button class="season-week-chip" data-fantasy-schedule-detail="${esc(fantasyCompareKey(row))}" data-week="${week}" ${vposStyle} title="${esc(detail)}"><span class="season-week-number">W${week}</span><b>${teamLogo(team?.team || opp, team?.teamAbbrev || opp)}<span>${esc(teamAbbrevFor(opp, opp) || `W${week}`)}</span></b><em>${esc(fantasyDisplay(score, 1))}</em></button>`;
+}
+
+function seasonFantasyAdpRow(position, playerName, teamName, seasonRows = []) {
+  const key = fantasyMergeKey(playerName || teamName);
+  return seasonRows.find((row) => fantasyMergeKey(row.player || row.team) === key)
+    || seasonRows.find((row) => normalizeTeamName(row.team) === normalizeTeamName(teamName))
+    || {};
+}
+
+function buildSeasonFantasyRows(position, seasonRows = []) {
+  const weeklyRows = fantasyRankItem("weekly", position)?.rows || [];
+  const weeks = Array.from({ length: 17 }, (_, index) => index + 1);
+  const byKey = new Map();
+  weeks.forEach((week) => {
+    weeklyFantasyPlayerPool(position, weeklyRows, week).forEach((row) => {
+      if (!row.opponent) return;
+      const key = fantasyCompareKey(row);
+      const current = byKey.get(key) || {
+        ...row,
+        opponent: "",
+        score: 0,
+        seasonScore: 0,
+        last5Score: 0,
+        standardScore: 0,
+        halfPprScore: 0,
+        fullPprScore: 0,
+        value: 0,
+        weeksPlayed: 0,
+        difficultyRanks: [],
+        playoffDifficultyRanks: [],
+        easyWeeks: 0,
+        hardWeeks: 0,
+        productionValues: [],
+        bonusValues: [],
+        contextValues: [],
+        extras: { ...(row.extras || {}) },
+      };
+      const score = num(row.score, 0);
+      current.score += score;
+      current.seasonScore += num(row.seasonScore, score);
+      current.last5Score += num(row.last5Score, score);
+      current.standardScore += num(row.standardScore, score);
+      current.halfPprScore += num(row.halfPprScore, score);
+      current.fullPprScore += num(row.fullPprScore, score);
+      current.weeksPlayed += 1;
+      const difficulty = seasonDifficultyRankFor(row, position);
+      const productionValue = seasonProductionValueFor(row, position);
+      const bonusValue = seasonBonusValueFor(row, position);
+      const contextValue = seasonTeamContextValueFor(row, position);
+      if (Number.isFinite(Number(difficulty))) {
+        current.difficultyRanks.push(Number(difficulty));
+        if (week >= 15) current.playoffDifficultyRanks.push(Number(difficulty));
+        if (Number(difficulty) <= 10) current.easyWeeks += 1;
+        if (Number(difficulty) >= 23) current.hardWeeks += 1;
+      }
+      if (Number.isFinite(Number(productionValue))) current.productionValues.push(Number(productionValue));
+      if (Number.isFinite(Number(bonusValue))) current.bonusValues.push(Number(bonusValue));
+      if (Number.isFinite(Number(contextValue))) current.contextValues.push(Number(contextValue));
+      current.extras[`W${week}`] = row.opponent ? `${teamAbbrevFor(row.opponent)} ${fantasyDisplay(score, 1)}` : "";
+      current.extras[`W${week} Opp`] = row.opponent ? teamAbbrevFor(row.opponent, row.opponent) : "";
+      current.extras[`W${week} Score`] = Number.isFinite(Number(score)) ? Number(Number(score).toFixed(1)) : "";
+      current.extras[`W${week} vPOS`] = Number.isFinite(Number(difficulty)) ? Number(Number(difficulty).toFixed(1)) : "";
+      byKey.set(key, current);
+    });
+  });
+  const rows = [...byKey.values()].map((row) => {
+    const adpRow = seasonFantasyAdpRow(position, row.player, row.team, seasonRows);
+    const fullAdp = fantasyProsAdpFor(row, "full");
+    const halfAdp = fantasyProsAdpFor(row, "half");
+    const standardAdp = fantasyProsAdpFor(row, "standard");
+    const fallbackAdp = Number.isFinite(Number(adpRow.adp)) ? Number(adpRow.adp) : "";
+    const adp = Number.isFinite(Number(halfAdp?.adp)) ? Number(halfAdp.adp) : fallbackAdp;
+    const rounded = (value) => Number(num(value, 0).toFixed(1));
+    row.score = rounded(row.score);
+    row.seasonScore = rounded(row.seasonScore);
+    row.last5Score = rounded(row.last5Score);
+    row.standardScore = rounded(row.standardScore);
+    row.halfPprScore = rounded(row.halfPprScore);
+    row.fullPprScore = rounded(row.fullPprScore);
+    row.adp = adp;
+    row.avgScore = row.weeksPlayed ? Number((row.score / row.weeksPlayed).toFixed(1)) : "";
+    row.standardAvg = row.weeksPlayed ? Number((row.standardScore / row.weeksPlayed).toFixed(1)) : "";
+    row.halfPprAvg = row.weeksPlayed ? Number((row.halfPprScore / row.weeksPlayed).toFixed(1)) : "";
+    row.fullPprAvg = row.weeksPlayed ? Number((row.fullPprScore / row.weeksPlayed).toFixed(1)) : "";
+    const seasonDifficulty = averageFinite(row.difficultyRanks, "");
+    const playoffDifficulty = averageFinite(row.playoffDifficultyRanks, "");
+    const avgProduction = averageFinite(row.productionValues, "");
+    const avgBonuses = averageFinite(row.bonusValues, "");
+    const avgContext = averageFinite(row.contextValues, "");
+    row.extras = {
+      ...(adpRow.extras || {}),
+      ...(row.extras || {}),
+      "Weeks Counted": row.weeksPlayed,
+      "Season Difficulty": Number.isFinite(Number(seasonDifficulty)) ? Number(Number(seasonDifficulty).toFixed(1)) : "",
+      "Easy Weeks": row.easyWeeks,
+      "Hard Weeks": row.hardWeeks,
+      "Playoff Diff": Number.isFinite(Number(playoffDifficulty)) ? Number(Number(playoffDifficulty).toFixed(1)) : "",
+      "Avg Production": Number.isFinite(Number(avgProduction)) ? Number(Number(avgProduction).toFixed(1)) : "",
+      "Avg Bonuses": Number.isFinite(Number(avgBonuses)) ? Number(Number(avgBonuses).toFixed(1)) : "",
+      "Avg Team Context": Number.isFinite(Number(avgContext)) ? Number(Number(avgContext).toFixed(1)) : "",
+      "FullPPR Total": row.fullPprScore,
+      "FullPPR Avg": row.fullPprAvg,
+      "FullPPR ADP": Number.isFinite(Number(fullAdp?.adp)) ? Number(fullAdp.adp) : "",
+      "FullPPR ADP Rank": Number.isFinite(Number(fullAdp?.rank)) ? Number(fullAdp.rank) : "",
+      ".5PPR Total": row.halfPprScore,
+      ".5PPR Avg": row.halfPprAvg,
+      ".5PPR ADP": Number.isFinite(Number(halfAdp?.adp)) ? Number(halfAdp.adp) : adp,
+      ".5PPR ADP Rank": Number.isFinite(Number(halfAdp?.rank)) ? Number(halfAdp.rank) : "",
+      "NoPPR Total": row.standardScore,
+      "NoPPR Avg": row.standardAvg,
+      "NoPPR ADP": Number.isFinite(Number(standardAdp?.adp)) ? Number(standardAdp.adp) : "",
+      "NoPPR ADP Rank": Number.isFinite(Number(standardAdp?.rank)) ? Number(standardAdp.rank) : "",
+      "ADP": adp,
+      "ADP Source": fullAdp || halfAdp || standardAdp ? "FantasyPros real-time ADP" : (adp === "" ? "" : "Workbook fallback"),
+      "Source": "Sum of weekly projections",
+    };
+    return row;
+  });
+  rows.forEach((row) => {
+    row.rank = rankNumber(rows, (item) => item.score, row);
+    row.scoreRank = row.rank;
+    row.extras["FullPPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
+    row.extras[".5PPR Rank"] = rankNumber(rows, (item) => item.halfPprScore, row);
+    row.extras["NoPPR Rank"] = rankNumber(rows, (item) => item.standardScore, row);
+    row.extras["FullPPR Value"] = Number.isFinite(Number(row.extras["FullPPR ADP Rank"])) ? Number((row.extras["FullPPR ADP Rank"] - row.extras["FullPPR Rank"]).toFixed(1)) : "";
+    row.extras[".5PPR Value"] = Number.isFinite(Number(row.extras[".5PPR ADP Rank"])) ? Number((row.extras[".5PPR ADP Rank"] - row.extras[".5PPR Rank"]).toFixed(1)) : "";
+    row.extras["NoPPR Value"] = Number.isFinite(Number(row.extras["NoPPR ADP Rank"])) ? Number((row.extras["NoPPR ADP Rank"] - row.extras["NoPPR Rank"]).toFixed(1)) : "";
+    row.extras["ADP Value"] = Number.isFinite(Number(row.extras[".5PPR Value"])) ? row.extras[".5PPR Value"] : "";
+    row.value = Number.isFinite(Number(row.extras[".5PPR Value"])) ? row.extras[".5PPR Value"] : row.score;
+  });
+  return rows;
+}
+
 function fantasyBoardRows(kind, position, workbookRows) {
-  return kind === "weekly" ? weeklyFantasyPlayerPool(position, workbookRows) : workbookRows;
+  return kind === "weekly" ? weeklyFantasyPlayerPool(position, workbookRows) : buildSeasonFantasyRows(position, workbookRows);
 }
 
 function fantasySortValue(row, key) {
   if (key === "name") return String(row.player || row.team || "");
   if (key === "team") return String(row.team || "");
   if (key === "opponent") return String(row.opponent || "");
+  if (key === "fantasyStar") return state.fantasyFavorites.includes(fantasyFavoriteKey(row)) ? 1 : 0;
   if (String(key || "").startsWith("extra:")) return fantasyDetailValue(row, String(key).slice(6));
   if (key === "rank") return num(row.rank, 9999);
   if (key === "scoreRank") return num(row.scoreRank, 9999);
+  if (key === "seasonRank") return num(row.seasonRank, 9999);
+  if (key === "last5Rank") return num(row.last5Rank, 9999);
   if (key === "adp") return num(row.adp, 9999);
   if (key === "value") return num(row.value, -9999);
   if (key === "rating") return num(row.rating, -9999);
   if (key === "depth") return num(row.depth, 9999);
   if (key === "seasonScore") return num(row.seasonScore, -9999);
   if (key === "last5Score") return num(row.last5Score, -9999);
+  if (key === "fullPprScore") return num(row.fullPprScore, -9999);
+  if (key === "halfPprScore") return num(row.halfPprScore, -9999);
+  if (key === "standardScore") return num(row.standardScore, -9999);
+  if (key === "avgScore") return num(row.avgScore, -9999);
+  if (key === "fullPprAvg") return num(row.fullPprAvg, -9999);
+  if (key === "halfPprAvg") return num(row.halfPprAvg, -9999);
+  if (key === "standardAvg") return num(row.standardAvg, -9999);
   return num(row.score, -9999);
 }
 
@@ -7229,24 +7819,24 @@ function fantasySortedRows(rows, sortKey, direction = "") {
   });
 }
 
-function fantasyCell(value, values, reverse = false, digits = 1) {
+function fantasyCell(value, values, reverse = false, digits = 1, marker = "") {
   const numeric = values.filter((item) => Number.isFinite(Number(item)));
   if (!Number.isFinite(Number(value)) || !numeric.length) {
-    return `<td class="num ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, digits))}</td>`;
+    return `<td class="num ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, digits))}${marker}</td>`;
   }
   const min = Math.min(...numeric);
   const max = Math.max(...numeric);
-  return `<td class="num cf" ${cfStyle(value, min, max, reverse)}>${esc(fantasyDisplay(value, digits))}</td>`;
+  return `<td class="num cf" ${cfStyle(value, min, max, reverse)}>${esc(fantasyDisplay(value, digits))}${marker}</td>`;
 }
 
-function fantasyCellWithClass(value, values, reverse = false, digits = 1, cls = "") {
+function fantasyCellWithClass(value, values, reverse = false, digits = 1, cls = "", marker = "") {
   const numeric = values.filter((item) => Number.isFinite(Number(item)));
   if (!Number.isFinite(Number(value)) || !numeric.length) {
-    return `<td class="num ${cls} ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, digits))}</td>`;
+    return `<td class="num ${cls} ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, digits))}${marker}</td>`;
   }
   const min = Math.min(...numeric);
   const max = Math.max(...numeric);
-  return `<td class="num cf ${cls}" ${cfStyle(value, min, max, reverse)}>${esc(fantasyDisplay(value, digits))}</td>`;
+  return `<td class="num cf ${cls}" ${cfStyle(value, min, max, reverse)}>${esc(fantasyDisplay(value, digits))}${marker}</td>`;
 }
 
 function fantasyExtras(row) {
@@ -7269,8 +7859,16 @@ function fantasyColumnTip(label, key) {
   const normalized = String(key || label || "").replace(/\s+/g, " ").trim();
   const tips = {
     compareSelect: "Mark this row for player comparison.",
+    fantasyStar: "Save this as a fantasy favorite.",
     scoreRank: "Rank of the projected weekly score among this position.",
     score: "Projected fantasy points from rating, depth, matchup, team context, and QB stat history.",
+    avgScore: "Projected season points divided by scheduled games.",
+    fullPprScore: "FullPPR score: fantasy points with one point per reception.",
+    halfPprScore: ".5PPR score: fantasy points with half point per reception.",
+    standardScore: "NoPPR score: yards and TDs without reception points.",
+    fullPprAvg: "FullPPR season total divided by games.",
+    halfPprAvg: ".5PPR season total divided by games.",
+    standardAvg: "NoPPR season total divided by games.",
     seasonScore: "Same formula using season production only.",
     last5Score: "Same formula using last-five-games-played production only.",
     name: "Player from the current app depth chart pool.",
@@ -7282,6 +7880,46 @@ function fantasyColumnTip(label, key) {
     value: "Projected score divided by salary when salary exists; otherwise score.",
   };
   const extraTips = {
+    "extra:FullPPR": "FullPPR score: yards, TDs, receptions, depth, matchup, talent, usage, red zone, and team context.",
+    "extra:.5PPR": ".5PPR score: yards, TDs, half receptions, depth, matchup, talent, usage, red zone, and team context.",
+    "extra:NoPPR": "NoPPR score: yards and TDs with no reception bonus.",
+    "extra:FullPPR Rank": "Rank of FullPPR score among this position.",
+    "extra:.5PPR Rank": "Rank of .5PPR score among this position.",
+    "extra:NoPPR Rank": "Rank of NoPPR score among this position.",
+    "extra:Weeks Counted": "Regular-season weeks with a scheduled opponent.",
+    "extra:Season Difficulty": "Average vPOS matchup rank across the season; lower is easier.",
+    "extra:Easy Weeks": "Games with a vPOS matchup rank of 10 or better.",
+    "extra:Hard Weeks": "Games with a vPOS matchup rank of 23 or worse.",
+    "extra:Playoff Diff": "Average vPOS matchup for Weeks 15-17; lower is easier.",
+    "extra:FullPPR Total": "FullPPR projected total over scheduled games.",
+    "extra:FullPPR Avg": "FullPPR projected points per scheduled game.",
+    "extra:FullPPR ADP": "FantasyPros real-time FullPPR average draft position.",
+    "extra:FullPPR ADP Rank": "FantasyPros FullPPR ADP rank.",
+    "extra:FullPPR Value": "FantasyPros FullPPR ADP rank minus projected rank.",
+    "extra:.5PPR Total": ".5PPR projected total over scheduled games.",
+    "extra:.5PPR Avg": ".5PPR projected points per scheduled game.",
+    "extra:.5PPR ADP": "FantasyPros real-time .5PPR average draft position.",
+    "extra:.5PPR ADP Rank": "FantasyPros .5PPR ADP rank.",
+    "extra:.5PPR Value": "FantasyPros .5PPR ADP rank minus projected rank.",
+    "extra:NoPPR Total": "NoPPR projected total over scheduled games.",
+    "extra:NoPPR Avg": "NoPPR projected points per scheduled game.",
+    "extra:NoPPR ADP": "FantasyPros real-time NoPPR average draft position.",
+    "extra:NoPPR ADP Rank": "FantasyPros NoPPR ADP rank.",
+    "extra:NoPPR Value": "FantasyPros NoPPR ADP rank minus projected rank.",
+    "extra:Avg Team Context": "Season average of OL, scoring, QB/WR help, defense, or stadium context.",
+    "extra:Avg Production": "Average usage/stat inputs: QB logs, snaps, targets, red zone, or kicking volume.",
+    "extra:Avg Bonuses": "Average extra edges from yards, TDs, rushing, usage, pressure, or kicking range.",
+    "extra:Team Context": "Team support: OL, scoring, game script, QB/WR help, or defense/stadium context.",
+    "extra:Team Context Rank": "Rank of team-support context against the rest of this position.",
+    "extra:Game Script": "Projected game margin; positive usually helps RB rushing volume.",
+    "extra:Team Total": "Model projected points for this player's team.",
+    "extra:Team YPG Rank": "Team offensive yards-per-game rank; lower is better context.",
+    "extra:ADP Source": "Where the draft data came from.",
+    "extra:ADP Value": "ADP minus projected rank; higher means better draft value.",
+    "extra:W1": "Week 1 opponent abbreviation and projected score.",
+    "extra:W2": "Week 2 opponent abbreviation and projected score.",
+    "extra:W3": "Week 3 opponent abbreviation and projected score.",
+    "extra:W4": "Week 4 opponent abbreviation and projected score.",
     "extra:Opp vQB Rating": "Opponent vQB rating from defensive position groups.",
     "extra:Matchup Rating (Low is good)": "League rank of opponent vQB rating; 1 is the easiest QB matchup.",
     "extra:Stat vQB Rank": "TeamRankings pass-defense rank; 1 is the easiest QB matchup.",
@@ -7302,6 +7940,21 @@ function fantasyColumnTip(label, key) {
     "extra:Total Bonuses RANK": "League rank of total QB bonus score.",
     "extra:Value Rank": "Rank of value among QBs in this view.",
     "extra:Stat Source": "Footballguys when scanned game logs exist; fallback otherwise.",
+    "extra:Opp vRB Rank": "Opponent run-defense matchup rank; lower is easier for RBs.",
+    "extra:Opp vWR Rank": "Opponent WR-defense matchup rank; lower is easier for WRs.",
+    "extra:Opp vTE Rank": "Opponent TE-defense matchup rank; lower is easier for TEs.",
+    "extra:Game Script": "Projected margin; positive favors rushing volume.",
+    "extra:Team Total": "Model projected points for this player's team.",
+    "extra:Rush TDs Allowed Rank": "Opponent rushing TD allowance rank; lower is better.",
+    "extra:Pass TDs Allowed Rank": "Opponent passing TD allowance rank; lower is better.",
+    "extra:Typical Snap %": "Expected playing-time share from depth or scanned usage.",
+    "extra:Typical Targets": "Expected targets from depth or scanned usage.",
+    "extra:Typical Red Zone Opportunities": "Expected red-zone chances from depth or scanned usage.",
+    "extra:Carries": "Projected carries from depth, usage, matchup, talent, and OL.",
+    "extra:Rush Yds": "Projected rushing yards from carries, talent, matchup, and OL.",
+    "extra:Receptions": "Projected catches from targets and catch-rate assumptions.",
+    "extra:Rec Yds": "Projected receiving yards from catches, matchup, QB, and talent.",
+    "extra:TDs": "Projected touchdowns from red-zone role and scoring context.",
     "extra:!!LAST 5!! Typical Pass Yards": "Average pass yards over the last five games actually played.",
     "extra:!!LAST 5!! Pass Yards Bonus Score": "Last-five pass-yard average divided by 100, then multiplied by 2.",
     "extra:!!LAST 5!! Typical Pass TDs": "Average pass TDs over the last five games actually played.",
@@ -7332,28 +7985,56 @@ function fantasyCompareCell(row) {
 
 function fantasyColumns(kind, position, view) {
   if (kind === "season") {
-    if (position === "Defense") {
-      return [
-        fantasyColumn("Rank", "rank", "num", { digits: 0, reverse: true }),
-        fantasyColumn("Team", "name", "sticky-name"),
-        fantasyColumn("Score", "score", "num cf", { heat: true }),
-        fantasyColumn("Value", "value", "num cf", { heat: true }),
-        fantasyColumn("Defense", "extra:Defense Rating", "num cf", { heat: true, reverse: true }),
-        fantasyColumn("Opp Avg", "extra:Opp Offenses", "num cf", { heat: true }),
-        fantasyColumn("Weeks", "seasonWeeks"),
-      ];
-    }
-    return [
-      fantasyColumn("Rank", "rank", "num", { digits: 0, reverse: true }),
-      fantasyColumn("Player", "name", "sticky-name"),
-      fantasyColumn("Team", "team"),
-      fantasyColumn("Score", "score", "num cf", { heat: true }),
-      fantasyColumn("Value", "value", "num cf", { heat: true }),
-      fantasyColumn("ADP", "adp", "num", { digits: 0, reverse: true }),
-      fantasyColumn("Rating", "rating", "num cf", { heat: true, digits: 0 }),
-      fantasyColumn("Depth", "depth", "num", { digits: 0, reverse: true }),
-      fantasyColumn("Context", "seasonContext"),
+    const usesPpr = ["RB", "WR", "TE"].includes(position);
+    const playerLabel = position === "Defense" ? "Team" : "Player";
+    const base = [
+      fantasyColumn("", "fantasyStar", "compare-col", { group: "Player", noSort: true }),
+      fantasyColumn("Rk", "rank", "rank-col cf", { group: "Player", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn(playerLabel, "name", "sticky-name", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc", positions: position === "Defense" ? [] : undefined }),
+    ].filter((col) => !col.positions || col.positions.includes(position));
+    const scoreColumns = usesPpr ? [
+      fantasyColumn("Full Total", "fullPprScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Full/G", "fullPprAvg", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Full Rank", "extra:FullPPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn(".5 Total", "halfPprScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn(".5/G", "halfPprAvg", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn(".5 Rank", "extra:.5PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("No Total", "standardScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("No/G", "standardAvg", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("No Rank", "extra:NoPPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+    ] : [
+      fantasyColumn("Total", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Avg/G", "avgScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Score Rank", "rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
     ];
+    const adpColumns = [
+      fantasyColumn("Full ADP", "extra:FullPPR ADP", "num cf", { group: "Draft", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Full ADP Rank", "extra:FullPPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Full Value", "extra:FullPPR Value", "num cf", { group: "Draft", heat: true, sortDir: "desc", boundaryAfter: true }),
+      fantasyColumn(".5 ADP", "extra:.5PPR ADP", "num cf", { group: "Draft", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn(".5 ADP Rank", "extra:.5PPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn(".5 Value", "extra:.5PPR Value", "num cf", { group: "Draft", heat: true, sortDir: "desc", boundaryAfter: true }),
+      fantasyColumn("No ADP", "extra:NoPPR ADP", "num cf", { group: "Draft", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("No ADP Rank", "extra:NoPPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("No Value", "extra:NoPPR Value", "num cf", { group: "Draft", heat: true, sortDir: "desc" }),
+    ];
+    return [
+      ...base,
+      ...scoreColumns,
+      fantasyColumn("Avg vPOS", "extra:Season Difficulty", "num cf", { group: "Season Difficulty", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Easy Games", "extra:Easy Weeks", "num cf rank-col", { group: "Season Difficulty", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Hard Games", "extra:Hard Weeks", "num cf rank-col", { group: "Season Difficulty", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Playoff vPOS", "extra:Playoff Diff", "num cf", { group: "Season Difficulty", heat: true, reverse: true, sortDir: "asc" }),
+      ...adpColumns,
+      fantasyColumn("Rating", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc", positions: position === "Defense" ? [] : undefined }),
+      fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: position === "Defense" ? [] : undefined }),
+      fantasyColumn("Team Context", "extra:Avg Team Context", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Avg Production", "extra:Avg Production", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("Avg Bonus", "extra:Avg Bonuses", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
+      fantasyColumn("Weeks", "extra:Weeks Counted", "num rank-col", { group: "Schedule", digits: 0, sortDir: "desc" }),
+      fantasyColumn("Schedule", "seasonSchedule", "season-schedule-cell", { group: "Schedule", noSort: true }),
+    ].filter((col) => !col.positions || col.positions.includes(position));
   }
   if (view === "last5") {
     if (position === "Defense") {
@@ -7374,18 +8055,19 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn(position === "Defense" ? "Team" : "Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
-      fantasyColumn("Last 5", "last5Score", "num cf", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Std", "extra:Std", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
-      fantasyColumn("Full", "extra:Full PPR", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
-      fantasyColumn("Season", "seasonScore", "num cf", { group: "Score", heat: true, positions: ["QB"], sortDir: "desc" }),
-      fantasyColumn("Blend", "score", "num cf", { group: "Score", heat: true, positions: ["QB"], sortDir: "desc" }),
-      fantasyColumn("Last 5 Rk", "last5Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Last 5 Production", "last5Score", "num cf", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("FullPPR", "extra:FullPPR", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+      fantasyColumn(".5PPR", "extra:.5PPR", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+      fantasyColumn("NoPPR", "extra:NoPPR", "num cf score-col", { group: "Score", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+      fantasyColumn("Season Production", "seasonScore", "num cf", { group: "Score", heat: true, positions: ["QB"], sortDir: "desc" }),
+      fantasyColumn("Week Score", "score", "num cf", { group: "Score", heat: true, positions: ["QB"], sortDir: "desc" }),
+      fantasyColumn("Last 5 Rank", "last5Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
       fantasyColumn("vQB", "extra:Opp vQB Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["QB"], sortDir: "asc" }),
-      fantasyColumn("vQB Rk", "extra:Matchup Rating (Low is good)", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
-      fantasyColumn("Stat vQB Rk", "extra:Stat vQB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
-      fantasyColumn("vRB Rk", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB"], sortDir: "asc" }),
-      fantasyColumn("vWR Rk", "extra:Opp vWR Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
-      fantasyColumn("vTE Rk", "extra:Opp vTE Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
+      fantasyColumn("vQB Rank", "extra:Matchup Rating (Low is good)", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
+      fantasyColumn("Stat vQB Rank", "extra:Stat vQB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
+      fantasyColumn("vRB Rank", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB"], sortDir: "asc" }),
+      fantasyColumn("vWR Rank", "extra:Opp vWR Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("vTE Rank", "extra:Opp vTE Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
       fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("Snap %", "extra:!!LAST 5!!\nTypical Snap %", "num cf", { group: "Production", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
       fantasyColumn("Targets", "extra:!!LAST 5!!\nTypical Targets", "num cf", { group: "Production", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
@@ -7399,7 +8081,7 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Rush TD", "extra:!!LAST 5!! Typical Rush TDs", "num cf", { group: "Production", heat: true, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("Rush TD Bonus", "extra:!!LAST 5!! Typical Rush TDs Bonus Score", "num cf", { group: "Bonuses", heat: true, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("Bonus", "extra:!!LAST 5!!\nTotal Bonuses", "num cf", { group: "Bonuses", heat: true, positions: ["QB"], sortDir: "desc" }),
-      fantasyColumn("Bonus Rk", "extra:!!LAST 5!!\nTotal Bonuses RANK", "num cf rank-col", { group: "Bonuses", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
+      fantasyColumn("Bonus Rank", "extra:!!LAST 5!!\nTotal Bonuses RANK", "num cf rank-col", { group: "Bonuses", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
       fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", positions: ["QB"], sortDir: "asc" }),
     ].filter((col) => !col.positions || col.positions.includes(position));
   }
@@ -7410,19 +8092,21 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
-      fantasyColumn("Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Season", "seasonScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Last 5", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Score Rk", "scoreRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Week Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Week Rank", "scoreRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("Season Production", "seasonScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Season Rank", "seasonRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("Last 5 Production", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Last 5 Rank", "last5Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("vQB", "extra:Opp vQB Rating", "num cf", { group: "Matchup", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("vQB Rk", "extra:Matchup Rating (Low is good)", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Stat vQB Rk", "extra:Stat vQB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("vQB Rank", "extra:Matchup Rating (Low is good)", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Stat vQB Rank", "extra:Stat vQB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
-      fantasyColumn("Player Rk", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("OL Rk", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("PPG Rk", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("WR Rk", "extra:WR Group Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("PPG Rank", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("WR Rank", "extra:WR Group Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, sortDir: "desc" }),
       fantasyColumn("PYds", "extra:Typical Pass Yards", "num cf", { group: "Production", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("PTD", "extra:Typical Pass TDs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -7433,7 +8117,7 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Rush Bonus", "extra:Typical Rush Attempts Bonus Score", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
       fantasyColumn("Rush TD Bonus", "extra:Typical Rush TDs Bonus Score", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
       fantasyColumn("Bonus", "extra:Total Bonuses\n=sum(AC2,AI2,AO2,AU2)", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
-      fantasyColumn("Bonus Rk", "extra:Total Bonuses RANK", "num cf rank-col", { group: "Bonuses", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Bonus Rank", "extra:Total Bonuses RANK", "num cf rank-col", { group: "Bonuses", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
     ];
     return base;
@@ -7445,22 +8129,27 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
-      fantasyColumn("Half", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc", tip: "Default RB score is half PPR from rush yards, receiving yards, TDs, receptions, depth, talent, matchup, OL, and team context." }),
-      fantasyColumn("Std", "extra:Std", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Full", "extra:Full PPR", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Half Rk", "extra:Half PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Last 5", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("FullPPR", "fullPprScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Full Rank", "extra:FullPPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn(".5PPR", "halfPprScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc", tip: "Default RB score: rush yards, receiving yards, TDs, half receptions, depth, talent, matchup, OL, usage, red zone, and team context." }),
+      fantasyColumn(".5 Rank", "extra:.5PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("NoPPR", "standardScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("No Rank", "extra:NoPPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Season Production", "seasonScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Season Rank", "seasonRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("Last 5 Production", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Last 5 Rank", "last5Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("vRB", "extra:Opp vRB Rating", "num cf", { group: "Matchup", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("vRB Rk", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("vRB Rank", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
-      fantasyColumn("Player Rk", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("OL Rk", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("YPG Rk", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("PPG Rk", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("YPG Rank", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("PPG Rank", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Game Script", "extra:Game Script", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
       fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
-      fantasyColumn("Rush TD Rk", "extra:Rush TDs Allowed Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Rush TD Rank", "extra:Rush TDs Allowed Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Snap %", "extra:Typical Snap %", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Targets", "extra:Typical Targets", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("RZone", "extra:Typical Red Zone Opportunities", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -7482,23 +8171,28 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
-      fantasyColumn("Half", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Std", "extra:Std", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Full", "extra:Full PPR", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Half Rk", "extra:Half PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Last 5", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("FullPPR", "fullPprScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Full Rank", "extra:FullPPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn(".5PPR", "halfPprScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn(".5 Rank", "extra:.5PPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("NoPPR", "standardScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("No Rank", "extra:NoPPR Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Season Production", "seasonScore", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Season Rank", "seasonRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
+      fantasyColumn("Last 5 Production", "last5Score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Last 5 Rank", "last5Rank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc", boundaryAfter: true }),
       fantasyColumn(posLabel, `extra:${matchupRating}`, "num cf", { group: "Matchup", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn(`${posLabel} Rk`, `extra:${matchupRank}`, "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn(`${posLabel} Rank`, `extra:${matchupRank}`, "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("CB Match", "extra:CB Matchup Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["WR"], sortDir: "asc" }),
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
-      fantasyColumn("Player Rk", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("QB Rt", "extra:QB Rating", "num cf", { group: "Team Context", heat: true, digits: 0, sortDir: "desc" }),
-      fantasyColumn("QB Rk", "extra:QB Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("OL Rk", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
-      fantasyColumn("YPG Rk", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("PPG Rk", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Pass TD Rk", "extra:Pass TDs Allowed Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("QB Rank", "extra:QB Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
+      fantasyColumn("YPG Rank", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("PPG Rank", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Pass TD Rank", "extra:Pass TDs Allowed Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
       fantasyColumn("Game Script", "extra:Game Script", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
       fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
       fantasyColumn("Snap %", "extra:Typical Snap %", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -7515,16 +8209,16 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Rank", "scoreRank", "rank-col cf", { group: "Team", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Team", "name", "sticky-name", { group: "Team", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Team", sortDir: "asc" }),
-      fantasyColumn("Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Week Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
       fantasyColumn("Defense", "rating", "num cf", { group: "Defense", heat: true, digits: 1, sortDir: "desc" }),
-      fantasyColumn("Def Rk", "extra:Defense Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Def Rank", "extra:Defense Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Pass Rush", "extra:Pass Rush", "num cf", { group: "Defense", heat: true, sortDir: "desc" }),
-      fantasyColumn("Sacks Rk", "extra:Sacks Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Take Rk", "extra:Takeaways Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Sacks Rank", "extra:Sacks Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Take Rank", "extra:Takeaways Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Opp QB", "extra:Opp QB Rating", "num cf", { group: "Opponent", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Opp QB Rk", "extra:Opp QB Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Opp QB Rank", "extra:Opp QB Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Opp Off", "extra:Opponent Off Rating", "num cf", { group: "Opponent", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Opp PPG Rk", "extra:Opp PPG Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Opp PPG Rank", "extra:Opp PPG Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
     ];
   }
@@ -7534,9 +8228,9 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
-      fantasyColumn("Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+      fantasyColumn("Week Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
       fantasyColumn("Madden K", "extra:Madden K Rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
-      fantasyColumn("Off Rk", "extra:Team Offense Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Off Rank", "extra:Team Offense Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Go 4th", "extra:Go For It Penalty", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
       fantasyColumn("50+ FGs", "extra:50+ FGs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("FG Vol", "extra:FG Volume", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -7550,15 +8244,15 @@ function fantasyColumns(kind, position, view) {
     fantasyColumn(position === "Defense" ? "Team" : "Player", "name", "sticky-name", { group: "Player", sortDir: "asc" }),
     fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
     fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
-    fantasyColumn("Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-    fantasyColumn("Score Rk", "scoreRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+    fantasyColumn("Week Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
+    fantasyColumn("Score Rank", "scoreRank", "num cf rank-col", { group: "Score", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
     fantasyColumn("Rating", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
-    fantasyColumn("Rating Rk", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: ["RB", "WR", "TE"] }),
+    fantasyColumn("Rating Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: ["RB", "WR", "TE"] }),
     fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: ["RB", "WR", "TE"] }),
     fantasyColumn("Matchup", "extra:Matchup Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
-    fantasyColumn("Match Rk", "extra:Matchup Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
-    fantasyColumn("Team Ctx", "extra:Team Context", "num cf", { group: "Team Context", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
-    fantasyColumn("Ctx Rk", "extra:Team Context Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
+    fantasyColumn("Match Rank", "extra:Matchup Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
+    fantasyColumn("Team Context", "extra:Team Context", "num cf", { group: "Team Context", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
+    fantasyColumn("Context Rank", "extra:Team Context Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
     fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", positions: ["Kicker"], sortDir: "asc" }),
     fantasyColumn("Stadium", "extra:Kicker Stadium Tier", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, positions: ["Kicker"], sortDir: "desc" }),
     fantasyColumn("Details", "compactDetails", "", { group: "Details", noSort: true }),
@@ -7567,6 +8261,7 @@ function fantasyColumns(kind, position, view) {
 
 function fantasyValue(row, key, position) {
   if (key === "compareSelect") return fantasyCompareCell(row);
+  if (key === "fantasyStar") return fantasyStarCell(row);
   if (key === "name") return fantasyRowName(row, position);
   if (key === "team") return row.team ? teamCellFull(row.team) : "-";
   if (key === "opponent") return row.opponent ? teamCellFull(row.opponent) : "-";
@@ -7582,18 +8277,83 @@ function fantasyValue(row, key, position) {
       return value ? `<span><b>${esc(label)}</b>${esc(value)}</span>` : "";
     }).join("")}</div>`;
   }
+  if (key === "seasonSchedule") {
+    return `<div class="season-week-chip-grid">${Array.from({ length: 17 }, (_, index) => seasonScheduleChip(row, index + 1, state._activeFantasyRows || [])).join("")}</div>`;
+  }
   if (key === "compactDetails") return `<div class="fantasy-extra-chips compact">${fantasyExtras(row)}</div>`;
   if (key.startsWith("extra:")) return fantasyDetailValue(row, key.slice(6));
   return row[key];
 }
 
+function renderFantasyScheduleDetailModal() {
+  const detail = state.fantasyScheduleDetail;
+  if (!detail) return "";
+  const rows = state._activeFantasyRows || [];
+  const row = rows.find((item) => fantasyCompareKey(item) === detail.key);
+  if (!row) return "";
+  const week = Number(detail.week);
+  const opp = fantasyDetailValue(row, `W${week} Opp`);
+  const score = fantasyDetailValue(row, `W${week} Score`);
+  const vpos = fantasyDetailValue(row, `W${week} vPOS`);
+  const title = row.player || row.team || "Fantasy Projection";
+  const context = [
+    ["Team Context", fantasyDetailValue(row, "Avg Team Context") || seasonTeamContextValueFor(row, row.position)],
+    ["Production", fantasyDetailValue(row, "Avg Production") || seasonProductionValueFor(row, row.position)],
+    ["Bonuses", fantasyDetailValue(row, "Avg Bonuses") || seasonBonusValueFor(row, row.position)],
+    ["Season Avg vPOS", fantasyDetailValue(row, "Season Difficulty")],
+  ];
+  return `
+    <div class="modal-backdrop" data-close-fantasy-detail="1">
+      <section class="player-modal fantasy-detail-modal" role="dialog" aria-modal="true">
+        <button class="modal-close" data-close-fantasy-detail="1">X</button>
+        <div class="player-modal-hero compact">
+          <div>
+            <p class="eyebrow">Week ${esc(week)} Projection</p>
+            <h2>${esc(title)}</h2>
+            <p>${row.team ? teamCellFull(row.team) : ""} ${opp ? `vs ${teamCellFull(opp)}` : ""}</p>
+          </div>
+          <div class="player-current-rating"><strong>${esc(fantasyDisplay(score, 1))}</strong><span>Week Score</span></div>
+        </div>
+        <div class="fantasy-detail-grid">
+          <div><b>Opponent vPOS</b><strong>${esc(fantasyDisplay(vpos, 1))}</strong><span>Lower is easier</span></div>
+          ${context.map(([label, value]) => `<div><b>${esc(label)}</b><strong>${esc(fantasyDisplay(value, 1))}</strong><span>${esc(fantasyColumnTip(label, `extra:${label}`))}</span></div>`).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function fantasyPlainValue(row, column, position) {
-  if (column.key === "compareSelect") return "";
+  if (column.key === "compareSelect" || column.key === "fantasyStar") return "";
   if (column.key === "name") return position === "Defense" ? (row.team || "") : (row.player || "");
   if (column.key === "team") return row.team || "";
   if (column.key === "opponent") return row.opponent || "";
+  if (column.key === "seasonSchedule") return Array.from({ length: 17 }, (_, index) => fantasyDetailValue(row, `W${index + 1}`)).join(" ");
   if (column.key.startsWith("extra:")) return fantasyDetailValue(row, column.key.slice(6));
   return row[column.key];
+}
+
+function fantasyClayMarker(row, key) {
+  const source = String(fantasyDetailValue(row, "Stat Source") || "");
+  if (!source.includes("Clay")) return "";
+  const cleanKey = String(key || "").replace(/^extra:/, "").replace(/\s+/g, " ").trim();
+  const productionLabels = new Set([
+    "Typical Pass Yards",
+    "Typical Pass TDs",
+    "Typical Rush Attempts",
+    "Typical Rush TDs",
+    "Typical Snap %",
+    "Typical Targets",
+    "Typical Red Zone Opportunities",
+    "Rush Yds",
+    "Receptions",
+    "Rec Yds",
+    "TDs",
+    "Carries",
+    "seasonScore",
+    "last5Score",
+  ]);
+  return productionLabels.has(cleanKey) ? `<sup class="projection-marker" title="Filled from Mike Clay projection">*</sup>` : "";
 }
 
 function fantasyGroupClass(group) {
@@ -7607,7 +8367,8 @@ function fantasyColumnWidth(column, rows, position) {
     ...rows.map((row) => String(fantasyPlainValue(row, column, position) ?? "").length)
   );
   if (column.key === "name") return 178;
-  if (column.key === "compareSelect") return 36;
+  if (column.key === "seasonSchedule") return 960;
+  if (column.key === "compareSelect" || column.key === "fantasyStar") return 36;
   if (column.key === "team" || column.key === "opponent") return Math.max(142, Math.min(190, Math.round(longest * 5.8) + 32));
   if (column.cls?.includes("rank-col")) return 42;
   if (column.cls?.includes("score-col")) return 68;
@@ -7650,7 +8411,7 @@ function fantasyRankTable(columns, rows, allRows, position, activeSort = "", dir
       <colgroup>${widths.map((width) => `<col style="width:${width}px" />`).join("")}</colgroup>
       <thead>
         <tr class="fantasy-group-row">${fantasyHeaderGroups(columns)}</tr>
-        <tr>${columns.map((column, index) => `<th class="${column.cls || ""} ${fantasyGroupClass(column.group)} ${groupStarts.has(index) ? "group-start" : ""} ${index === 0 ? "frozen-compare" : ""} ${index === 1 ? "frozen-rank" : ""} ${index === 2 && column.key === "name" ? "frozen-name" : ""}">
+        <tr>${columns.map((column, index) => `<th class="${column.cls || ""} ${fantasyGroupClass(column.group)} ${groupStarts.has(index) ? "group-start" : ""} ${column.boundaryAfter ? "pair-end" : ""} ${index === 0 ? "frozen-compare" : ""} ${index === 1 ? "frozen-rank" : ""} ${index === 2 && column.key === "name" ? "frozen-name" : ""}">
           ${column.noSort ? `<span class="fantasy-sort-header static" title="${esc(column.tip || "")}">${esc(column.label)}</span>` : `<button class="fantasy-sort-header" data-sort-key="${esc(column.key)}" data-sort-dir="${esc(column.sortDir || "")}" title="${esc(column.tip || "Click to sort this column.")}">
             <span>${esc(column.label)}</span>${fantasySortIndicator(column, activeSort, direction)}
           </button>`}
@@ -7663,18 +8424,19 @@ function fantasyRankTable(columns, rows, allRows, position, activeSort = "", dir
 
 function fantasyTd(row, column, allRows, position, index = -1, groupStart = false) {
   const value = fantasyValue(row, column.key, position);
+  const marker = fantasyClayMarker(row, column.key);
   const freezeClass = `${index === 0 ? " frozen-compare" : ""}${index === 1 ? " frozen-rank" : ""}${index === 2 && column.key === "name" ? " frozen-name" : ""}`;
-  const groupClass = ` ${fantasyGroupClass(column.group)}${groupStart ? " group-start" : ""}`;
-  if (column.key === "compareSelect" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "compactDetails") {
+  const groupClass = ` ${fantasyGroupClass(column.group)}${groupStart ? " group-start" : ""}${column.boundaryAfter ? " pair-end" : ""}`;
+  if (column.key === "compareSelect" || column.key === "fantasyStar" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "seasonSchedule" || column.key === "compactDetails") {
     return `<td class="${column.cls || ""}${freezeClass}${groupClass}">${value || "-"}</td>`;
   }
   const values = allRows.map((item) => fantasyValue(item, column.key, position));
-  if (column.heat) return fantasyCellWithClass(value, values, Boolean(column.reverse), column.digits ?? 1, `${column.cls || ""}${freezeClass}${groupClass}`);
-  return `<td class="${column.cls || ""}${freezeClass}${groupClass} ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, column.digits ?? 1))}</td>`;
+  if (column.heat) return fantasyCellWithClass(value, values, Boolean(column.reverse), column.digits ?? 1, `${column.cls || ""}${freezeClass}${groupClass}`, marker);
+  return `<td class="${column.cls || ""}${freezeClass}${groupClass} ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, column.digits ?? 1))}${marker}</td>`;
 }
 
 function wireFantasyScroll() {
-  document.querySelectorAll(".fantasy-rank-scroll").forEach((el) => {
+  document.querySelectorAll(".fantasy-rank-scroll, .my-fantasy-scroll").forEach((el) => {
     el.addEventListener("wheel", (event) => {
       const canScrollX = el.scrollWidth > el.clientWidth;
       if (!canScrollX) return;
@@ -7748,6 +8510,21 @@ function wireFantasyCompare() {
     state.weeklyFantasyCompareOnly = false;
     storage.set("nflz-weekly-compare-keys", state.weeklyFantasyCompareKeys);
     render();
+  });
+}
+
+function wireFantasyFavorites() {
+  document.querySelectorAll("[data-fantasy-favorite]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = button.dataset.fantasyFavorite;
+      if (!key) return;
+      const set = new Set(state.fantasyFavorites || []);
+      if (set.has(key)) set.delete(key);
+      else set.add(key);
+      state.fantasyFavorites = [...set];
+      storage.set("nflz-fantasy-favorites", state.fantasyFavorites);
+      render();
+    });
   });
 }
 
@@ -8248,22 +9025,56 @@ function renderWeeklyMatchups() {
           { label: header("Team", "team") },
           { label: header("Opp", "opponent") },
           { label: header("vQB", "vQB"), cls: "num" },
-          { label: header("vQB Rk", "vQBRank"), cls: "num" },
+          { label: header("vQB Rank", "vQBRank"), cls: "num" },
           { label: header("vRB", "vRB"), cls: "num" },
-          { label: header("vRB Rk", "vRBRank"), cls: "num" },
+          { label: header("vRB Rank", "vRBRank"), cls: "num" },
           { label: header("vWR", "vWR"), cls: "num" },
-          { label: header("vWR Rk", "vWRRank"), cls: "num" },
+          { label: header("vWR Rank", "vWRRank"), cls: "num" },
           { label: header("vTE", "vTE"), cls: "num" },
-          { label: header("vTE Rk", "vTERank"), cls: "num" },
+          { label: header("vTE Rank", "vTERank"), cls: "num" },
           { label: header("Pass Allowed", "passAllowed"), cls: "num" },
           { label: header("Rush Allowed", "rushAllowed"), cls: "num" },
-          { label: header("Pass TD Rk", "passTdAllowedRank"), cls: "num" },
-          { label: header("Rush TD Rk", "rushTdAllowedRank"), cls: "num" },
+          { label: header("Pass TD Rank", "passTdAllowedRank"), cls: "num" },
+          { label: header("Rush TD Rank", "rushTdAllowedRank"), cls: "num" },
         ], dataRows)}
       </div>
       ${renderMatchupDetailModal()}
     </section>
   `;
+}
+
+function fantasyTeamFilterOptions(rows) {
+  const teams = [...new Set(rows.map((row) => row.team).filter(Boolean))]
+    .sort((a, b) => teamAbbrevFor(a).localeCompare(teamAbbrevFor(b)));
+  return [["All Teams", "All Teams"], ...teams.map((team) => [team, teamAbbrevFor(team)])];
+}
+
+function fantasyDepthFilterOptions(position) {
+  if (position === "Defense" || position === "Kicker") return [["All Depths", "All Depths"]];
+  return [
+    ["All Depths", "All Depths"],
+    ["Starters", "Starters"],
+    ["Depth 1", "Depth 1"],
+    ["Depth 1-2", "Depth 1-2"],
+    ["Depth 1-3", "Depth 1-3"],
+    ["Depth 1-4", "Depth 1-4"],
+  ];
+}
+
+function fantasyRowPassesDepth(row, filter) {
+  if (!filter || filter === "All Depths") return true;
+  const depth = num(row.depth, 999);
+  if (filter === "Starters" || filter === "Depth 1") return depth === 1;
+  const match = String(filter).match(/Depth 1-(\d+)/);
+  return match ? depth >= 1 && depth <= Number(match[1]) : true;
+}
+
+function fantasyApplyFilters(rows, position, teamFilter, depthFilter) {
+  return rows.filter((row) => {
+    const teamOk = !teamFilter || teamFilter === "All Teams" || normalizeTeamName(row.team) === normalizeTeamName(teamFilter);
+    const depthOk = fantasyRowPassesDepth(row, depthFilter) || position === "Defense" || position === "Kicker";
+    return teamOk && depthOk;
+  });
 }
 
 function renderFantasyRanks(kind) {
@@ -8273,23 +9084,36 @@ function renderFantasyRanks(kind) {
   const sortKey = isWeekly ? "weeklyFantasySort" : "seasonFantasySort";
   const directionKey = isWeekly ? "weeklyFantasySortDirection" : "seasonFantasySortDirection";
   const limitKey = isWeekly ? "weeklyFantasyLimit" : "seasonFantasyLimit";
-  const titleText = isWeekly ? "Weekly Fantasy Rankings" : "Season Long Fantasy Ranks";
+  const depthFilterKey = isWeekly ? "weeklyFantasyDepthFilter" : "seasonFantasyDepthFilter";
+  const teamFilterKey = isWeekly ? "weeklyFantasyTeamFilter" : "seasonFantasyTeamFilter";
+  const titleText = isWeekly ? "Weekly Fantasy Rankings" : "Season Long Fantasy Rankings";
   const positions = fantasyRankPositions(kind);
   const normalizedPosition = normalizeFantasyPositionLabel(state[positionKey]);
   state[positionKey] = positions.includes(normalizedPosition) ? normalizedPosition : positions[0] || "QB";
   const isWeeklyQb = isWeekly && state[positionKey] === "QB";
   const item = fantasyRankItem(kind, state[positionKey]);
+  const usesPpr = ["RB", "WR", "TE"].includes(state[positionKey]);
   const sortOptions = isWeekly
-    ? [["score", "Score"], ["scoreRank", "Score Rank"], ["last5Score", "Last 5 Score"], ["value", "Value"], ["rating", "Player Rating"], ["depth", "Depth"]]
-    : [["rank", "Rank"], ["score", "Score"], ["value", "Value"], ["adp", "ADP"], ["rating", "Player Rating"], ["depth", "Depth"]];
+    ? [["score", usesPpr ? "FullPPR" : "Week Score"], ...(usesPpr ? [["halfPprScore", ".5PPR"], ["standardScore", "NoPPR"]] : []), ["scoreRank", "Week Rank"], ["seasonScore", "Season Production"], ["seasonRank", "Season Rank"], ["last5Score", "Last 5 Production"], ["last5Rank", "Last 5 Rank"], ["rating", "Player Rating"], ["depth", "Depth"]]
+    : [["rank", "Rank"], ["score", usesPpr ? "Full Total" : "Total"], ["avgScore", "Avg/G"], ...(usesPpr ? [["fullPprScore", "Full Total"], ["fullPprAvg", "Full/G"], ["halfPprScore", ".5 Total"], ["halfPprAvg", ".5/G"], ["standardScore", "No Total"], ["standardAvg", "No/G"]] : []), ["extra:Season Difficulty", "Avg vPOS"], ["value", usesPpr ? "ADP Value" : "Value"], ["adp", "ADP"], ["rating", "Player Rating"], ["depth", "Depth"]];
+  if (!sortOptions.some(([value]) => value === state[sortKey])) {
+    state[sortKey] = isWeekly ? "score" : "rank";
+    state[directionKey] = isWeekly ? "desc" : "asc";
+  }
   const limits = [50, 75, 100, 150, 250, 500];
   const sourceRows = fantasyBoardRows(kind, state[positionKey], item.rows || []);
+  const teamOptions = fantasyTeamFilterOptions(sourceRows);
+  if (!teamOptions.some(([value]) => value === state[teamFilterKey])) state[teamFilterKey] = "All Teams";
+  const depthOptions = fantasyDepthFilterOptions(state[positionKey]);
+  if (!depthOptions.some(([value]) => value === state[depthFilterKey])) state[depthFilterKey] = "All Depths";
   const compareSet = new Set(state.weeklyFantasyCompareKeys);
   const comparedRows = isWeekly && state.weeklyFantasyCompareOnly ? sourceRows.filter((row) => compareSet.has(fantasyCompareKey(row))) : sourceRows;
-  const filtered = comparedRows.filter((row) => !state.query || [row.player, row.team, row.opponent, row.position, Object.values(row.extras || {}).join(" ")].join(" ").toLowerCase().includes(state.query));
+  const filteredByControls = fantasyApplyFilters(comparedRows, state[positionKey], state[teamFilterKey], state[depthFilterKey]);
+  const filtered = filteredByControls.filter((row) => !state.query || [row.player, row.team, row.opponent, row.position, Object.values(row.extras || {}).join(" ")].join(" ").toLowerCase().includes(state.query));
   const rows = fantasySortedRows(filtered, state[sortKey], state[directionKey]).slice(0, Number(state[limitKey]));
   const activeView = isWeeklyQb ? "regular" : isWeekly ? state[viewKey] : "regular";
   const columns = fantasyColumns(kind, state[positionKey], activeView);
+  state._activeFantasyRows = filtered;
   const weekLabel = isWeekly ? esc(siteWeekLabel()) : "";
   const formulaNote = item.scoreFormulaSample ? item.scoreFormulaSample : "No score formula was stored in the exported sample for this sheet.";
   setTimeout(() => {
@@ -8297,6 +9121,8 @@ function renderFantasyRanks(kind) {
     wireSelect(`${kind}-fantasy-view`, viewKey);
     wireSelect(`${kind}-fantasy-sort`, sortKey);
     wireSelect(`${kind}-fantasy-limit`, limitKey);
+    wireSelect(`${kind}-fantasy-team`, teamFilterKey);
+    wireSelect(`${kind}-fantasy-depth`, depthFilterKey);
     wireFantasyColumnSort(sortKey, directionKey, columns);
     document.querySelectorAll(".player-open").forEach((button) => button.addEventListener("click", () => {
       state.selectedPlayerKey = button.dataset.playerKey;
@@ -8306,6 +9132,7 @@ function renderFantasyRanks(kind) {
     document.querySelector("#scan-team-rankings")?.addEventListener("click", scanTeamRankings);
     document.querySelector("#scan-snaps-stats")?.addEventListener("click", scanSnapsStats);
     document.querySelector("#scan-weekly-sources")?.addEventListener("click", scanWeeklyFantasySources);
+    document.querySelector("#scan-fantasypros-adp")?.addEventListener("click", scanFantasyProsAdp);
     document.querySelector("#snaps-stats-search")?.addEventListener("input", (event) => {
       state.snapsStatsQuery = event.target.value;
       render();
@@ -8316,6 +9143,16 @@ function renderFantasyRanks(kind) {
       });
     });
     wireFantasyCompare();
+    wireFantasyFavorites();
+    document.querySelectorAll("[data-fantasy-schedule-detail]").forEach((button) => button.addEventListener("click", () => {
+      state.fantasyScheduleDetail = { key: button.dataset.fantasyScheduleDetail, week: button.dataset.week };
+      render();
+    }));
+  document.querySelectorAll("[data-close-fantasy-detail]").forEach((button) => button.addEventListener("click", (event) => {
+    if (event.currentTarget.classList.contains("modal-backdrop") && event.target !== event.currentTarget) return;
+    state.fantasyScheduleDetail = null;
+    render();
+  }));
     if (isWeeklyQb) wireWeeklyQbFormulaControls();
     if (isWeekly && ["RB", "WR", "TE"].includes(state[positionKey])) wireWeeklySkillFormulaControls();
     wireFantasyScroll();
@@ -8325,21 +9162,24 @@ function renderFantasyRanks(kind) {
       <div class="toolbar fantasy-rank-toolbar">
         <div>
           <h2>${titleText}${weekLabel ? ` <span>${weekLabel}</span>` : ""}</h2>
-          <p>${esc(item.sheet || "")} from ${esc(window.FANTASY_RANKINGS?.source || "2026 NFL Model Z.xlsx")}.</p>
+          <p>${esc(isWeekly ? `${item.sheet || ""} using current depth charts and selected week.` : "Generated from Weeks 1-17 weekly projections with season difficulty, total points, points per game, and FantasyPros ADP.")}</p>
         </div>
         <div class="filters">
           ${isWeekly ? `<button id="scan-team-rankings" class="mini-action primary" ${state.teamRankingsScanStatus === "checking" ? "disabled" : ""}>Scan Team Rankings</button>` : ""}
           ${isWeekly ? `<button id="scan-snaps-stats" class="mini-action" ${state.snapsStatsScanStatus === "checking" ? "disabled" : ""}>Scan Snaps & Stats</button>` : ""}
           ${isWeekly ? `<button id="scan-weekly-sources" class="mini-action" ${state.teamRankingsScanStatus === "checking" || state.snapsStatsScanStatus === "checking" ? "disabled" : ""}>Run Both Scans</button>` : ""}
+          ${!isWeekly ? `<button id="scan-fantasypros-adp" class="mini-action primary" ${state.fantasyProsAdpScanStatus === "checking" ? "disabled" : ""}>Scan ADP</button>` : ""}
           ${isWeekly ? `<button id="weekly-compare-only" class="mini-action ${state.weeklyFantasyCompareOnly ? "primary" : ""}" ${state.weeklyFantasyCompareKeys.length ? "" : "disabled"}>${state.weeklyFantasyCompareOnly ? "Show All" : `Selected Only (${state.weeklyFantasyCompareKeys.length})`}</button>` : ""}
           ${isWeekly ? `<button id="weekly-compare-clear" class="mini-action" ${state.weeklyFantasyCompareKeys.length ? "" : "disabled"}>Clear Compare</button>` : ""}
           ${optionSelect(`${kind}-fantasy-position`, state[positionKey], positions)}
+          ${optionSelect(`${kind}-fantasy-team`, state[teamFilterKey], teamOptions)}
+          ${optionSelect(`${kind}-fantasy-depth`, state[depthFilterKey], depthOptions)}
           ${isWeekly && !isWeeklyQb ? optionSelect(`${kind}-fantasy-view`, state[viewKey], [["regular", "Regular"], ["last5", "Last 5"]]) : ""}
           ${!isWeeklyQb ? optionSelect(`${kind}-fantasy-sort`, state[sortKey], sortOptions) : ""}
           ${select(`${kind}-fantasy-limit`, state[limitKey], limits)}
         </div>
       </div>
-      ${isWeekly ? `<div class="scan-strip">${teamRankingsStatusNote()}${snapsStatsStatusNote()}</div>` : ""}
+      ${isWeekly ? `<div class="scan-strip">${teamRankingsStatusNote()}${snapsStatsStatusNote()}</div>` : `<div class="scan-strip">${fantasyProsAdpStatusNote()}</div>`}
       ${isWeeklyQb ? renderWeeklyQbFormulaControls() : ""}
       ${isWeekly ? renderWeeklySkillFormulaControls(state[positionKey]) : ""}
       <div class="table-scroll fantasy-rank-scroll">
@@ -8352,6 +9192,7 @@ function renderFantasyRanks(kind) {
         <pre class="formula">${esc(formulaNote)}</pre>
       </section>
     </section>
+    ${renderFantasyScheduleDetailModal()}
     ${renderPlayerModal()}
   `;
 }
@@ -8444,33 +9285,444 @@ function renderStatRanks() {
   `;
 }
 
-function renderStartSit() {
-  const league = state.data.fantasyLeagues[state.fantasyLeague] || state.data.fantasyLeagues[0];
-  const orderKey = `league-${state.fantasyLeague}`;
-  const rows = savedFantasy[orderKey] || league.rows;
-  setTimeout(() => {
-    document.querySelector("#fantasy-league")?.addEventListener("change", (event) => {
-      state.fantasyLeague = Number(event.target.value);
+const fantasyTeamPositions = ["QB", "RB", "WR", "TE", "DST", "K"];
+const fantasyTeamDepthTags = ["Starter", "Flex", "Bench", "IR", "Prospect"];
+const fantasyTeamColors = ["#e8f3ff", "#edf8ee", "#fff4df", "#f2edff", "#ffecef", "#eef3f8"];
+
+function fantasyLeagueDefaultRows() {
+  const counts = { QB: 2, RB: 4, WR: 4, TE: 2, DST: 2, K: 2 };
+  return fantasyTeamPositions.flatMap((position) => Array.from({ length: counts[position] }, (_, index) => ({
+    id: uid("fantasy-row"),
+    position,
+    slot: `${position}${index + 1}`,
+    tag: index === 0 ? "Starter" : "Bench",
+    playerKey: "",
+    playerName: "",
+  })));
+}
+
+function fantasyLineupDefaultRows() {
+  return ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX", "DST", "K", "Bench", "Bench", "Bench", "Bench", "Bench", "Bench", "IR", "IR"].map((slot, index) => ({
+    id: uid("lineup-row"),
+    position: slot === "FLEX" ? "FLEX" : slot === "Bench" || slot === "IR" ? "Any" : slot,
+    slot: slot === "FLEX" ? "FLEX" : slot,
+    tag: slot === "IR" ? "IR" : slot === "Bench" ? "Bench" : slot === "FLEX" ? "Flex" : "Starter",
+    playerKey: "",
+    playerName: "",
+    order: index,
+  }));
+}
+
+function defaultFantasyTeams() {
+  return [{
+    id: uid("league"),
+    name: "Fantasy Team 1",
+    site: "Site",
+    league: "League Name",
+    color: fantasyTeamColors[0],
+    activeView: "team",
+    teamRows: fantasyLeagueDefaultRows(),
+    lineupRows: fantasyLineupDefaultRows(),
+  }];
+}
+
+function ensureFantasyTeams() {
+  if (!savedFantasyTeams?.leagues?.length) {
+    savedFantasyTeams = { leagues: defaultFantasyTeams() };
+    storage.set("nflz-my-fantasy-teams", savedFantasyTeams);
+  }
+  savedFantasyTeams.leagues.forEach((league, index) => {
+    league.id ||= uid("league");
+    league.name ||= `Fantasy Team ${index + 1}`;
+    league.site ||= "Site";
+    league.league ||= "League Name";
+    league.color ||= fantasyTeamColors[index % fantasyTeamColors.length];
+    league.activeView ||= "team";
+    league.teamRows ||= fantasyLeagueDefaultRows();
+    league.lineupRows ||= fantasyLineupDefaultRows();
+  });
+  return savedFantasyTeams.leagues;
+}
+
+function saveFantasyTeams() {
+  storage.set("nflz-my-fantasy-teams", savedFantasyTeams);
+}
+
+function fantasyTeamWeek() {
+  return state.myFantasyWeek === "auto" ? selectedSiteWeek() : state.myFantasyWeek;
+}
+
+function fantasyRowDisplayPosition(row, player = null) {
+  if (!row) return "";
+  if (row.position === "Any" && player) return fantasyPositionForPlayer(player);
+  if (row.position === "FLEX") return "FLEX";
+  return row.position || "";
+}
+
+function fantasyPositionClass(position) {
+  return `pos-${String(position || "any").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function fantasyPositionForPlayer(player) {
+  if (!player) return "";
+  const group = groupPosition(player.position);
+  if (group === "Defense") return "DST";
+  if (group === "Kicker") return "K";
+  return group || player.position;
+}
+
+function fantasyPlayersForSlot(position) {
+  const wanted = normalizeFantasyPositionLabel(position);
+  if (position === "Any" || position === "FLEX") {
+    return state.players.filter((player) => ["RB", "WR", "TE"].includes(groupPosition(player.position)) || position === "Any");
+  }
+  if (position === "DST") {
+    return (state.data?.teams || []).map((team) => ({ player: `${team.teamAbbrev || teamAbbrevFor(team.team)} DST`, team: team.team, position: "Defense", teamAbbrev: team.teamAbbrev || teamAbbrevFor(team.team), rating: team.defenseAverage, depth: 1, _fantasyDefense: true }));
+  }
+  if (position === "K") return state.players.filter((player) => normalizeFantasyPositionLabel(player.position) === "Kicker");
+  return state.players.filter((player) => normalizeFantasyPositionLabel(groupPosition(player.position) || player.position) === wanted);
+}
+
+function findFantasyTeamPlayer(row) {
+  if (row.playerKey) return findPlayer(row.playerKey);
+  if (!row.playerName) return null;
+  if (row.position === "DST") {
+    const team = teamByName(row.playerName.replace(/\s+DST$/i, "")) || teamByName(row.team);
+    return team ? { player: `${team.teamAbbrev || teamAbbrevFor(team.team)} DST`, team: team.team, position: "Defense", teamAbbrev: team.teamAbbrev || teamAbbrevFor(team.team), rating: team.defenseAverage, depth: 1, _fantasyDefense: true } : null;
+  }
+  return findPlayerByName(row.playerName);
+}
+
+function fantasyWeeklyRowsFor(position) {
+  const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
+  return weeklyFantasyPlayerPool(normalized, fantasyRankItem("weekly", normalized)?.rows || [], fantasyTeamWeek());
+}
+
+function fantasyProjectionForPlayer(player, position) {
+  if (!player) return null;
+  const normalized = position === "DST" || player._fantasyDefense ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(groupPosition(player.position) || position);
+  const rows = fantasyWeeklyRowsFor(normalized);
+  if (normalized === "Defense") return rows.find((row) => normalizeTeamName(row.team) === normalizeTeamName(player.team)) || null;
+  return rows.find((row) => row._playerKey === sourceKey(player) || fantasyMergeKey(row.player) === fantasyMergeKey(player.player)) || null;
+}
+
+function fantasyUsageRank(row) {
+  if (!row) return "";
+  return fantasyDetailValue(row, "Total Bonuses RANK")
+    || fantasyDetailValue(row, "!!LAST 5!!\nTotal Bonuses RANK")
+    || fantasyDetailValue(row, "FullPPR Rank")
+    || row.scoreRank
+    || "";
+}
+
+function fantasySourceValues(position, key) {
+  const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
+  return fantasyWeeklyRowsFor(normalized).map((item) => {
+    if (key === "scoreRank") return item.scoreRank;
+    if (key === "score") return item.score;
+    if (key === "usage") return fantasyUsageRank(item);
+    if (String(key || "").startsWith("extra:")) return fantasyDetailValue(item, key.slice(6));
+    return item[key];
+  }).filter((value) => Number.isFinite(Number(value)));
+}
+
+function fantasySourceStyle(position, key, value, reverse = false) {
+  const values = fantasySourceValues(position, key);
+  if (!Number.isFinite(Number(value)) || !values.length) return "";
+  return cfStyle(value, Math.min(...values), Math.max(...values), reverse);
+}
+
+function fantasyContextChips(row, position) {
+  if (!row) return "";
+  const labels = position === "QB"
+    ? ["OL Rank", "PPG Rank", "WR Group Rank"]
+    : position === "RB"
+      ? ["OL Rank", "YPG Rank", "PPG Rank", "Game Script", "Team Total"]
+      : position === "DST"
+        ? ["Defense Rank", "Sacks Rank", "Takeaways Rank", "Opp PPG Rank"]
+        : position === "K"
+          ? ["Team Offense Rank", "Go For It Penalty", "Kicker Stadium Tier"]
+          : ["QB Rank", "PPG Rank", "YPG Rank", "Game Script", "Team Total"];
+  return labels.map((label) => {
+    const fixed = label === "YPG Rank" ? "Team YPG Rank" : label;
+    const value = fantasyDetailValue(row, fixed);
+    const reverse = /rank/i.test(label) || ["Go For It Penalty"].includes(label);
+    const style = fantasySourceStyle(position, `extra:${fixed}`, value, reverse);
+    const shortLabel = {
+      "OL Rank": "OL",
+      "PPG Rank": "PPG",
+      "WR Group Rank": "WRs",
+      "YPG Rank": "YPG",
+      "QB Rank": "QB",
+      "Defense Rank": "DEF",
+      "Sacks Rank": "Sacks",
+      "Takeaways Rank": "Take",
+      "Opp PPG Rank": "Opp PPG",
+      "Team Offense Rank": "Off",
+      "Go For It Penalty": "4th",
+      "Kicker Stadium Tier": "Stadium",
+    }[label] || label;
+    return value === "" || value === undefined ? "" : `<span ${style}><b>${esc(shortLabel)}</b>${esc(fantasyDisplay(value, Number.isFinite(Number(value)) && Math.abs(Number(value)) < 10 ? 1 : 0))}</span>`;
+  }).join("");
+}
+
+function fantasyRowDatalistId(leagueId, view, rowId) {
+  return `fantasy-list-${leagueId}-${view}-${rowId}`.replace(/[^a-zA-Z0-9_-]/g, "");
+}
+
+function fantasyCompatibleRowForPlayer(row, player) {
+  if (!player) return false;
+  const playerPos = fantasyPositionForPlayer(player);
+  if (row.position === "Any") return true;
+  if (row.position === "FLEX") return ["RB", "WR", "TE"].includes(playerPos);
+  return normalizeFantasyPositionLabel(row.position) === normalizeFantasyPositionLabel(playerPos);
+}
+
+function fantasyCounterpartRows(league, view) {
+  return view === "lineup" ? league.teamRows : league.lineupRows;
+}
+
+function fantasyFindCounterpartRow(league, view, row, player) {
+  const rows = fantasyCounterpartRows(league, view);
+  if (!rows) return null;
+  if (row.linkedRowId) {
+    const linked = rows.find((item) => item.id === row.linkedRowId);
+    if (linked) return linked;
+  }
+  if (row.playerKey) {
+    const byPlayer = rows.find((item) => item.playerKey === row.playerKey);
+    if (byPlayer) return byPlayer;
+  }
+  return rows.find((item) => !item.playerKey && !item.playerName && fantasyCompatibleRowForPlayer(item, player)) || null;
+}
+
+function fantasyCreateCounterpartRow(league, view, row, player) {
+  const rows = fantasyCounterpartRows(league, view);
+  const playerPos = fantasyPositionForPlayer(player);
+  if (view === "lineup") {
+    const count = league.teamRows.filter((item) => item.position === playerPos).length + 1;
+    const next = { id: uid("fantasy-row"), position: playerPos, slot: `${playerPos}${count}`, tag: row.tag || "Bench", playerKey: "", playerName: "" };
+    rows.push(next);
+    return next;
+  }
+  const next = { id: uid("lineup-row"), position: playerPos, slot: "Bench", tag: "Bench", playerKey: "", playerName: "", order: rows.length };
+  rows.push(next);
+  return next;
+}
+
+function syncFantasyRowToOtherView(league, view, row) {
+  const player = findFantasyTeamPlayer(row);
+  if (!league || !row || !player || !row.playerKey) return;
+  const counterpart = fantasyFindCounterpartRow(league, view, row, player) || fantasyCreateCounterpartRow(league, view, row, player);
+  row.linkedRowId = counterpart.id;
+  counterpart.linkedRowId = row.id;
+  counterpart.playerKey = row.playerKey;
+  counterpart.playerName = row.playerName || player.player;
+  if (row.tag && counterpart.tag !== "IR") counterpart.tag = row.tag;
+}
+
+function fantasyPositionSpans(rows) {
+  const spans = new Map();
+  let start = 0;
+  while (start < rows.length) {
+    const player = findFantasyTeamPlayer(rows[start]);
+    const pos = fantasyRowDisplayPosition(rows[start], player);
+    let end = start + 1;
+    while (end < rows.length) {
+      const nextPlayer = findFantasyTeamPlayer(rows[end]);
+      if (fantasyRowDisplayPosition(rows[end], nextPlayer) !== pos) break;
+      end += 1;
+    }
+    spans.set(rows[start].id, { label: pos, span: end - start });
+    for (let i = start + 1; i < end; i += 1) spans.set(rows[i].id, null);
+    start = end;
+  }
+  return spans;
+}
+
+function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefined) {
+  const player = findFantasyTeamPlayer(row);
+  const position = fantasyRowDisplayPosition(row, player);
+  const projection = fantasyProjectionForPlayer(player, position);
+  const opponent = projection?.opponent ? teamAbbrevFor(projection.opponent, projection.opponent) : "";
+  const team = player?.team ? teamAbbrevFor(player.team, player.teamAbbrev || player.team) : "";
+  const vposLabel = position === "QB" ? "Matchup Rating (Low is good)" : position === "RB" ? "Opp vRB Rank" : position === "WR" ? "Opp vWR Rank" : position === "TE" ? "Opp vTE Rank" : position === "DST" ? "Opponent Off Rank" : "Team Offense Rank";
+  const vpos = projection ? fantasyDetailValue(projection, vposLabel) : "";
+  const datalistId = fantasyRowDatalistId(league.id, view, row.id);
+  const options = fantasyPlayersForSlot(row.position).slice(0, 700);
+  const rowClass = row.tag === "Flex" ? "flex" : String(row.tag || "").toLowerCase();
+  const scoreStyle = projection ? fantasySourceStyle(position, "score", projection.score, false) : "";
+  const rankStyle = projection ? fantasySourceStyle(position, "scoreRank", projection.scoreRank, true) : "";
+  const vposStyle = projection ? fantasySourceStyle(position, `extra:${vposLabel}`, vpos, true) : "";
+  const usage = fantasyUsageRank(projection);
+  const usageStyle = projection ? fantasySourceStyle(position, "usage", usage, true) : "";
+  const posCell = spanInfo === undefined
+    ? `<td class="pos-rail ${fantasyPositionClass(position)}">${index === 0 || visibleRows[index - 1]?.position !== row.position ? esc(position) : ""}</td>`
+    : spanInfo ? `<td class="pos-rail ${fantasyPositionClass(position)}" rowspan="${spanInfo.span}">${esc(spanInfo.label)}</td>` : "";
+  return `
+    <tr class="my-team-row tag-${rowClass}">
+      ${posCell}
+      <td><input class="slot-input" data-fantasy-field="slot" data-league-id="${esc(league.id)}" data-view="${esc(view)}" data-row-id="${esc(row.id)}" value="${esc(row.slot || "")}" /></td>
+      <td>${optionSelect(`tag-${league.id}-${view}-${row.id}`, row.tag || "Bench", fantasyTeamDepthTags.map((item) => [item, item])).replace("<select", `<select class="fantasy-tag tag-${rowClass}" data-fantasy-field="tag" data-league-id="${esc(league.id)}" data-view="${esc(view)}" data-row-id="${esc(row.id)}"`)}
+      </td>
+      <td class="fantasy-roster-player">
+        <div class="fantasy-player-input-wrap">
+          ${player ? playerAvatar(player) : playerAvatar({ player: "?" })}
+          <input list="${datalistId}" data-fantasy-field="playerName" data-league-id="${esc(league.id)}" data-view="${esc(view)}" data-row-id="${esc(row.id)}" value="${esc(row.playerName || player?.player || "")}" placeholder="Type player name" />
+          ${player ? `<button class="fantasy-player-card-open player-open" data-player-key="${esc(sourceKey(player))}" title="Open player card">Card</button>` : ""}
+          <datalist id="${datalistId}">${options.map((item) => `<option value="${esc(item.player)}">${esc(`${item.player} - ${teamAbbrevFor(item.team, item.teamAbbrev || item.team)} ${fantasyPositionForPlayer(item)}`)}</option>`).join("")}</datalist>
+        </div>
+      </td>
+      <td>${esc(team || "-")}</td>
+      <td>${esc(opponent || "-")}</td>
+      <td class="num" ${rankStyle}>${esc(fantasyDisplay(projection?.scoreRank, 0))}</td>
+      <td class="num" ${vposStyle}>${esc(fantasyDisplay(vpos, 0))}</td>
+      <td class="num" ${usageStyle}>${esc(fantasyDisplay(usage, 0))}</td>
+      <td class="num score-pill" ${scoreStyle}>${esc(fantasyDisplay(projection?.score, 1))}</td>
+      <td><div class="fantasy-extra-chips compact">${fantasyContextChips(projection, position)}</div></td>
+      <td class="my-fantasy-delete-cell"><button class="mini-action danger my-fantasy-delete" data-fantasy-delete-row="${esc(row.id)}" data-league-id="${esc(league.id)}" data-view="${esc(view)}" title="Remove row">x</button></td>
+    </tr>
+  `;
+}
+
+function renderFantasyLeagueCard(league) {
+  const view = league.activeView || "team";
+  const rows = view === "lineup" ? league.lineupRows : league.teamRows;
+  const grouped = view === "team" ? [...rows].sort((a, b) => fantasyTeamPositions.indexOf(a.position) - fantasyTeamPositions.indexOf(b.position) || String(a.slot).localeCompare(String(b.slot))) : rows;
+  const spans = fantasyPositionSpans(grouped);
+  return `
+    <article class="my-fantasy-card" style="--league-bg:${esc(league.color || "#e8f3ff")}">
+      <div class="depth-team-head my-fantasy-head">
+        <h3><input data-fantasy-league-field="name" data-league-id="${esc(league.id)}" value="${esc(league.name)}" /></h3>
+        <div class="league-meta">
+          <input data-fantasy-league-field="league" data-league-id="${esc(league.id)}" value="${esc(league.league)}" />
+          <input data-fantasy-league-field="site" data-league-id="${esc(league.id)}" value="${esc(league.site)}" />
+          <input type="color" data-fantasy-league-field="color" data-league-id="${esc(league.id)}" value="${esc(league.color || "#e8f3ff")}" />
+        </div>
+      </div>
+      <div class="my-fantasy-view-tabs">
+        <button class="${view === "team" ? "active" : ""}" data-fantasy-view="team" data-league-id="${esc(league.id)}">Team View</button>
+        <button class="${view === "lineup" ? "active" : ""}" data-fantasy-view="lineup" data-league-id="${esc(league.id)}">Lineup View</button>
+        ${optionSelect(`add-position-${league.id}`, "RB", [["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["DST", "DST"], ["K", "K"], ["Bench", "Bench"], ["IR", "IR"], ...(view === "lineup" ? [["FLEX", "FLEX"]] : [])]).replace("<select", `<select class="fantasy-add-position" data-league-id="${esc(league.id)}" data-view="${esc(view)}"`)}
+        <button class="mini-action" data-fantasy-add-row="${esc(league.id)}" data-view="${esc(view)}">Add Row</button>
+      </div>
+      <div class="table-scroll my-fantasy-scroll">
+        <table class="my-fantasy-table">
+          <thead><tr><th>Pos</th><th>Slot</th><th>Tag</th><th>Player</th><th>Team</th><th>Opp</th><th>Score Rank</th><th>vPOS</th><th>Usage Rank</th><th>Week Score</th><th>Team Context</th><th></th></tr></thead>
+          <tbody>${grouped.map((row, index) => fantasyTeamRow(league, view, row, index, grouped, spans.get(row.id))).join("")}</tbody>
+        </table>
+      </div>
+    </article>
+  `;
+}
+
+function wireMyFantasyTeams() {
+  document.querySelector("#my-fantasy-week")?.addEventListener("change", (event) => {
+    state.myFantasyWeek = event.target.value;
+    storage.set("nflz-my-fantasy-week", state.myFantasyWeek);
+    render();
+  });
+  document.querySelector("#my-fantasy-league-view")?.addEventListener("change", (event) => {
+    state.myFantasyLeagueView = event.target.value;
+    storage.set("nflz-my-fantasy-league-view", state.myFantasyLeagueView);
+    render();
+  });
+  document.querySelector("#my-fantasy-add-league")?.addEventListener("click", () => {
+    const leagues = ensureFantasyTeams();
+    leagues.push({ ...defaultFantasyTeams()[0], id: uid("league"), name: `Fantasy Team ${leagues.length + 1}`, color: fantasyTeamColors[leagues.length % fantasyTeamColors.length] });
+    saveFantasyTeams();
+    render();
+  });
+  document.querySelectorAll("[data-fantasy-league-field]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const league = ensureFantasyTeams().find((item) => item.id === input.dataset.leagueId);
+      if (!league) return;
+      league[input.dataset.fantasyLeagueField] = input.value;
+      saveFantasyTeams();
       render();
     });
-    document.querySelectorAll("tr[draggable='true']").forEach((row) => {
-      row.addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", row.dataset.index));
-      row.addEventListener("dragover", (event) => event.preventDefault());
-      row.addEventListener("drop", (event) => {
-        const from = Number(event.dataTransfer.getData("text/plain"));
-        const to = Number(row.dataset.index);
-        const next = [...rows];
-        next.splice(to, 0, next.splice(from, 1)[0]);
-        savedFantasy[orderKey] = next;
-        storage.set("nflz-fantasy-order", savedFantasy);
-        render();
-      });
+  });
+  document.querySelectorAll("[data-fantasy-view]").forEach((button) => button.addEventListener("click", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === button.dataset.leagueId);
+    if (!league) return;
+    league.activeView = button.dataset.fantasyView;
+    saveFantasyTeams();
+    render();
+  }));
+  document.querySelectorAll("[data-fantasy-field]").forEach((input) => {
+    input.addEventListener("change", () => {
+      const league = ensureFantasyTeams().find((item) => item.id === input.dataset.leagueId);
+      const rows = input.dataset.view === "lineup" ? league?.lineupRows : league?.teamRows;
+      const row = rows?.find((item) => item.id === input.dataset.rowId);
+      if (!row) return;
+      row[input.dataset.fantasyField] = input.value;
+      if (input.dataset.fantasyField === "playerName") {
+        const player = findPlayerByName(input.value);
+        row.playerKey = player ? sourceKey(player) : "";
+        row.playerName = player?.player || input.value;
+        if (row.position === "Any" && player) row.position = fantasyPositionForPlayer(player);
+      }
+      syncFantasyRowToOtherView(league, input.dataset.view, row);
+      saveFantasyTeams();
+      render();
     });
   });
+  document.querySelectorAll("[data-fantasy-add-row]").forEach((button) => button.addEventListener("click", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === button.dataset.fantasyAddRow);
+    const view = button.dataset.view;
+    const position = document.querySelector(`.fantasy-add-position[data-league-id="${CSS.escape(league.id)}"][data-view="${CSS.escape(view)}"]`)?.value || "RB";
+    const rows = view === "lineup" ? league.lineupRows : league.teamRows;
+    const basePosition = position === "Bench" || position === "IR" ? "Any" : position;
+    const row = { id: uid(view === "lineup" ? "lineup-row" : "fantasy-row"), position: basePosition, slot: position, tag: position === "IR" ? "IR" : position === "FLEX" ? "Flex" : position === "Bench" ? "Bench" : "Starter", playerKey: "", playerName: "", order: rows.length };
+    rows.push(row);
+    const otherRows = fantasyCounterpartRows(league, view);
+    const other = view === "lineup"
+      ? { id: uid("fantasy-row"), position: basePosition === "Any" ? "RB" : basePosition === "FLEX" ? "RB" : basePosition, slot: basePosition === "Any" || basePosition === "FLEX" ? "Bench" : `${basePosition}${otherRows.filter((item) => item.position === basePosition).length + 1}`, tag: row.tag, playerKey: "", playerName: "", linkedRowId: row.id }
+      : { id: uid("lineup-row"), position: basePosition, slot: position === "IR" ? "IR" : "Bench", tag: position === "IR" ? "IR" : "Bench", playerKey: "", playerName: "", order: otherRows.length, linkedRowId: row.id };
+    row.linkedRowId = other.id;
+    otherRows.push(other);
+    saveFantasyTeams();
+    render();
+  }));
+  document.querySelectorAll("[data-fantasy-delete-row]").forEach((button) => button.addEventListener("click", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === button.dataset.leagueId);
+    const key = button.dataset.fantasyDeleteRow;
+    if (!league) return;
+    const prop = button.dataset.view === "lineup" ? "lineupRows" : "teamRows";
+    league[prop] = league[prop].filter((row) => row.id !== key);
+    saveFantasyTeams();
+    render();
+  }));
+  document.querySelectorAll(".my-fantasy-panel .player-open").forEach((button) => button.addEventListener("click", () => {
+    state.selectedPlayerKey = button.dataset.playerKey;
+    render();
+  }));
+}
+
+function renderStartSit() {
+  const leagues = ensureFantasyTeams();
+  const weekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
+  const leagueOptions = [["all", "All Leagues"], ...leagues.map((league) => [league.id, league.name])];
+  const visible = state.myFantasyLeagueView === "all" ? leagues : leagues.filter((league) => league.id === state.myFantasyLeagueView);
+  if (!visible.length) state.myFantasyLeagueView = "all";
+  setTimeout(() => {
+    wireMyFantasyTeams();
+    wireFantasyScroll();
+  });
   return `
-    <section class="panel">
-      <div class="toolbar"><h2>Start 'Em, Sit 'Em</h2><select id="fantasy-league">${state.data.fantasyLeagues.map((item, i) => `<option value="${i}" ${i === state.fantasyLeague ? "selected" : ""}>${item.name || `League ${i + 1}`}</option>`).join("")}</select></div>
-      ${table(league.headers.map((h) => ({ label: h || "" })), rows.map((row, i) => `<tr draggable="true" data-index="${i}">${row.map((cell) => `<td>${cell || ""}</td>`).join("")}</tr>`))}
+    <section class="panel my-fantasy-panel">
+      <div class="toolbar">
+        <div>
+          <h2>My Fantasy Teams <span>${esc(weekOptionLabel(fantasyTeamWeek()))}</span></h2>
+          <p>Build your fantasy rosters, then pull the weekly Model Z context into every slot.</p>
+        </div>
+        <div class="filters">
+          ${optionSelect("my-fantasy-week", state.myFantasyWeek, weekOptions)}
+          ${optionSelect("my-fantasy-league-view", state.myFantasyLeagueView, leagueOptions)}
+          <button id="my-fantasy-add-league" class="mini-action primary">Add Fantasy Team</button>
+        </div>
+      </div>
+      <div class="my-fantasy-grid">${visible.map(renderFantasyLeagueCard).join("")}</div>
     </section>
   `;
 }
@@ -8811,6 +10063,7 @@ function storageBucketLabel(key) {
     "nflz-pff-recent-adjustments": "PFF recent adjustments",
     "nflz-depth-resolved-results": "Depth check resolved history",
     "nflz-depth-ignored-results": "Depth check ignored history",
+    "nflz-injury-resolved-results": "Injury check resolved history",
     "nflz-depth-candidate-removals": "Depth duplicate removals",
     "nflz-madden-match-overrides": "Madden match choices",
     "nflz-madden-recent-adjustments": "Madden recent adjustments",
