@@ -5,7 +5,7 @@ const navSections = [
   { title: "Season Projector", pages: [["standings", "Season Projector"]] },
   { title: "Fantasy Hub", pages: [["start", "My Fantasy Teams"], ["weeklyFantasy", "Weekly Fantasy Rankings"], ["seasonFantasy", "Season Long Fantasy Rankings"]] },
   { title: "Data", pages: [["weeklyMatchups", "Weekly Matchups"], ["pff", "PFF Update"], ["statRanks", "Stat Ranks"], ["data", "Data Diagnostics"]] },
-  { title: "Interactive", pages: [["qb", "H2H QB Challenge", "low"]] },
+  { title: "Interactive", pages: [["gameSim", "Game Simulator"], ["qb", "H2H QB Challenge", "low"]] },
 ];
 
 const pages = navSections.flatMap((section) => section.pages);
@@ -273,6 +273,7 @@ const state = {
   depthCheckVersion: 0,
   depthCheckNotice: "",
   depthCheck: { status: "idle", results: [], error: "", source: "" },
+  depthLockEditor: null,
   injuryCheck: { status: "idle", results: [], error: "", source: "" },
   injuryCheckActivity: "All Categories",
   selectedPlayerKey: null,
@@ -292,6 +293,9 @@ const state = {
   selectedScheduleKey: "",
   selectedPlayoffGame: null,
   selectedTeamBreakdown: "",
+  gameSimWeek: "auto",
+  gameSimGameKey: "",
+  gameSimSpeed: "medium",
   standingView: "league",
   weeklyFantasyPosition: "QB",
   weeklyFantasyView: "regular",
@@ -702,7 +706,18 @@ function deletePlayer(player) {
   pffPlayerMatchIndexCache = null;
 }
 
-function playerDepthLock(player) {
+function depthLockWeekKey(week = selectedSiteWeek()) {
+  return String(week || selectedSiteWeek() || "").trim();
+}
+
+function depthViewWeek() {
+  return state.depthWeek === "auto" ? selectedSiteWeek() : state.depthWeek;
+}
+
+function playerDepthLock(player, week = selectedSiteWeek()) {
+  const weeklyLocks = player?.weeklyDepthLocks || {};
+  const weekValue = Number(weeklyLocks[depthLockWeekKey(week)]);
+  if (Number.isFinite(weekValue) && weekValue > 0) return Math.max(1, Math.floor(weekValue));
   const value = Number(player?.depthLock);
   return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : 0;
 }
@@ -725,7 +740,7 @@ function assignDepthSlots(players = []) {
   groups.forEach((group) => {
     const occupied = new Set();
     const sortByRating = (a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
-    const locked = group.filter(playerDepthLock).sort((a, b) => playerDepthLock(a) - playerDepthLock(b) || sortByRating(a, b));
+    const locked = group.filter((player) => playerDepthLock(player)).sort((a, b) => playerDepthLock(a) - playerDepthLock(b) || sortByRating(a, b));
     const unlocked = group.filter((player) => !playerDepthLock(player)).sort(sortByRating);
     locked.forEach((player) => {
       let slot = playerDepthLock(player);
@@ -743,15 +758,15 @@ function assignDepthSlots(players = []) {
   return nextPlayers;
 }
 
-function depthOrderedPlayers(players = []) {
+function depthOrderedPlayers(players = [], week = depthViewWeek()) {
   const group = [...players].filter(Boolean);
   const occupied = new Set();
   const placed = [];
   const sortByRating = (a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
-  const locked = group.filter(playerDepthLock).sort((a, b) => playerDepthLock(a) - playerDepthLock(b) || sortByRating(a, b));
-  const unlocked = group.filter((player) => !playerDepthLock(player)).sort(sortByRating);
+  const locked = group.filter((player) => playerDepthLock(player, week)).sort((a, b) => playerDepthLock(a, week) - playerDepthLock(b, week) || sortByRating(a, b));
+  const unlocked = group.filter((player) => !playerDepthLock(player, week)).sort(sortByRating);
   locked.forEach((player) => {
-    let slot = playerDepthLock(player);
+    let slot = playerDepthLock(player, week);
     while (occupied.has(slot)) slot += 1;
     occupied.add(slot);
     placed.push({ player, slot });
@@ -765,7 +780,7 @@ function depthOrderedPlayers(players = []) {
   return placed.sort((a, b) => a.slot - b.slot || sortByRating(a.player, b.player)).map((item) => item.player);
 }
 
-function depthOrderedByPosition(players = []) {
+function depthOrderedByPosition(players = [], week = depthViewWeek()) {
   const groups = new Map();
   players.forEach((player) => {
     const key = String(player?.position || "");
@@ -774,21 +789,44 @@ function depthOrderedByPosition(players = []) {
   });
   return [...groups.entries()]
     .sort(([a], [b]) => depthPositionRank(a) - depthPositionRank(b) || a.localeCompare(b))
-    .flatMap(([, group]) => depthOrderedPlayers(group));
+    .flatMap(([, group]) => depthOrderedPlayers(group, week));
 }
 
-function lockPlayerDepth(player, depth) {
-  const slot = Math.max(1, Math.min(99, Math.floor(num(depth, 0))));
+function saveDepthLockOverride(player, patch) {
+  const key = sourceKey(player);
+  overrides[key] = { ...(overrides[key] || {}), ...patch };
+  storage.set("nflz-player-overrides", overrides);
+  state.players = applyOverrides(state.data.players);
+  pffPlayerMatchIndexCache = null;
+}
+
+function lockPlayerDepth(player, depth, scope = "keep", week = depthViewWeek()) {
+  const slot = Math.max(1, Math.min(15, Math.floor(num(depth, 0))));
   if (!player || !slot) return false;
-  persistPlayer(player, { depthLock: slot, depth: slot });
+  const key = sourceKey(player);
+  const current = overrides[key] || {};
+  if (scope === "week") {
+    saveDepthLockOverride(player, { weeklyDepthLocks: { ...(current.weeklyDepthLocks || {}), [depthLockWeekKey(week)]: slot } });
+  } else {
+    const weeklyDepthLocks = { ...(current.weeklyDepthLocks || {}) };
+    delete weeklyDepthLocks[depthLockWeekKey(week)];
+    saveDepthLockOverride(player, { depthLock: slot, depth: slot, weeklyDepthLocks });
+  }
   return true;
 }
 
-function unlockPlayerDepth(player) {
+function unlockPlayerDepth(player, scope = "all", week = depthViewWeek()) {
   if (!player) return false;
   const key = sourceKey(player);
   if (!overrides[key]) return false;
-  delete overrides[key].depthLock;
+  if (scope === "week") {
+    const weeklyDepthLocks = { ...(overrides[key].weeklyDepthLocks || {}) };
+    delete weeklyDepthLocks[depthLockWeekKey(week)];
+    overrides[key].weeklyDepthLocks = weeklyDepthLocks;
+  } else {
+    delete overrides[key].depthLock;
+    delete overrides[key].weeklyDepthLocks;
+  }
   storage.set("nflz-player-overrides", overrides);
   state.players = applyOverrides(state.data.players);
   pffPlayerMatchIndexCache = null;
@@ -798,20 +836,12 @@ function unlockPlayerDepth(player) {
 function promptDepthLock(key) {
   const player = findPlayer(key);
   if (!player || normalizeTeamName(player.team) === "Free Agent" || playerUnavailableLabel(player)) return;
-  const current = playerDepthLock(player) || num(player.depth, 1);
-  const value = window.prompt(`Lock ${player.player} into a depth spot. Leave blank to unlock.`, String(current));
-  if (value === null) return;
-  if (!String(value).trim()) {
-    unlockPlayerDepth(player);
-    render();
-    return;
-  }
-  const slot = Number(value);
-  if (!Number.isFinite(slot) || slot < 1) {
-    window.alert("Enter a depth spot of 1 or higher.");
-    return;
-  }
-  lockPlayerDepth(player, slot);
+  state.depthLockEditor = {
+    playerKey: sourceKey(player),
+    week: depthViewWeek(),
+    depth: Math.max(1, Math.min(15, playerDepthLock(player, depthViewWeek()) || num(player.depth, 1))),
+    scope: "week",
+  };
   render();
 }
 
@@ -1130,6 +1160,14 @@ function renderNav() {
       ${optionSelect("site-week", state.siteWeek, weekOptions)}
     </section>
   `);
+  const mobileToggle = document.querySelector("#mobile-nav-toggle");
+  mobileToggle?.setAttribute("aria-expanded", document.body.classList.contains("mobile-nav-open") ? "true" : "false");
+  if (mobileToggle) {
+    mobileToggle.onclick = () => {
+      document.body.classList.toggle("mobile-nav-open");
+      mobileToggle.setAttribute("aria-expanded", document.body.classList.contains("mobile-nav-open") ? "true" : "false");
+    };
+  }
   document.querySelector("#site-week")?.addEventListener("change", (event) => {
     state.siteWeek = event.target.value;
     storage.set("nflz-site-week", state.siteWeek);
@@ -1139,6 +1177,8 @@ function renderNav() {
   });
   nav.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => {
     state.page = button.dataset.page;
+    document.body.classList.remove("mobile-nav-open");
+    document.querySelector("#mobile-nav-toggle")?.setAttribute("aria-expanded", "false");
     render();
   }));
 }
@@ -1498,11 +1538,12 @@ function depthBadge(value) {
   return `<span class="depth-badge ${cls}">${fmt(value, 0)}</span>`;
 }
 
-function depthLockControl(player, displayDepth) {
-  const unavailable = playerUnavailableLabel(player);
+function depthLockControl(player, displayDepth, week = depthViewWeek()) {
+  const unavailable = playerUnavailableLabel(player, week);
   if (unavailable || normalizeTeamName(player?.team) === "Free Agent") return depthBadge(displayDepth);
-  const locked = playerDepthLock(player);
-  return `<button class="depth-lock-button ${locked ? "locked" : ""}" data-depth-lock-key="${esc(sourceKey(player))}" title="${locked ? `Locked into ${player.position}${locked}. Click to edit or unlock.` : "Click to lock this depth spot."}">${depthBadge(displayDepth)}${locked ? `<span class="depth-lock-glyph" aria-label="Locked"></span>` : ""}</button>`;
+  const locked = playerDepthLock(player, week);
+  const weeklyLocked = Boolean(player?.weeklyDepthLocks?.[depthLockWeekKey(week)]);
+  return `<button class="depth-lock-button ${locked ? "locked" : ""} ${weeklyLocked ? "weekly" : ""}" data-depth-lock-key="${esc(sourceKey(player))}" title="${locked ? `Locked into ${player.position}${locked}${weeklyLocked ? ` for ${weekOptionLabel(week)}` : ""}. Click to edit or unlock.` : "Click to lock this depth spot."}">${depthBadge(displayDepth)}${locked ? `<span class="depth-lock-glyph" aria-label="Locked"></span>` : ""}</button>`;
 }
 
 function injuryStatusText(player) {
@@ -2544,6 +2585,7 @@ async function runDepthAndInjuryChecks() {
 
 function injuryCheckCategory(item) {
   if (injuryCheckAlreadyPlaced(item)) return "Already Placed";
+  if (injuryCheckIsIdle(item)) return "Idle Injury Status Alerts";
   const status = String(effectiveInjurySuggestedStatus(item) || item?.espnTag || "").toLowerCase();
   const comment = String(item?.espnComment || "").toLowerCase();
   const text = `${status} ${comment}`;
@@ -2555,6 +2597,33 @@ function injuryCheckCategory(item) {
   return "Other";
 }
 
+function injuryCheckSuggestedAction(item) {
+  if (injuryCheckAlreadyPlaced(item)) return "Already placed";
+  if (injuryCheckIsIdle(item)) return "Keep as is";
+  const status = effectiveInjurySuggestedStatus(item);
+  const week = effectiveInjurySuggestedWeek(item);
+  if (/^healthy$/i.test(status)) return "Mark Healthy";
+  if (/out\s+for\s+season/i.test(status)) return "Out for Season";
+  if (/ir\s+thru/i.test(status)) return `IR thru ${week || "review"}`;
+  if (/likely.*out\s+thru/i.test(status)) return `Likely out thru ${week || "review"}`;
+  if (/out\s+thru/i.test(status)) return `Out thru ${week || "review"}`;
+  if (/suspended/i.test(status)) return `Suspended thru ${week || "review"}`;
+  return status || "Review";
+}
+
+function injuryCheckIsIdle(item) {
+  const player = findInjuryCheckPlayer(item);
+  const suggestedStatus = effectiveInjurySuggestedStatus(item);
+  const suggestedWeek = effectiveInjurySuggestedWeek(item);
+  if (!player) return /^healthy$/i.test(suggestedStatus);
+  const currentStatus = injuryStatusText(player);
+  const currentWeek = String(player.week || "");
+  if (/^healthy$/i.test(suggestedStatus) && /^healthy$/i.test(currentStatus)) return true;
+  const patch = injuryPatchForStatus(suggestedStatus, suggestedWeek);
+  return String(patch.injury || "Healthy") === String(currentStatus || "Healthy")
+    && String(patch.week || "") === currentWeek;
+}
+
 function injuryCheckCategoryOptions() {
   const counts = {};
   (state.injuryCheck.results || []).forEach((item) => {
@@ -2562,8 +2631,9 @@ function injuryCheckCategoryOptions() {
     const category = injuryCheckCategory(item);
     counts[category] = (counts[category] || 0) + 1;
   });
-  const visibleTotal = Object.entries(counts).reduce((sum, [category, value]) => sum + (category === "Already Placed" ? 0 : value), 0);
-  const ordered = ["All Categories", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Suspended", "Other", "Already Placed"];
+  const hiddenCategories = new Set(["Already Placed", "Idle Injury Status Alerts"]);
+  const visibleTotal = Object.entries(counts).reduce((sum, [category, value]) => sum + (hiddenCategories.has(category) ? 0 : value), 0);
+  const ordered = ["All Categories", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Suspended", "Other", "Already Placed", "Idle Injury Status Alerts"];
   return ordered
     .filter((category) => category === "All Categories" || counts[category])
     .map((category) => [category, category === "All Categories" ? `All Categories (${visibleTotal})` : `${category} (${counts[category]})`]);
@@ -2572,7 +2642,7 @@ function injuryCheckCategoryOptions() {
 function filteredInjuryCheckRows() {
   return (state.injuryCheck.results || [])
     .map((item, index) => ({ item, index, category: injuryCheckCategory(item) }))
-    .filter((row) => state.injuryCheckActivity === "Already Placed" || row.category !== "Already Placed")
+    .filter((row) => ["Already Placed", "Idle Injury Status Alerts"].includes(state.injuryCheckActivity) || !["Already Placed", "Idle Injury Status Alerts"].includes(row.category))
     .filter((row) => state.injuryCheckActivity === "All Categories" || row.category === state.injuryCheckActivity);
 }
 
@@ -2656,11 +2726,26 @@ function ignoreInjuryCheckResult(index) {
   render();
 }
 
+function resolveIdleInjuryCheckResult(index, options = {}) {
+  const item = state.injuryCheck.results[index];
+  if (!item) return;
+  item.applied = true;
+  item.appliedTo = "kept as is";
+  markInjuryCheckResolved(item, !options.skipRender);
+  if (!options.skipRender) {
+    state.injuryCheck.results = unresolvedInjuryCheckResults(state.injuryCheck.results);
+    render();
+  }
+}
+
 async function applyShownInjuryCheckResults() {
   const rows = filteredInjuryCheckRows()
     .filter(({ item, category }) => category !== "Already Placed" && !item.applied && !item.ignored);
   for (let i = 0; i < rows.length; i += 25) {
-    rows.slice(i, i + 25).forEach(({ index }) => applyInjuryCheckResult(index, { skipRender: true }));
+    rows.slice(i, i + 25).forEach(({ index, category }) => {
+      if (category === "Idle Injury Status Alerts") resolveIdleInjuryCheckResult(index, { skipRender: true });
+      else applyInjuryCheckResult(index, { skipRender: true });
+    });
     await yieldToBrowser();
   }
   storage.set("nflz-player-overrides", overrides);
@@ -2736,10 +2821,11 @@ function renderInjuryCheckPanel() {
         <td>${playerNameButton(findInjuryCheckPlayer(item) || { player: item.player, team: item.team, position: item.position, _sourceKey: item.playerKey })}</td>
         <td>${teamCellByName(item.team)}</td>
         <td><span class="review-chip">${esc(category)}</span></td>
+        <td><span class="review-chip injury-action-chip ${category === "Idle Injury Status Alerts" ? "idle" : ""}">${esc(injuryCheckSuggestedAction(item))}</span></td>
         <td title="${esc(tagTitle)}"><span class="review-chip injury-tag-chip">${esc(item.espnTag)}</span>${item.espnReturnDate ? `<small>${esc(item.espnReturnDate)}</small>` : ""}</td>
         <td class="injury-comment-cell" title="${esc(commentText)}">${commentDate ? `<b>${esc(commentDate)}</b>` : ""}<span>${esc(cleanedComment)}</span></td>
         <td><span class="injury-review-controls">${indexedInjuryStatusSelect(index, effectiveInjurySuggestedStatus(item))}${indexedInjuryWeekSelect(index, effectiveInjurySuggestedWeek(item), effectiveInjurySuggestedStatus(item))}</span></td>
-        <td>${category === "Already Placed" ? `<span class="applied-chip">Already placed</span>` : item.applied ? `<span class="applied-chip">Applied: ${esc(item.appliedTo || "")}</span>` : item.ignored ? "<span class='ignored-chip'>Ignored</span>" : `<span class="depth-review-actions"><button class="mini-action injury-apply-one" data-injury-check-index="${index}">Apply Revised</button><button class="mini-action injury-ignore-one" data-injury-check-index="${index}">Ignore</button></span>`}</td>
+        <td>${category === "Already Placed" ? `<span class="applied-chip">Already placed</span>` : item.applied ? `<span class="applied-chip">Applied: ${esc(item.appliedTo || "")}</span>` : item.ignored ? "<span class='ignored-chip'>Ignored</span>" : category === "Idle Injury Status Alerts" ? `<span class="depth-review-actions"><button class="mini-action injury-idle-resolve" data-injury-check-index="${index}">Mark Reviewed</button><button class="mini-action injury-ignore-one" data-injury-check-index="${index}">Ignore</button></span>` : `<span class="depth-review-actions"><button class="mini-action injury-apply-one" data-injury-check-index="${index}">Apply Revised</button><button class="mini-action injury-ignore-one" data-injury-check-index="${index}">Ignore</button></span>`}</td>
       </tr>
     `;
   }).join("");
@@ -2754,7 +2840,7 @@ function renderInjuryCheckPanel() {
       ${renderInjuryReviewDuePanel()}
       ${check.status === "checking" ? `<div class="depth-scan-progress"><div class="depth-scan-bar"><span></span></div><p>${esc(check.error || "Loading ESPN injury check")}</p></div>` : ""}
       ${check.status === "empty" ? `<p class="depth-check-note">${esc(check.error)}</p>` : ""}
-      ${check.status === "review" ? `<p class="depth-check-note">Showing ESPN injury scan from ${esc(check.fetchedAt || "latest refresh")}. Players already marked injured are hidden from All Categories until their return-review week; use Already Placed to audit them.</p><div class="depth-check-controls">${optionSelect("injury-check-activity", state.injuryCheckActivity, categoryOptions)}${pendingShown ? `<button id="injury-check-apply-shown" class="mini-action primary">Apply ${state.injuryCheckActivity === "All Categories" ? "Shown Injuries" : esc(state.injuryCheckActivity)} (${pendingShown})</button>` : `<span class="depth-check-note">No pending injuries in this category.</span>`}</div><div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Category</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Suggested / Revise</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="7">No ESPN injury matches found.</td></tr>'}</tbody></table></div>` : ""}
+      ${check.status === "review" ? `<p class="depth-check-note">Showing ESPN injury scan from ${esc(check.fetchedAt || "latest refresh")}. Idle alerts and already placed statuses are hidden from All Categories so you can focus on real changes.</p><div class="depth-check-controls">${optionSelect("injury-check-activity", state.injuryCheckActivity, categoryOptions)}${pendingShown ? `<button id="injury-check-apply-shown" class="mini-action primary">${state.injuryCheckActivity === "Idle Injury Status Alerts" ? "Mark Idle Reviewed" : `Apply ${state.injuryCheckActivity === "All Categories" ? "Shown Injuries" : esc(state.injuryCheckActivity)}`} (${pendingShown})</button>` : `<span class="depth-check-note">No pending injuries in this category.</span>`}</div><div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Category</th><th>Suggested Action</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Suggested / Revise</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="8">No ESPN injury matches found.</td></tr>'}</tbody></table></div>` : ""}
     </section>
   `;
 }
@@ -2927,7 +3013,7 @@ function schedulePlayersFor(teamName, group, week = selectedSiteWeek()) {
       if (exactPositions.has(group)) return player.position === group;
       return playerGroupForSchedule(player) === group;
     });
-  return depthOrderedPlayers(filtered);
+  return depthOrderedPlayers(filtered, week);
 }
 
 function weightedAverage(values) {
@@ -3295,6 +3381,11 @@ function starterCompareCell(player) {
   `;
 }
 
+function starterListPlayerCell(player) {
+  if (!player) return `<span class="starter-empty">-</span>`;
+  return `<span class="starter-player">${playerAvatar(player)}<span><b>${esc(player.player)}</b><em>${esc(player.teamAbbrev || teamAbbrevFor(player.team, player.team))}</em></span></span>`;
+}
+
 function scheduleStarterComparison(game) {
   const mode = scheduleActiveMode(game);
   const slots = mode === "preseason" ? schedulePlayerComparisonSlots() : scheduleStarterSlots;
@@ -3316,6 +3407,28 @@ function scheduleStarterComparison(game) {
       <h3>${mode === "preseason" ? "Players Comparison" : "Starters Comparison"}</h3>
       <div class="table-scroll starter-compare-scroll">
         ${table([{ label: "Slot" }, { label: visitorAbbrev }, { label: homeAbbrev }, { label: "Home Edge", cls: "num" }], rows)}
+      </div>
+    </section>
+  `;
+}
+
+function scheduleTeamStartersList(teamName, week = selectedSiteWeek()) {
+  const mode = scheduleActiveMode({ visitor: teamName, home: teamName, week });
+  const slots = mode === "preseason" ? schedulePlayerComparisonSlots() : scheduleStarterSlots;
+  const rows = slots.map((slot) => {
+    const player = scheduleStarterFor(teamName, slot, week);
+    return `<tr>
+      <td><span class="starter-slot">${esc(slot)}</span></td>
+      <td>${starterListPlayerCell(player)}</td>
+      <td>${player ? esc(player.position || starterSlotParts(slot).group) : "-"}</td>
+      <td class="num">${player ? ratingBadge(player.rating) : "-"}</td>
+    </tr>`;
+  });
+  return `
+    <section class="starter-compare-card starter-list-card">
+      <h3>${mode === "preseason" ? "Players List" : "Starting Lineup"}</h3>
+      <div class="table-scroll starter-compare-scroll">
+        ${table([{ label: "Slot" }, { label: "Player" }, { label: "Pos" }, { label: "Rating", cls: "num" }], rows)}
       </div>
     </section>
   `;
@@ -3825,6 +3938,95 @@ function renderHome() {
   `;
 }
 
+function renderDepthLockEditor() {
+  const editor = state.depthLockEditor;
+  if (!editor) return "";
+  const player = findPlayer(editor.playerKey);
+  if (!player) return "";
+  const week = editor.week || depthViewWeek();
+  const currentPermanent = playerDepthLock({ ...player, weeklyDepthLocks: {} });
+  const currentWeekly = player?.weeklyDepthLocks?.[depthLockWeekKey(week)];
+  const depthOptions = Array.from({ length: 15 }, (_, index) => String(index + 1));
+  return `<div class="modal depth-lock-modal" role="dialog" aria-modal="true">
+    <section class="modal-card depth-lock-card">
+      <button id="depth-lock-close" class="modal-close" title="Close">x</button>
+      <div class="modal-section-head">
+        <div>
+          <h3>Lock Depth Spot</h3>
+          <span>${esc(player.player)} / ${esc(player.position)} / ${esc(teamByName(player.team)?.teamAbbrev || player.teamAbbrev || player.team)}</span>
+        </div>
+      </div>
+      <div class="depth-lock-summary">
+        ${playerAvatar(player)}
+        <div><b>${esc(player.player)}</b><span>Current displayed spot: ${esc(player.position)}${esc(playerDepthLock(player, week) || player.depth || "-")}</span></div>
+        ${ratingBadge(player.rating)}
+      </div>
+      <label class="depth-lock-field">Depth spot
+        ${optionSelect("depth-lock-value", String(editor.depth || playerDepthLock(player, week) || player.depth || 1), depthOptions)}
+      </label>
+      <div class="depth-lock-choice-grid">
+        <button class="depth-lock-choice ${editor.scope === "week" ? "active" : ""}" data-scope="week" type="button">
+          <b>This Week Only</b>
+          <span>${esc(weekOptionLabel(week))}. Good for injuries, preseason rotations, or one-week lineup notes.</span>
+          ${currentWeekly ? `<em>Currently ${player.position}${esc(currentWeekly)} this week</em>` : ""}
+        </button>
+        <button class="depth-lock-choice ${editor.scope === "keep" ? "active" : ""}" data-scope="keep" type="button">
+          <b>Keep Set</b>
+          <span>Locks this player until you unlock them, even when ratings change.</span>
+          ${currentPermanent ? `<em>Currently kept at ${player.position}${esc(currentPermanent)}</em>` : ""}
+        </button>
+      </div>
+      <div class="depth-lock-actions">
+        <button id="depth-lock-unlock-week" class="mini-action">Unlock This Week</button>
+        <button id="depth-lock-unlock-all" class="mini-action danger">Unlock All</button>
+        <button id="depth-lock-save" class="mini-action primary">Apply Depth Lock</button>
+      </div>
+    </section>
+  </div>`;
+}
+
+function closeDepthLockEditor() {
+  state.depthLockEditor = null;
+  render();
+}
+
+function wireDepthLockEditor() {
+  if (!state.depthLockEditor) return;
+  document.querySelector("#depth-lock-close")?.addEventListener("click", closeDepthLockEditor);
+  document.querySelector(".depth-lock-modal")?.addEventListener("click", (event) => {
+    if (event.target.classList.contains("depth-lock-modal")) closeDepthLockEditor();
+  });
+  document.querySelector("#depth-lock-value")?.addEventListener("change", (event) => {
+    state.depthLockEditor = { ...state.depthLockEditor, depth: Number(event.target.value) };
+  });
+  document.querySelectorAll(".depth-lock-choice").forEach((button) => button.addEventListener("click", () => {
+    state.depthLockEditor = { ...state.depthLockEditor, scope: button.dataset.scope || "week" };
+    render();
+  }));
+  document.querySelector("#depth-lock-save")?.addEventListener("click", () => {
+    const player = findPlayer(state.depthLockEditor?.playerKey);
+    if (!player) return closeDepthLockEditor();
+    const depth = Number(document.querySelector("#depth-lock-value")?.value || state.depthLockEditor.depth || 1);
+    const scope = state.depthLockEditor.scope || "week";
+    const week = state.depthLockEditor.week || depthViewWeek();
+    lockPlayerDepth(player, depth, scope, week);
+    state.depthLockEditor = null;
+    render();
+  });
+  document.querySelector("#depth-lock-unlock-week")?.addEventListener("click", () => {
+    const player = findPlayer(state.depthLockEditor?.playerKey);
+    if (player) unlockPlayerDepth(player, "week", state.depthLockEditor.week || depthViewWeek());
+    state.depthLockEditor = null;
+    render();
+  });
+  document.querySelector("#depth-lock-unlock-all")?.addEventListener("click", () => {
+    const player = findPlayer(state.depthLockEditor?.playerKey);
+    if (player) unlockPlayerDepth(player, "all", state.depthLockEditor.week || depthViewWeek());
+    state.depthLockEditor = null;
+    render();
+  });
+}
+
 function renderDepth() {
   const teams = ["All Teams", ...unique(state.players.map((p) => p.team))];
   const positions = ["All Positions", ...unique(state.players.map((p) => p.position)).sort((a, b) => depthPositionRank(a) - depthPositionRank(b) || String(a).localeCompare(String(b)))];
@@ -3844,12 +4046,12 @@ function renderDepth() {
       : ["Offense", "Defense"].filter((side) => players.some((p) => depthSideFor(p) === side));
   const reviewIsActive = state.depthCheck.status === "review" && (state.depthCheck.results || []).some((item) => !item.applied && !item.ignored);
   const depthTableRow = (p, includeTeam = true, extraClass = "", displayDepth = playerUnavailableLabel(p, depthWeek) || p.depth) => `
-    <tr class="${String(p.player).includes("(R)") ? "rookie" : ""} ${playerUnavailableLabel(p, depthWeek) ? "unavailable-player" : ""} ${playerDepthLock(p) ? "depth-locked-player" : ""} ${extraClass}" data-player-key="${esc(sourceKey(p))}">
+    <tr class="${String(p.player).includes("(R)") ? "rookie" : ""} ${playerUnavailableLabel(p, depthWeek) ? "unavailable-player" : ""} ${playerDepthLock(p, depthWeek) ? "depth-locked-player" : ""} ${extraClass}" data-player-key="${esc(sourceKey(p))}">
       ${includeTeam ? `<td class="team-col">${teamCell(p)}</td>` : ""}
       <td class="pos-col"><span class="pos-chip ${positionChipClass(p.position)}">${esc(p.position)}</span></td>
       <td class="player-col">${playerNameButton(p)}</td>
       <td class="num rating-col">${ratingBadge(p.rating)}</td>
-      <td class="num depth-col">${depthLockControl(p, displayDepth)}</td>
+      <td class="num depth-col">${depthLockControl(p, displayDepth, depthWeek)}</td>
       <td class="stars-col">${starsMeter(p)}</td>
       <td class="nudge-col">${nudgeControls(p)}</td>
       <td class="injury-col"><span class="injury-stack">${injurySelect(sourceKey(p), p.injury)}${weekSelect(sourceKey(p), p.week)}</span></td>
@@ -3857,7 +4059,7 @@ function renderDepth() {
   `;
   const depthRowsForSide = (sidePlayers) => {
     const positionCounts = {};
-    const available = depthOrderedByPosition(sidePlayers.filter((player) => !playerUnavailableLabel(player, depthWeek)));
+    const available = depthOrderedByPosition(sidePlayers.filter((player) => !playerUnavailableLabel(player, depthWeek)), depthWeek);
     const unavailable = [...sidePlayers].filter((player) => playerUnavailableLabel(player, depthWeek)).sort((a, b) => depthPositionRank(a.position) - depthPositionRank(b.position) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
     const ordered = [...available, ...unavailable];
     return ordered.map((p, index) => {
@@ -3931,11 +4133,13 @@ function renderDepth() {
     document.querySelectorAll(".injury-review-clear").forEach((button) => button.addEventListener("click", () => clearInjuryReviewDue(button.dataset.playerKey)));
     document.querySelectorAll(".injury-review-keep").forEach((button) => button.addEventListener("click", () => keepInjuryReviewDue(button.dataset.playerKey)));
     document.querySelectorAll(".injury-apply-one").forEach((button) => button.addEventListener("click", () => applyInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
+    document.querySelectorAll(".injury-idle-resolve").forEach((button) => button.addEventListener("click", () => resolveIdleInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
     document.querySelectorAll(".injury-ignore-one").forEach((button) => button.addEventListener("click", () => ignoreInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
     document.querySelectorAll(".depth-lock-button").forEach((button) => button.addEventListener("click", (event) => {
       event.stopPropagation();
       promptDepthLock(button.dataset.depthLockKey);
     }));
+    wireDepthLockEditor();
   });
   return `
     <section class="panel depth-panel">
@@ -3959,6 +4163,7 @@ function renderDepth() {
       ${renderInjuryCheckPanel()}
       ${reviewIsActive ? "<p class='depth-check-note depth-review-focus'>Team depth bubbles are paused while scan results are open so review actions stay quick.</p>" : `<div class="depth-bubble-list">${groupedTeams || "<p class='note'>No players match this view.</p>"}</div>`}
     </section>
+    ${renderDepthLockEditor()}
     ${renderPlayerModal()}
   `;
 }
@@ -5936,7 +6141,7 @@ function renderTeamSeasonBreakdownModal(rows) {
       <div class="schedule-detail-grid">
         <section><h3>Season Games</h3><div class="table-scroll mini-scroll">${table([{ label: "Wk" }, { label: "Opp" }, { label: "Score", cls: "num" }, { label: "Win %", cls: "num" }], gameRows)}</div></section>
         <section><h3>Top Offense</h3><div class="season-top-list">${playerList(topPlayers("Offense"))}</div><h3>Top Defense</h3><div class="season-top-list">${playerList(topPlayers("Defense"))}</div></section>
-        <section><h3>Starting Lineup</h3>${scheduleStarterComparison({ visitor: teamName, home: teamName, week: selectedSiteWeek() })}</section>
+        <section>${scheduleTeamStartersList(teamName, selectedSiteWeek())}</section>
       </div>
     </section>
   </div>`;
@@ -6077,6 +6282,414 @@ function renderPicksTracker() {
         </tr>`))}</div>
       </section>`;
     }).join("")}
+  </section>`;
+}
+
+const gameSimSpeedMs = { slow: 1200, medium: 650, fast: 250, super: 80 };
+let activeGameSims = [];
+let gameSimTimers = {};
+
+function gameSimHash(text) {
+  let hash = 2166136261;
+  String(text || "").split("").forEach((char) => {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  });
+  return hash >>> 0;
+}
+
+function gameSimRandom(sim) {
+  sim.seed = (Math.imul(sim.seed || 1, 1664525) + 1013904223) >>> 0;
+  return sim.seed / 4294967296;
+}
+
+function gameSimWeekValue() {
+  return state.gameSimWeek === "auto" ? selectedSiteWeek() : state.gameSimWeek;
+}
+
+function gameSimGameRows() {
+  const week = gameSimWeekValue();
+  return scheduleGames()
+    .map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) }))
+    .filter(({ game }) => scheduleWeekMatches(game, week));
+}
+
+function gameSimTeamPlayers(teamName, week) {
+  const qb = schedulePlayersFor(teamName, "QB", week)[0];
+  const rb = schedulePlayersFor(teamName, "RB", week)[0];
+  const wrs = schedulePlayersFor(teamName, "WR", week).slice(0, 4);
+  const te = schedulePlayersFor(teamName, "TE", week)[0];
+  const defense = [
+    ...schedulePlayersFor(teamName, "EDGE", week).slice(0, 2),
+    ...schedulePlayersFor(teamName, "LB", week).slice(0, 2),
+    ...schedulePlayersFor(teamName, "CB", week).slice(0, 2),
+  ];
+  return { qb, rb, wrs, te, defense };
+}
+
+function gameSimNew(game, key) {
+  const projection = scheduleProjection(game);
+  const week = scheduleWeekGroupKey(game.week);
+  const id = `sim-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const visitorAbbrev = teamAbbrevFor(game.visitor, game.visitor);
+  const homeAbbrev = teamAbbrevFor(game.home, game.home);
+  return {
+    id,
+    key,
+    game,
+    seed: gameSimHash(`${key}|${projection.visitor}|${projection.home}`),
+    week,
+    projection,
+    clock: 15 * 60,
+    quarter: 1,
+    possession: gameSimHash(key) % 2 ? game.visitor : game.home,
+    fieldPos: 25,
+    down: 1,
+    distance: 10,
+    visitorScore: 0,
+    homeScore: 0,
+    playCount: 0,
+    status: "live",
+    log: ["Kickoff. Model Z simulation is live."],
+    stats: {
+      [game.visitor]: { plays: 0, passYds: 0, rushYds: 0, passTd: 0, rushTd: 0, turnovers: 0, possession: 0 },
+      [game.home]: { plays: 0, passYds: 0, rushYds: 0, passTd: 0, rushTd: 0, turnovers: 0, possession: 0 },
+    },
+    playerStats: { [game.visitor]: {}, [game.home]: {} },
+    rosters: {
+      [game.visitor]: gameSimTeamPlayers(game.visitor, week),
+      [game.home]: gameSimTeamPlayers(game.home, week),
+    },
+  };
+}
+
+function gameSimOffenseRating(sim, teamName) {
+  const team = teamByName(teamName);
+  return num(scheduleSideComposite(team, "offense", scheduleActiveMode(sim.game), sim.week), 84);
+}
+
+function gameSimDefenseRating(sim, teamName) {
+  const team = teamByName(teamName);
+  return num(scheduleSideComposite(team, "defense", scheduleActiveMode(sim.game), sim.week), 84);
+}
+
+function gameSimOpponent(sim, teamName) {
+  return normalizeTeamName(teamName) === normalizeTeamName(sim.game.visitor) ? sim.game.home : sim.game.visitor;
+}
+
+function gameSimScore(sim, teamName, points) {
+  if (normalizeTeamName(teamName) === normalizeTeamName(sim.game.visitor)) sim.visitorScore += points;
+  else sim.homeScore += points;
+}
+
+function gameSimPlayerName(player, fallback) {
+  return player?.player || fallback;
+}
+
+function gameSimStatName(player, fallback) {
+  return cleanPlayerName(gameSimPlayerName(player, fallback)).replace(/\s+\((WR|CB)\)$/i, "");
+}
+
+function gameSimEnsurePlayerStat(sim, teamName, group, player, fallback) {
+  const name = gameSimStatName(player, fallback);
+  sim.playerStats[teamName] ||= {};
+  sim.playerStats[teamName][group] ||= {};
+  if (!sim.playerStats[teamName][group][name]) sim.playerStats[teamName][group][name] = {};
+  return sim.playerStats[teamName][group][name];
+}
+
+function advanceGameSim(sim) {
+  if (!sim || sim.status === "final") return;
+  const offense = sim.possession;
+  const defense = gameSimOpponent(sim, offense);
+  const offRating = gameSimOffenseRating(sim, offense);
+  const defRating = gameSimDefenseRating(sim, defense);
+  const edge = (offRating - defRating) / 26;
+  const rosters = sim.rosters[offense] || {};
+  const isPass = gameSimRandom(sim) < Math.max(0.42, Math.min(0.68, 0.55 + edge * 0.08));
+  const boom = gameSimRandom(sim);
+  let yards = isPass
+    ? Math.round(4 + (gameSimRandom(sim) * 14) + edge * 5)
+    : Math.round(2 + (gameSimRandom(sim) * 8) + edge * 3);
+  if (boom > 0.94) yards += Math.round(18 + gameSimRandom(sim) * 34);
+  if (boom < 0.08) yards = -Math.round(gameSimRandom(sim) * 5);
+  yards = Math.max(-8, Math.min(68, yards));
+  const turnover = gameSimRandom(sim) < Math.max(0.015, 0.045 - edge * 0.01);
+  const player = isPass
+    ? (gameSimRandom(sim) < 0.18 ? rosters.te : rosters.wrs?.[Math.floor(gameSimRandom(sim) * Math.max(1, rosters.wrs.length))])
+    : rosters.rb;
+  const defender = (sim.rosters[defense]?.defense || [])[Math.floor(gameSimRandom(sim) * Math.max(1, (sim.rosters[defense]?.defense || []).length))];
+  const completed = !isPass || gameSimRandom(sim) > Math.max(0.16, Math.min(0.34, 0.24 - edge * 0.035));
+  if (isPass && !completed) yards = 0;
+  const elapsed = Math.round(22 + gameSimRandom(sim) * 23);
+  sim.clock -= elapsed;
+  sim.stats[offense].possession += elapsed;
+  while (sim.clock <= 0 && sim.quarter < 4) {
+    sim.quarter += 1;
+    sim.clock += 15 * 60;
+    sim.log.unshift(`Start of Q${sim.quarter}.`);
+  }
+  if (sim.clock <= 0 && sim.quarter >= 4) {
+    sim.clock = 0;
+    sim.status = "final";
+  }
+  sim.playCount += 1;
+  sim.stats[offense].plays += 1;
+  if (isPass) {
+    const qbStat = gameSimEnsurePlayerStat(sim, offense, "qb", rosters.qb, "QB");
+    qbStat.att = num(qbStat.att) + 1;
+    if (completed) qbStat.comp = num(qbStat.comp) + 1;
+    qbStat.yds = num(qbStat.yds) + Math.max(0, yards);
+    sim.stats[offense].passYds += Math.max(0, yards);
+    if (completed && player) {
+      const recStat = gameSimEnsurePlayerStat(sim, offense, "receiving", player, "Receiver");
+      recStat.rec = num(recStat.rec) + 1;
+      recStat.yds = num(recStat.yds) + Math.max(0, yards);
+    }
+  } else {
+    const rushStat = gameSimEnsurePlayerStat(sim, offense, "rushing", player, "Runner");
+    rushStat.car = num(rushStat.car) + 1;
+    rushStat.yds = num(rushStat.yds) + Math.max(0, yards);
+    sim.stats[offense].rushYds += Math.max(0, yards);
+  }
+  if (yards < 0 && defender) {
+    const defStat = gameSimEnsurePlayerStat(sim, defense, "defense", defender, "Defender");
+    defStat.stops = num(defStat.stops) + 1;
+    if (isPass) defStat.sacks = num(defStat.sacks) + 1;
+  }
+  if (turnover) {
+    sim.stats[offense].turnovers += 1;
+    const defStat = gameSimEnsurePlayerStat(sim, defense, "defense", defender, "Defender");
+    defStat.to = num(defStat.to) + 1;
+    sim.log.unshift(`${teamAbbrevFor(defense)} takeaway. ${teamAbbrevFor(offense)} drive ends.`);
+    sim.possession = defense;
+    sim.fieldPos = Math.max(20, 100 - sim.fieldPos + Math.round(gameSimRandom(sim) * 15));
+    sim.down = 1;
+    sim.distance = 10;
+  } else {
+    sim.fieldPos += yards;
+    const touchdown = sim.fieldPos >= 100;
+    if (touchdown) {
+      gameSimScore(sim, offense, 7);
+      if (isPass) {
+        sim.stats[offense].passTd += 1;
+        const qbStat = gameSimEnsurePlayerStat(sim, offense, "qb", rosters.qb, "QB");
+        qbStat.td = num(qbStat.td) + 1;
+        if (player) {
+          const recStat = gameSimEnsurePlayerStat(sim, offense, "receiving", player, "Receiver");
+          recStat.td = num(recStat.td) + 1;
+        }
+      } else {
+        sim.stats[offense].rushTd += 1;
+        const rushStat = gameSimEnsurePlayerStat(sim, offense, "rushing", player, "Runner");
+        rushStat.td = num(rushStat.td) + 1;
+      }
+      sim.log.unshift(`${teamAbbrevFor(offense)} TD: ${isPass ? gameSimPlayerName(rosters.qb, "QB") + " to " : ""}${gameSimPlayerName(player, isPass ? "receiver" : "runner")} for ${Math.max(1, yards)}.`);
+      sim.possession = defense;
+      sim.fieldPos = 25;
+      sim.down = 1;
+      sim.distance = 10;
+    } else if (sim.fieldPos >= 82 && sim.down >= 3 && gameSimRandom(sim) < 0.38) {
+      gameSimScore(sim, offense, 3);
+      sim.log.unshift(`${teamAbbrevFor(offense)} field goal. Drive stalls in scoring range.`);
+      sim.possession = defense;
+      sim.fieldPos = 25;
+      sim.down = 1;
+      sim.distance = 10;
+    } else {
+      sim.distance -= yards;
+      if (sim.distance <= 0) {
+        sim.down = 1;
+        sim.distance = Math.min(10, Math.max(1, 100 - sim.fieldPos));
+        sim.log.unshift(`${teamAbbrevFor(offense)} first down: ${gameSimPlayerName(player, isPass ? "receiver" : "runner")} gains ${yards}.`);
+      } else if (sim.down >= 4) {
+        sim.log.unshift(`${teamAbbrevFor(offense)} punts after ${isPass ? "pass" : "run"} for ${yards}.`);
+        sim.possession = defense;
+        sim.fieldPos = Math.max(18, 100 - sim.fieldPos + Math.round(gameSimRandom(sim) * 20));
+        sim.down = 1;
+        sim.distance = 10;
+      } else {
+        sim.down += 1;
+        sim.log.unshift(isPass && !completed
+          ? `${teamAbbrevFor(offense)} incomplete. ${gameSimPlayerName(rosters.qb, "QB")} looking for ${gameSimPlayerName(player, "receiver")}.`
+          : `${teamAbbrevFor(offense)} ${isPass ? "pass" : "run"}: ${gameSimPlayerName(player, isPass ? "receiver" : "runner")} ${yards >= 0 ? "+" : ""}${yards}.`);
+      }
+    }
+  }
+  if (sim.status === "final") sim.log.unshift(`Final: ${teamAbbrevFor(sim.game.visitor)} ${sim.visitorScore}, ${teamAbbrevFor(sim.game.home)} ${sim.homeScore}.`);
+  sim.log = sim.log.slice(0, 6);
+}
+
+function gameSimClock(sim) {
+  return `${sim.status === "final" ? "Final" : `Q${sim.quarter}`} ${String(Math.floor(sim.clock / 60)).padStart(2, "0")}:${String(Math.max(0, sim.clock % 60)).padStart(2, "0")}`;
+}
+
+function gameSimPossessionTime(seconds) {
+  const safe = Math.max(0, Math.floor(num(seconds, 0)));
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function gameSimFieldMarks(homeName) {
+  const marks = [10, 20, 30, 40, 50, 40, 30, 20, 10];
+  return `
+    <div class="game-sim-endzone left"><span>${esc(teamAbbrevFor(homeName))}</span></div>
+    <div class="game-sim-endzone right"><span>${esc(teamAbbrevFor(homeName))}</span></div>
+    ${marks.map((mark, index) => `<span class="game-sim-yard-number top" style="left:${10 + index * 10}%">${mark}</span><span class="game-sim-yard-number bottom" style="left:${10 + index * 10}%">${mark}</span>`).join("")}
+    ${Array.from({ length: 19 }, (_, index) => `<span class="game-sim-yard-stripe ${index % 2 ? "minor" : ""}" style="left:${5 + index * 5}%"></span>`).join("")}
+  `;
+}
+
+function gameSimMiniName(name) {
+  const parts = String(name || "").split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? `${parts[0][0]}. ${parts.slice(1).join(" ")}` : name;
+}
+
+function gameSimPlayerRows(sim, teamName, group, columns, limit = 4) {
+  const rows = Object.entries(sim.playerStats?.[teamName]?.[group] || {})
+    .sort((a, b) => Object.values(b[1]).reduce((sum, value) => sum + num(value), 0) - Object.values(a[1]).reduce((sum, value) => sum + num(value), 0))
+    .slice(0, limit);
+  if (!rows.length) return `<tr><td colspan="${columns.length + 1}" class="muted">No stats yet</td></tr>`;
+  return rows.map(([name, stats]) => `<tr><td>${esc(gameSimMiniName(name))}</td>${columns.map(([key]) => `<td class="num">${fmt(stats[key] || 0, 0)}</td>`).join("")}</tr>`).join("");
+}
+
+function gameSimPlayerStatsPanel(sim, teamName) {
+  const abbrev = teamAbbrevFor(teamName);
+  const tableBlock = (title, group, columns) => `
+    <section>
+      <h4>${esc(title)}</h4>
+      <table><thead><tr><th>${esc(abbrev)}</th>${columns.map(([, label]) => `<th class="num">${esc(label)}</th>`).join("")}</tr></thead><tbody>${gameSimPlayerRows(sim, teamName, group, columns)}</tbody></table>
+    </section>
+  `;
+  return `<div class="game-sim-player-panel">
+    <div class="game-sim-player-panel-head">${teamLogo(teamName, abbrev)}<b>${esc(abbrev)} Player Stats</b></div>
+    ${tableBlock("QB Stats", "qb", [["comp", "C"], ["att", "A"], ["yds", "Yds"], ["td", "TD"]])}
+    ${tableBlock("Rushing", "rushing", [["car", "Car"], ["yds", "Yds"], ["td", "TD"]])}
+    ${tableBlock("Receiving", "receiving", [["rec", "Rec"], ["yds", "Yds"], ["td", "TD"]])}
+    ${tableBlock("Defense", "defense", [["stops", "Stp"], ["sacks", "Sck"], ["to", "TO"]])}
+  </div>`;
+}
+
+function gameSimCardHtml(sim) {
+  const game = sim.game;
+  const visitor = teamByName(game.visitor);
+  const home = teamByName(game.home);
+  const ballPct = normalizeTeamName(sim.possession) === normalizeTeamName(game.visitor) ? sim.fieldPos : 100 - sim.fieldPos;
+  const statRows = [game.visitor, game.home].map((teamName) => {
+    const stats = sim.stats[teamName];
+    return `<tr><td>${teamLogo(teamName, teamAbbrevFor(teamName))}${esc(teamAbbrevFor(teamName))}</td><td class="num">${stats.passYds}</td><td class="num">${stats.rushYds}</td><td class="num">${stats.turnovers}</td><td class="num">${gameSimPossessionTime(stats.possession)}</td></tr>`;
+  }).join("");
+  const statTeam = sim.playCount % 2 ? game.home : game.visitor;
+  return `<article class="game-sim-card" id="${esc(sim.id)}">
+    <div class="game-sim-head">
+      <div><span>${esc(weekDisplay(game.week))}</span><strong>${esc(teamAbbrevFor(game.visitor))} at ${esc(teamAbbrevFor(game.home))}</strong></div>
+      <button class="mini-action game-sim-close" data-sim-id="${esc(sim.id)}">Stop</button>
+    </div>
+    <div class="game-sim-scoreboard">
+      <div>${teamLogo(game.visitor, visitor?.teamAbbrev)}<b>${esc(teamAbbrevFor(game.visitor))}</b><strong>${sim.visitorScore}</strong><em>Proj ${sim.projection.visitor}</em></div>
+      <span>${esc(gameSimClock(sim))}</span>
+      <div>${teamLogo(game.home, home?.teamAbbrev)}<b>${esc(teamAbbrevFor(game.home))}</b><strong>${sim.homeScore}</strong><em>Proj ${sim.projection.home}</em></div>
+    </div>
+    <div class="game-sim-body">
+      <div class="game-sim-field">
+        <div class="game-sim-yardlines">${gameSimFieldMarks(game.home)}</div>
+        <div class="game-sim-drive" style="left:${Math.max(4, Math.min(96, ballPct))}%"></div>
+        <div class="game-sim-player away" style="left:${Math.max(5, Math.min(88, ballPct - 10))}%; top:${26 + (sim.playCount % 3) * 12}%">${esc(teamAbbrevFor(game.visitor))}</div>
+        <div class="game-sim-player home" style="left:${Math.max(8, Math.min(92, ballPct + 7))}%; top:${58 - (sim.playCount % 3) * 10}%">${esc(teamAbbrevFor(game.home))}</div>
+        <span class="game-sim-possession">${esc(teamAbbrevFor(sim.possession))} ${sim.down}&${sim.distance}</span>
+      </div>
+      <aside class="game-sim-boxscore">
+        <h3>Box Score</h3>
+        <table><thead><tr><th>Team</th><th>Pass Yds</th><th>Run Yds</th><th>TO</th><th>Poss</th></tr></thead><tbody>${statRows}</tbody></table>
+        <div class="game-sim-log">${sim.log.map((line) => `<span>${esc(line)}</span>`).join("")}</div>
+      </aside>
+      ${gameSimPlayerStatsPanel(sim, statTeam)}
+    </div>
+  </article>`;
+}
+
+function drawGameSimCard(sim) {
+  const node = document.getElementById(sim.id);
+  if (node) node.outerHTML = gameSimCardHtml(sim);
+  wireGameSimCloseButtons();
+}
+
+function stopGameSim(id) {
+  if (gameSimTimers[id]) clearInterval(gameSimTimers[id]);
+  delete gameSimTimers[id];
+  activeGameSims = activeGameSims.filter((sim) => sim.id !== id);
+}
+
+function wireGameSimCloseButtons() {
+  document.querySelectorAll(".game-sim-close").forEach((button) => {
+    button.onclick = () => {
+      stopGameSim(button.dataset.simId);
+      render();
+    };
+  });
+}
+
+function startGameSimTicker(sim) {
+  if (gameSimTimers[sim.id]) clearInterval(gameSimTimers[sim.id]);
+  gameSimTimers[sim.id] = setInterval(() => {
+    advanceGameSim(sim);
+    drawGameSimCard(sim);
+    if (sim.status === "final") {
+      clearInterval(gameSimTimers[sim.id]);
+      delete gameSimTimers[sim.id];
+    }
+  }, gameSimSpeedMs[state.gameSimSpeed] || gameSimSpeedMs.medium);
+}
+
+function refreshGameSimTickers() {
+  activeGameSims.forEach(startGameSimTicker);
+}
+
+function startSelectedGameSim() {
+  const rows = gameSimGameRows();
+  const selected = rows.find((row) => row.key === state.gameSimGameKey) || rows[0];
+  if (!selected) return;
+  if (activeGameSims.length >= 4) return alert("You can run up to 4 simulations at a time.");
+  const sim = gameSimNew(selected.game, selected.key);
+  activeGameSims.push(sim);
+  render();
+  startGameSimTicker(sim);
+}
+
+function startVisibleGameSims() {
+  const existing = new Set(activeGameSims.map((sim) => sim.key));
+  const openSlots = Math.max(0, 4 - activeGameSims.length);
+  gameSimGameRows().filter((row) => !existing.has(row.key)).slice(0, openSlots).forEach((row) => activeGameSims.push(gameSimNew(row.game, row.key)));
+  render();
+  refreshGameSimTickers();
+}
+
+function renderGameSimulator() {
+  const weekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
+  const rows = gameSimGameRows();
+  if (!rows.some((row) => row.key === state.gameSimGameKey)) state.gameSimGameKey = rows[0]?.key || "";
+  const gameOptions = rows.map(({ game, key }) => [key, `${teamAbbrevFor(game.visitor)} at ${teamAbbrevFor(game.home)}${game.date ? ` / ${game.date}` : ""}`]);
+  setTimeout(() => {
+    document.querySelector("#game-sim-week")?.addEventListener("change", (event) => { state.gameSimWeek = event.target.value; state.gameSimGameKey = ""; render(); });
+    document.querySelector("#game-sim-game")?.addEventListener("change", (event) => { state.gameSimGameKey = event.target.value; });
+    document.querySelector("#game-sim-speed")?.addEventListener("change", (event) => { state.gameSimSpeed = event.target.value; refreshGameSimTickers(); });
+    document.querySelector("#game-sim-start")?.addEventListener("click", startSelectedGameSim);
+    document.querySelector("#game-sim-start-four")?.addEventListener("click", startVisibleGameSims);
+    document.querySelector("#game-sim-clear")?.addEventListener("click", () => { activeGameSims.forEach((sim) => stopGameSim(sim.id)); activeGameSims = []; render(); });
+    wireGameSimCloseButtons();
+  });
+  return `<section class="panel game-sim-panel">
+    <div class="toolbar">
+      <div><h2>Game Simulator</h2><p>Watch a Tecmo-style Model Z game roll out with projected score logic, depth-chart players, live clock, and box stats.</p></div>
+      <div class="filters game-sim-controls">
+        ${optionSelect("game-sim-week", state.gameSimWeek, weekOptions)}
+        ${optionSelect("game-sim-game", state.gameSimGameKey, gameOptions.length ? gameOptions : [["", "No games found"]])}
+        ${optionSelect("game-sim-speed", state.gameSimSpeed, [["slow", "Slow"], ["medium", "Medium"], ["fast", "Fast"], ["super", "Super Fast"]])}
+        <button id="game-sim-start" class="mini-action primary">Start Game</button>
+        <button id="game-sim-start-four" class="mini-action">Start Up To 4</button>
+        <button id="game-sim-clear" class="mini-action danger">Clear Sims</button>
+      </div>
+    </div>
+    <div class="game-sim-grid">${activeGameSims.map(gameSimCardHtml).join("") || "<p class='note'>Choose a game and start the broadcast. Up to 4 games can run at once.</p>"}</div>
   </section>`;
 }
 
@@ -10390,6 +11003,7 @@ function render() {
     data: renderDataSettings,
     start: renderStartSit,
     pff: renderPff,
+    gameSim: renderGameSimulator,
     qb: renderQb,
   };
   content.innerHTML = views[state.page]();
