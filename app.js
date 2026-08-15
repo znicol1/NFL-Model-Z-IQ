@@ -252,6 +252,9 @@ const scheduleScoreTuning = {
   defenseAllowedBase: 17.2,
   offenseScale: 1.75,
   defenseScale: 1.25,
+  preseasonTotalScale: 0.84,
+  preseasonTotalMin: 32,
+  preseasonTotalMax: 40.5,
 };
 
 const state = {
@@ -434,6 +437,12 @@ function gameAction(gameKey) {
 function saveGameAction(gameKey, patch) {
   savedPicks[gameKey] = { ...gameAction(gameKey), ...patch };
   storage.set("nflz-picks", savedPicks);
+}
+
+function autosaveGameAction(gameKey, patch) {
+  if (!gameKey) return;
+  saveGameAction(gameKey, patch);
+  state.picksLastSaved = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
 }
 
 function downloadJson(filename, payload) {
@@ -3164,8 +3173,18 @@ function scheduleProjection(game) {
   const visitorTeam = teamByName(game.visitor);
   const homeTeam = teamByName(game.home);
   if (visitorTeam && homeTeam) {
-    const visitorRaw = scheduleTeamProjectionScore(visitorTeam, homeTeam, mode, 0, game.week);
-    const homeRaw = scheduleTeamProjectionScore(homeTeam, visitorTeam, mode, scheduleHomeAdvantage(game, mode), game.week);
+    let visitorRaw = scheduleTeamProjectionScore(visitorTeam, homeTeam, mode, 0, game.week);
+    let homeRaw = scheduleTeamProjectionScore(homeTeam, visitorTeam, mode, scheduleHomeAdvantage(game, mode), game.week);
+    if (mode === "preseason") {
+      const rawTotal = Math.max(1, visitorRaw + homeRaw);
+      const targetTotal = Math.max(
+        scheduleScoreTuning.preseasonTotalMin,
+        Math.min(scheduleScoreTuning.preseasonTotalMax, rawTotal * scheduleScoreTuning.preseasonTotalScale)
+      );
+      const totalScale = targetTotal / rawTotal;
+      visitorRaw *= totalScale;
+      homeRaw *= totalScale;
+    }
     const visitor = Math.max(6, Math.round(visitorRaw));
     const home = Math.max(6, Math.round(homeRaw));
     const favorite = visitor === home ? "" : visitor > home ? game.visitor : game.home;
@@ -3512,7 +3531,7 @@ function renderScheduleProjectionMath() {
           <span>The spread is rounded to the nearest half point, then mapped through your spread-to-win table.</span>
         </div>
       </div>
-      <p>Current score formula: team score = average(offense points, opponent defense allowed points) + HFA. Offense points use ${fmt(scheduleScoreTuning.offenseBase, 1)} plus roster edge x ${fmt(scheduleScoreTuning.offenseScale, 2)}. Defense allowed uses ${fmt(scheduleScoreTuning.defenseAllowedBase, 1)} minus defense edge x ${fmt(scheduleScoreTuning.defenseScale, 2)}.</p>
+      <p>Current score formula: team score = average(offense points, opponent defense allowed points) + HFA. Offense points use ${fmt(scheduleScoreTuning.offenseBase, 1)} plus roster edge x ${fmt(scheduleScoreTuning.offenseScale, 2)}. Defense allowed uses ${fmt(scheduleScoreTuning.defenseAllowedBase, 1)} minus defense edge x ${fmt(scheduleScoreTuning.defenseScale, 2)}. Preseason totals scale to ${fmt(scheduleScoreTuning.preseasonTotalScale * 100, 0)}% and stay between ${fmt(scheduleScoreTuning.preseasonTotalMin, 0)}-${fmt(scheduleScoreTuning.preseasonTotalMax, 1)}.</p>
     </div>
   `;
 }
@@ -3768,7 +3787,7 @@ function renderQuickPlayerPicker(player) {
     : "Start typing to search every roster and free agent";
   return `
     <div class="quick-search-row">
-      <input id="quick-player-query" placeholder="Search any NFL player, team, abbreviation, or position" value="${esc(state.quickPlayerQuery)}" />
+      <input id="quick-player-query" placeholder="Search any NFL player, team, abbreviation, or position" value="${esc(state.quickPlayerQuery)}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" />
       <button id="quick-player-set" class="mini-action primary">Load Best</button>
     </div>
     <div class="quick-search-meta">${esc(resultText)}</div>
@@ -3896,39 +3915,36 @@ function renderHome() {
           </div>
           <div class="quick-player-action-grid">
             <article class="quick-card action-card">
-              <div class="quick-card-title"><span>02</span><h3>View Details</h3></div>
-              <button id="quick-open-details" class="quick-bubble" ${playerDisabled}>Open Player Details</button>
+              <div class="quick-card-title"><span>02</span><h3>Adjust Rating</h3></div>
+              <div class="quick-search-row"><input id="quick-rating" type="number" min="50" max="105" value="${player ? fmt(player.rating, 0) : ""}" ${playerDisabled} /><button id="quick-rating-save" class="quick-bubble" ${playerDisabled}>Save</button></div>
+              <div class="quick-two"><button class="quick-bubble quick-thumb" data-dir="up" ${playerDisabled}>Nudge Up</button><button class="quick-bubble quick-thumb" data-dir="down" ${playerDisabled}>Nudge Down</button></div>
             </article>
             <article class="quick-card action-card">
-              <div class="quick-card-title"><span>03</span><h3>Move Player</h3></div>
+              <div class="quick-card-title"><span>03</span><h3>Apply Injury</h3></div>
+              <div class="quick-two">${injurySelect("quick", player?.injury).replace("class=\"injury-status\"", "id=\"quick-injury\" class=\"injury-status\"")} ${weekSelect("quick", player?.week).replace("class=\"injury-week\"", "id=\"quick-week\" class=\"injury-week\"")}</div>
+            </article>
+            <article class="quick-card action-card">
+              <div class="quick-card-title"><span>04</span><h3>Move Player</h3></div>
               ${select("quick-move-team", state.quickMoveTeam, teams)}
               <button id="quick-apply-move" class="quick-bubble" ${playerDisabled}>Assign Team / FA</button>
             </article>
             <article class="quick-card action-card">
-              <div class="quick-card-title"><span>04</span><h3>Apply Injury</h3></div>
-              <div class="quick-two">${injurySelect("quick", player?.injury).replace("class=\"injury-status\"", "id=\"quick-injury\" class=\"injury-status\"")} ${weekSelect("quick", player?.week).replace("class=\"injury-week\"", "id=\"quick-week\" class=\"injury-week\"")}</div>
-            </article>
-            <article class="quick-card action-card">
-              <div class="quick-card-title"><span>05</span><h3>Adjust Rating</h3></div>
-              <div class="quick-search-row"><input id="quick-rating" type="number" min="50" max="105" value="${player ? fmt(player.rating, 0) : ""}" ${playerDisabled} /><button id="quick-rating-save" class="quick-bubble" ${playerDisabled}>Save</button></div>
-            </article>
-            <article class="quick-card action-card">
-              <div class="quick-card-title"><span>06</span><h3>Nudge</h3></div>
-              <div class="quick-two"><button class="quick-bubble quick-thumb" data-dir="up" ${playerDisabled}>Thumbs Up</button><button class="quick-bubble quick-thumb" data-dir="down" ${playerDisabled}>Thumbs Down</button></div>
+              <div class="quick-card-title"><span>05</span><h3>View Details</h3></div>
+              <button id="quick-open-details" class="quick-bubble" ${playerDisabled}>Open Player Details</button>
             </article>
           </div>
         </section>
       <article class="quick-card quick-card-third">
-          <div class="quick-card-title"><span>07</span><h3>Quick Depth Chart</h3></div>
+          <div class="quick-card-title"><span>06</span><h3>Quick Depth Chart</h3></div>
           ${renderQuickDepthChart()}
         </article>
         <article class="quick-card quick-card-third">
-          <div class="quick-card-title"><span>08</span><h3>Positional Rankings</h3></div>
+          <div class="quick-card-title"><span>07</span><h3>Positional Rankings</h3></div>
           <div class="quick-three">${select("quick-rank-scope", state.quickRankScope, rankScopes)}${select("quick-rank-limit", state.quickRankLimit, [10, 20, 30, 50, 100])}<button class="quick-bubble" data-page="top30">Open Top 30s</button></div>
           <div class="quick-rank-list">${ranked.map((p, index) => `<button class="quick-rank-row player-open" data-player-key="${esc(sourceKey(p))}"><b>${index + 1}</b><span class="quick-rank-player">${playerAvatar(p)}<span>${esc(p.player)}</span></span><em>${teamCell(p)}</em><strong>${fmt(p.rating, 0)}</strong></button>`).join("")}</div>
         </article>
         <article class="quick-card quick-card-third">
-          <div class="quick-card-title"><span>09</span><h3>Team Rankings</h3></div>
+          <div class="quick-card-title"><span>08</span><h3>Team Rankings</h3></div>
           <div class="quick-three">${select("quick-team-rank-scope", state.quickTeamRankScope, teamRankScopes)}${select("quick-team-rank-limit", state.quickTeamRankLimit, [10, 20, 32])}<button class="quick-bubble" data-page="live">Open Live Rankings</button></div>
           <div class="quick-rank-list">${teamRanked.map((row, index) => `<div class="quick-rank-row quick-team-row"><b>${index + 1}</b><span>${teamCellByName(row.team.team)}</span><em>${esc(state.quickTeamRankScope)}</em><strong>${fmt(row.score, 1)}</strong></div>`).join("")}</div>
         </article>
@@ -5786,19 +5802,22 @@ function renderSchedule() {
       render();
     });
     document.querySelectorAll(".game-pick-select").forEach((sel) => sel.addEventListener("change", () => {
-      saveGameAction(sel.dataset.game, { [sel.dataset.field]: sel.value });
-      render();
+      autosaveGameAction(sel.dataset.game, { [sel.dataset.field]: sel.value });
     }));
-    document.querySelectorAll(".game-score-input").forEach((input) => input.addEventListener("change", () => {
+    const persistScoreInput = (input, rerender = false) => {
       const patch = { [input.dataset.field]: input.value };
       const action = { ...gameAction(input.dataset.game), ...patch };
       if (Number.isFinite(Number(action.awayScore)) && Number.isFinite(Number(action.homeScore)) && action.awayScore !== "" && action.homeScore !== "") {
         const item = scheduleGames().map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) })).find((row) => row.key === input.dataset.game);
         if (item) patch.resultWinner = num(action.awayScore) > num(action.homeScore) ? item.game.visitor : num(action.homeScore) > num(action.awayScore) ? item.game.home : "";
       }
-      saveGameAction(input.dataset.game, patch);
-      render();
-    }));
+      autosaveGameAction(input.dataset.game, patch);
+      if (rerender) render();
+    };
+    document.querySelectorAll(".game-score-input").forEach((input) => {
+      input.addEventListener("input", () => persistScoreInput(input, false));
+      input.addEventListener("change", () => persistScoreInput(input, true));
+    });
     document.querySelector(".schedule-groups")?.addEventListener("click", (event) => {
       if (isScheduleInteractiveTarget(event.target)) return;
       const card = event.target.closest(".schedule-card");
@@ -6610,7 +6629,7 @@ function gameSimCardHtml(sim) {
 function drawGameSimCard(sim) {
   const node = document.getElementById(sim.id);
   if (node) node.outerHTML = gameSimCardHtml(sim);
-  wireGameSimCloseButtons();
+  document.getElementById(sim.id)?.querySelector(".game-sim-close")?.addEventListener("click", () => stopGameSim(sim.id));
 }
 
 function stopGameSim(id) {
@@ -6831,6 +6850,7 @@ function draftKingsStatusNote() {
 
 function applyScannedScores(payload) {
   let applied = 0;
+  const scannedTeam = (value) => normalizeTeamName(normalizeScheduleTeam(value));
   const dateDistanceDays = (a, b) => {
     if (!a || !b) return Infinity;
     const left = dateOnly(a);
@@ -6838,18 +6858,26 @@ function applyScannedScores(payload) {
     return Math.abs(left.getTime() - right.getTime()) / 86400000;
   };
   (payload?.games || []).filter((game) => game.completed && game.winner).forEach((result) => {
+    const resultVisitor = result.visitor || result.away || result.awayTeam;
+    const resultHome = result.home || result.homeTeam;
     const match = scheduleGames()
       .map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) }))
       .find((row) => {
-        const sameTeams = normalizeTeamName(row.game.visitor) === normalizeTeamName(result.visitor) && normalizeTeamName(row.game.home) === normalizeTeamName(result.home);
+        const sameTeams = scannedTeam(row.game.visitor) === scannedTeam(resultVisitor) && scannedTeam(row.game.home) === scannedTeam(resultHome);
         if (!sameTeams) return false;
         if (row.game.date === result.date) return true;
         if (result.week && String(row.game.week) === String(result.week)) return true;
         return dateDistanceDays(row.game.date, result.date) <= 1;
       });
     if (!match) return;
+    const winnerKey = scannedTeam(result.winner);
+    const resultWinner = winnerKey === scannedTeam(match.game.visitor)
+      ? match.game.visitor
+      : winnerKey === scannedTeam(match.game.home)
+        ? match.game.home
+        : result.winner;
     saveGameAction(match.key, {
-      resultWinner: result.winner,
+      resultWinner,
       awayScore: Number.isFinite(Number(result.awayScore)) ? String(result.awayScore) : "",
       homeScore: Number.isFinite(Number(result.homeScore)) ? String(result.homeScore) : "",
     });
@@ -10982,6 +11010,18 @@ function choiceCardClean(p) {
 
 choiceCard = choiceCardClean;
 
+function disableMobileTextAssist(root = document) {
+  root.querySelectorAll("input, textarea").forEach((field) => {
+    const hint = `${field.id || ""} ${field.name || ""} ${field.placeholder || ""}`.toLowerCase();
+    if (field.type === "search" || hint.includes("player") || hint.includes("search")) {
+      field.setAttribute("autocomplete", "off");
+      field.setAttribute("autocorrect", "off");
+      field.setAttribute("autocapitalize", "none");
+      field.setAttribute("spellcheck", "false");
+    }
+  });
+}
+
 function render() {
   scheduleProjectionCache = new Map();
   const page = pages.find(([id]) => id === state.page);
@@ -11007,6 +11047,8 @@ function render() {
     qb: renderQb,
   };
   content.innerHTML = views[state.page]();
+  disableMobileTextAssist(content);
+  disableMobileTextAssist(document.querySelector(".topbar") || document);
   document.querySelectorAll("[data-live]").forEach((button) => button.addEventListener("click", () => {
     state.liveView = button.dataset.live;
     render();
