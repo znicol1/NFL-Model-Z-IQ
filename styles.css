@@ -4820,6 +4820,20 @@ select,
   padding: 8px 10px;
 }
 
+.formula-control-panel.read-only {
+  background: #f3f6fa;
+  border-style: dashed;
+}
+
+.formula-control-panel.read-only .formula-slider {
+  background: #f8fafc;
+}
+
+.primary-source-grid {
+  margin: 8px 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .formula-control-head,
 .formula-toggle-row {
   display: flex;

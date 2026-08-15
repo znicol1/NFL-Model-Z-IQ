@@ -50,7 +50,10 @@ const defaultWeeklyQbOptions = {
 };
 
 const defaultWeeklyQbWeights = {
+  statRanks: 100,
   last5: 68,
+  production2025: 100,
+  production2026: 100,
   matchup: 100,
   talent: 100,
   depth: 100,
@@ -64,6 +67,10 @@ const defaultWeeklyQbWeights = {
 };
 
 const defaultWeeklySkillWeights = {
+  statRanks: 100,
+  last5: 68,
+  production2025: 100,
+  production2026: 100,
   depth: 100,
   matchup: 100,
   talent: 100,
@@ -7070,11 +7077,12 @@ function weeklyQbToggleButton(key, label) {
   return `<button class="formula-toggle ${active ? "active" : ""}" data-qb-option="${esc(key)}" ${disabled ? "disabled" : ""}><span>${esc(label)}</span></button>`;
 }
 
-function weeklyQbSlider(key, label, min = 0, max = 200) {
+function weeklyQbSlider(key, label, min = 0, max = 200, readOnly = false) {
   const rawValue = num(state.weeklyQbWeights[key], defaultWeeklyQbWeights[key] ?? 100);
   const value = Math.max(min, Math.min(max, Math.round(rawValue / 10) * 10));
   const productionKeys = ["passYards", "passTds", "rushAttempts", "rushTds"];
-  const disabled = productionKeys.includes(key) && !state.weeklyQbOptions.useProduction;
+  const productionWeight = weeklyQbProductionWeight();
+  const disabled = readOnly || (productionKeys.includes(key) && productionWeight <= 0);
   return `
     <label class="formula-slider ${disabled ? "disabled" : ""}">
       <span>${esc(label)}</span>
@@ -7084,37 +7092,35 @@ function weeklyQbSlider(key, label, min = 0, max = 200) {
   `;
 }
 
-function renderWeeklyQbFormulaControls() {
+function renderWeeklyQbFormulaControls(readOnly = false) {
   const open = Boolean(state.weeklyQbControlsOpen);
   return `
-    <section class="formula-control-panel ${open ? "" : "collapsed"}">
+    <section class="formula-control-panel ${open ? "" : "collapsed"} ${readOnly ? "read-only" : ""}">
       <div class="formula-control-head">
-        <h3>Score Controls</h3>
+        <h3>${readOnly ? "Weekly Score Controls Used Here" : "Score Controls"}</h3>
         <div class="formula-control-actions">
           ${state.weeklyQbDefaultMessage ? `<span class="formula-save-note">${esc(state.weeklyQbDefaultMessage)}</span>` : ""}
-          <button id="weekly-qb-toggle-controls" class="mini-action">${open ? "Hide" : "Show"}</button>
-          ${open ? `<button id="weekly-qb-set-default" class="mini-action">Set Default</button>` : ""}
-          ${open ? `<button id="weekly-qb-reset-formula" class="mini-action">Reset Formula</button>` : ""}
+          ${readOnly ? `<button class="mini-action primary" data-page="weeklyFantasy">Weekly Fantasy Rankings Screen</button>` : `<button id="weekly-qb-toggle-controls" class="mini-action">${open ? "Hide" : "Show"}</button>`}
+          ${open && !readOnly ? `<button id="weekly-qb-set-default" class="mini-action">Set Default</button>` : ""}
+          ${open && !readOnly ? `<button id="weekly-qb-reset-formula" class="mini-action">Reset Formula</button>` : ""}
         </div>
       </div>
       ${open ? `
-      <div class="formula-toggle-row">
-        ${weeklyQbToggleButton("useStatRanks", "Use StatRanks")}
-        ${weeklyQbToggleButton("useLast5", "Use Last 5")}
-        ${weeklyQbToggleButton("useProduction", "Use Production")}
-      </div>
       <div class="formula-slider-grid">
-        ${weeklyQbSlider("last5", "Last 5 Blend", 0, 100)}
-        ${weeklyQbSlider("talent", "Talent")}
-        ${weeklyQbSlider("matchup", "Matchup")}
-        ${weeklyQbSlider("depth", "Depth")}
-        ${weeklyQbSlider("oline", "O-Line")}
-        ${weeklyQbSlider("ppg", "PPG")}
-        ${weeklyQbSlider("wr", "WR Group")}
-        ${weeklyQbSlider("passYards", "Pass Yards")}
-        ${weeklyQbSlider("passTds", "Pass TDs")}
-        ${weeklyQbSlider("rushAttempts", "Rush Attempts")}
-        ${weeklyQbSlider("rushTds", "Rush TDs")}
+        ${weeklyQbSlider("statRanks", "StatRanks", 0, 100, readOnly)}
+        ${weeklyQbSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
+        ${weeklyQbSlider("production2025", "2025 Production", 0, 100, readOnly)}
+        ${weeklyQbSlider("production2026", "2026 Production", 0, 100, readOnly)}
+        ${weeklyQbSlider("talent", "Talent", 0, 200, readOnly)}
+        ${weeklyQbSlider("matchup", "Matchup", 0, 200, readOnly)}
+        ${weeklyQbSlider("depth", "Depth", 0, 200, readOnly)}
+        ${weeklyQbSlider("oline", "O-Line", 0, 200, readOnly)}
+        ${weeklyQbSlider("ppg", "PPG", 0, 200, readOnly)}
+        ${weeklyQbSlider("wr", "WR Group", 0, 200, readOnly)}
+        ${weeklyQbSlider("passYards", "Pass Yards", 0, 200, readOnly)}
+        ${weeklyQbSlider("passTds", "Pass TDs", 0, 200, readOnly)}
+        ${weeklyQbSlider("rushAttempts", "Rush Attempts", 0, 200, readOnly)}
+        ${weeklyQbSlider("rushTds", "Rush TDs", 0, 200, readOnly)}
       </div>
       ` : ""}
     </section>
@@ -7320,11 +7326,31 @@ function weeklyQbScore(row) {
   return weeklyQbScoreBreakdown(row, "blend").score;
 }
 
-function weeklyQbScoreBreakdown(row, mode = "blend") {
+function weeklyQbStatRankWeight() {
   const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
   const options = { ...defaultWeeklyQbOptions, ...state.weeklyQbOptions };
+  const stored = state.weeklyQbWeights?.statRanks;
+  return Math.max(0, Math.min(1, num(stored, options.useStatRanks ? weights.statRanks : 0) / 100));
+}
+
+function weeklyQbProductionWeight() {
+  const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
+  const options = { ...defaultWeeklyQbOptions, ...state.weeklyQbOptions };
+  if (!options.useProduction && state.weeklyQbWeights?.production2025 === undefined && state.weeklyQbWeights?.production2026 === undefined) return 0;
+  return Math.max(0, Math.min(1, (num(weights.production2025, 100) + num(weights.production2026, 100)) / 200));
+}
+
+function weightedStatRankScore(statRank, ratingFallback, statWeight) {
+  const ratingScore = num(ratingFallback, 84);
+  const statScore = Number.isFinite(Number(statRank)) ? 33 - Number(statRank) : ratingScore;
+  return ratingScore * (1 - statWeight) + statScore * statWeight;
+}
+
+function weeklyQbScoreBreakdown(row, mode = "blend") {
+  const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
   const scaleFactor = (factor, weight) => 1 + ((factor - 1) * (num(weight, 100) / 100));
   const termWeight = (key) => num(weights[key], 100) / 100;
+  const productionWeight = weeklyQbProductionWeight();
   const depthRaw = row.depth;
   const depthNum = Number.isFinite(Number(depthRaw)) ? Number(depthRaw) : 100;
   const depthBucket = Math.max(1, Math.min(4, depthNum || 1));
@@ -7334,16 +7360,16 @@ function weeklyQbScoreBreakdown(row, mode = "blend") {
   const olRank = num(row.extras["OL Rank"], 16.5);
   const wrRank = num(row.extras["WR Group Rank"], 16.5);
   const ppgRank = num(row.extras["PPG Rank"], 16.5);
-  const neutralProduction = !options.useProduction;
-  const seaPY = neutralProduction ? 225 : num(row.extras["Typical Pass Yards"], 225);
-  const seaPTD = neutralProduction ? 1.6 : num(row.extras["Typical Pass TDs"], 1.6);
-  const seaRA = neutralProduction ? 3 : num(row.extras["Typical Rush Attempts"], 3);
-  const seaRTD = neutralProduction ? 0.2 : num(row.extras["Typical Rush TDs"], 0.2);
-  const lfivePY = neutralProduction ? seaPY : num(row.extras["!!LAST 5!!\nTypical Pass Yards"], seaPY);
-  const lfivePTD = neutralProduction ? seaPTD : num(row.extras["!!LAST 5!!\nTypical Pass TDs"], seaPTD);
-  const lfiveRA = neutralProduction ? seaRA : num(row.extras["!!LAST 5!!\nTypical Rush Attempts"], seaRA);
-  const lfiveRTD = neutralProduction ? seaRTD : num(row.extras["!!LAST 5!!\nTypical Rush TDs"], seaRTD);
-  const wLast5 = mode === "season" || !options.useLast5 ? 0 : mode === "last5" ? 1 : num(weights.last5, 68) / 100;
+  const blendProduction = (value, fallback) => fallback + ((num(value, fallback) - fallback) * productionWeight);
+  const seaPY = blendProduction(row.extras["Typical Pass Yards"], 225);
+  const seaPTD = blendProduction(row.extras["Typical Pass TDs"], 1.6);
+  const seaRA = blendProduction(row.extras["Typical Rush Attempts"], 3);
+  const seaRTD = blendProduction(row.extras["Typical Rush TDs"], 0.2);
+  const lfivePY = blendProduction(row.extras["!!LAST 5!!\nTypical Pass Yards"], seaPY);
+  const lfivePTD = blendProduction(row.extras["!!LAST 5!!\nTypical Pass TDs"], seaPTD);
+  const lfiveRA = blendProduction(row.extras["!!LAST 5!!\nTypical Rush Attempts"], seaRA);
+  const lfiveRTD = blendProduction(row.extras["!!LAST 5!!\nTypical Rush TDs"], seaRTD);
+  const wLast5 = productionWeight <= 0 || mode === "season" ? 0 : mode === "last5" ? 1 : num(weights.last5, 68) / 100;
   const usePY = wLast5 * lfivePY + (1 - wLast5) * seaPY;
   const usePTD = wLast5 * lfivePTD + (1 - wLast5) * seaPTD;
   const useRA = wLast5 * lfiveRA + (1 - wLast5) * seaRA;
@@ -7373,9 +7399,10 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
   const rankedTeamsByWr = teams.map((team) => ({ team, score: teamPositionScore(team, "WR") })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByVqb = teams.map((team) => ({ team, score: qbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByStatVqb = teams.map((team) => ({ team, score: teamRankingsByTeam(team.team)?.passAllowedStatAvg })).filter((row) => Number.isFinite(Number(row.score)));
+  const statRankWeight = weeklyQbStatRankWeight();
   const rankedByPpg = teams.map((team) => {
     const ranks = teamRankingsByTeam(team.team);
-    return { team, score: state.weeklyQbOptions.useStatRanks && ranks?.offPointsRank ? 33 - Number(ranks.offPointsRank) : team.offenseRating };
+    return { team, score: weightedStatRankScore(ranks?.offPointsRank, team.offenseRating, statRankWeight) };
   }).filter((row) => Number.isFinite(Number(row.score)));
   const rows = allQbs.map((player) => {
     const workbookRow = workbookRowByName(workbookRows, player.player);
@@ -7388,7 +7415,7 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
     const wrRating = team ? teamPositionScore(team, "WR") : averageFinite(teams.map((item) => teamPositionScore(item, "WR")), 84);
     const olRow = { team, score: olRating };
     const wrRow = { team, score: wrRating };
-    const ppgRow = { team, score: state.weeklyQbOptions.useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : num(team?.offenseRating, 16) };
+    const ppgRow = { team, score: weightedStatRankScore(teamRankingsByTeam(player.team)?.offPointsRank, num(team?.offenseRating, 16), statRankWeight) };
     const oppVqbRating = qbDefenseRatingForTeam(opponentTeam);
     const opponentVqbRow = { team: opponentTeam, score: oppVqbRating };
     const opponentStatVqbRow = { team: opponentTeam, score: opponentRanks?.passAllowedStatAvg };
@@ -7522,16 +7549,30 @@ function weeklySkillOptions() {
   return { ...defaultWeeklySkillOptions, ...state.weeklySkillOptions };
 }
 
-function weeklySkillLast5Blend(mode = "blend") {
+function weeklySkillStatRankWeight() {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
   const options = weeklySkillOptions();
-  if (!options.useProduction) return 0;
-  if (mode === "season" || !options.useLast5) return 0;
+  const stored = state.weeklySkillWeights?.statRanks;
+  return Math.max(0, Math.min(1, num(stored, options.useStatRanks ? weights.statRanks : 0) / 100));
+}
+
+function weeklySkillProductionWeight() {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const options = weeklySkillOptions();
+  if (!options.useProduction && state.weeklySkillWeights?.production2025 === undefined && state.weeklySkillWeights?.production2026 === undefined) return 0;
+  return Math.max(0, Math.min(1, (num(weights.production2025, 100) + num(weights.production2026, 100)) / 200));
+}
+
+function weeklySkillLast5Blend(mode = "blend") {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  if (weeklySkillProductionWeight() <= 0 || mode === "season") return 0;
   if (mode === "last5") return 1;
-  return 0.68;
+  return num(weights.last5, 68) / 100;
 }
 
 function weeklySkillProductionValue(value, fallback) {
-  return weeklySkillOptions().useProduction ? num(value, fallback) : fallback;
+  const productionWeight = weeklySkillProductionWeight();
+  return fallback + ((num(value, fallback) - fallback) * productionWeight);
 }
 
 function weeklyGameForTeam(teamName, week = selectedSiteWeek()) {
@@ -7575,7 +7616,7 @@ function weeklySkillExtraFactorMultiplier(row, position) {
       return factor * Math.max(0.92, Math.min(1.1, 1 + ((num(row.extras["Team Total"], 22) - 22) / 100) * weight));
     }
     if (key === "opponentTd") {
-      if (!options.useStatRanks) return factor;
+      if (weeklySkillStatRankWeight() <= 0) return factor;
       const rank = num(row.extras[position === "RB" ? "Rush TDs Allowed Rank" : "Pass TDs Allowed Rank"], 16.5);
       return factor * Math.max(0.92, Math.min(1.08, 1 + ((16.5 - rank) / 170) * weight));
     }
@@ -7645,9 +7686,9 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
   const players = state.players.filter((player) => groupPosition(player.position) === "RB" || player.position === "RB");
   const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByVrb = teams.map((team) => ({ team, score: rbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
-  const useStatRanks = weeklySkillOptions().useStatRanks;
-  const rankedTeamYpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(team.team).offYardsRank) : team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
-  const rankedTeamPpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(team.team).offPointsRank) : team.offenseRating })).filter((row) => Number.isFinite(Number(row.score)));
+  const statRankWeight = weeklySkillStatRankWeight();
+  const rankedTeamYpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offYardsRank, team.offenseAverage, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamPpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offPointsRank, team.offenseRating, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = players.filter((player) => player.team !== "Free Agent").map((player) => {
     const workbook = workbookRowByName(workbookRows, player.player) || {};
     const team = teamByName(player.team);
@@ -7662,8 +7703,8 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
       "Opp vRB Rank": rankNumber(rankedTeamsByVrb, (item) => item.score, { team: opponentTeam, score: vrbRating }, false) || 16.5,
       "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(1)) : "",
       "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, { team, score: olRating }) || 16.5,
-      "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(player.team).offYardsRank) : team?.offenseAverage }) || 16.5,
-      "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : team?.offenseRating }) || 16.5,
+      "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: weightedStatRankScore(teamRankingsByTeam(player.team)?.offYardsRank, team?.offenseAverage, statRankWeight) }) || 16.5,
+      "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: weightedStatRankScore(teamRankingsByTeam(player.team)?.offPointsRank, team?.offenseRating, statRankWeight) }) || 16.5,
       "Game Script": weeklyGameScriptValue(player.team, week),
       "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Rush TDs Allowed Rank": teamRankingsByTeam(opponent)?.rushTdAllowedRank || "",
@@ -7851,9 +7892,9 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
   const rankedTeamsByVte = teams.map((team) => ({ team, score: teDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByQb = teams.map((team) => ({ team, score: teamPositionScore(team, "QB") })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
-  const useStatRanks = weeklySkillOptions().useStatRanks;
-  const rankedTeamYpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(team.team).offYardsRank) : team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
-  const rankedTeamPpg = teams.map((team) => ({ team, score: useStatRanks && teamRankingsByTeam(team.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(team.team).offPointsRank) : team.offenseRating })).filter((row) => Number.isFinite(Number(row.score)));
+  const statRankWeight = weeklySkillStatRankWeight();
+  const rankedTeamYpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offYardsRank, team.offenseAverage, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamPpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offPointsRank, team.offenseRating, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedPassTdAllowed = teams.map((team) => ({ team, score: teamRankingsByTeam(team.team)?.passTdAllowedRank })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = players.filter((player) => player.team !== "Free Agent").map((player) => {
     const workbook = workbookRowByName(workbookRows, player.player) || {};
@@ -7876,8 +7917,8 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
       "QB Rank": rankNumber(rankedTeamsByQb, (item) => item.score, { team, score: qbRating }) || 16.5,
       "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(1)) : "",
       "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, { team, score: olRating }) || 16.5,
-      "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offYardsRank ? 33 - Number(teamRankingsByTeam(player.team).offYardsRank) : team?.offenseAverage }) || 16.5,
-      "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: useStatRanks && teamRankingsByTeam(player.team)?.offPointsRank ? 33 - Number(teamRankingsByTeam(player.team).offPointsRank) : team?.offenseRating }) || 16.5,
+      "Team YPG Rank": rankNumber(rankedTeamYpg, (item) => item.score, { team, score: weightedStatRankScore(teamRankingsByTeam(player.team)?.offYardsRank, team?.offenseAverage, statRankWeight) }) || 16.5,
+      "PPG Rank": rankNumber(rankedTeamPpg, (item) => item.score, { team, score: weightedStatRankScore(teamRankingsByTeam(player.team)?.offPointsRank, team?.offenseRating, statRankWeight) }) || 16.5,
       "Pass TDs Allowed Rank": rankNumber(rankedPassTdAllowed, (item) => item.score, { team: opponentTeam, score: teamRankingsByTeam(opponent)?.passTdAllowedRank }, true) || 16.5,
       "Game Script": weeklyGameScriptValue(player.team, week),
       "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
@@ -9251,11 +9292,11 @@ function weeklySkillToggleButton(key, label) {
   return `<button class="formula-toggle ${active ? "active" : ""}" data-skill-option="${esc(key)}" ${disabled ? "disabled" : ""}><span>${esc(label)}</span></button>`;
 }
 
-function weeklySkillSlider(key, label, min = 0, max = 200) {
+function weeklySkillSlider(key, label, min = 0, max = 200, readOnly = false) {
   const rawValue = num(state.weeklySkillWeights[key], defaultWeeklySkillWeights[key] ?? 100);
   const value = Math.max(min, Math.min(max, Math.round(rawValue / 10) * 10));
   const productionKeys = ["usage", "redZone"];
-  const disabled = productionKeys.includes(key) && !state.weeklySkillOptions.useProduction;
+  const disabled = readOnly || (productionKeys.includes(key) && weeklySkillProductionWeight() <= 0);
   return `
     <label class="formula-slider ${disabled ? "disabled" : ""}" title="${esc(weeklySkillSliderTips[key] || "Adjusts this score factor.")}">
       <span>${esc(label)}</span>
@@ -9265,7 +9306,7 @@ function weeklySkillSlider(key, label, min = 0, max = 200) {
   `;
 }
 
-function renderWeeklySkillFormulaControls(position) {
+function renderWeeklySkillFormulaControls(position, readOnly = false) {
   if (!["RB", "WR", "TE"].includes(position)) return "";
   const open = Boolean(state.weeklySkillControlsOpen);
   const extraFactors = state.weeklySkillOptions.extraFactors || [];
@@ -9281,32 +9322,35 @@ function renderWeeklySkillFormulaControls(position) {
   ];
   const availableFactors = weeklySkillFactorOptions.filter(([key]) => !extraFactors.includes(key));
   return `
-    <section class="formula-control-panel ${open ? "" : "collapsed"}">
+    <section class="formula-control-panel ${open ? "" : "collapsed"} ${readOnly ? "read-only" : ""}">
       <div class="formula-control-head">
-        <h3>${esc(position)} Score Controls</h3>
+        <h3>${readOnly ? `${esc(position)} Weekly Controls Used Here` : `${esc(position)} Score Controls`}</h3>
         <div class="formula-control-actions">
           ${state.weeklySkillDefaultMessage ? `<span class="formula-save-note">${esc(state.weeklySkillDefaultMessage)}</span>` : ""}
-          <button id="weekly-skill-toggle-controls" class="mini-action">${open ? "Hide" : "Show"}</button>
-          ${open ? `<button id="weekly-skill-set-default" class="mini-action">Set Default</button>` : ""}
-          ${open ? `<button id="weekly-skill-reset-formula" class="mini-action">Reset Formula</button>` : ""}
+          ${readOnly ? `<button class="mini-action primary" data-page="weeklyFantasy">Weekly Fantasy Rankings Screen</button>` : `<button id="weekly-skill-toggle-controls" class="mini-action">${open ? "Hide" : "Show"}</button>`}
+          ${open && !readOnly ? `<button id="weekly-skill-set-default" class="mini-action">Set Default</button>` : ""}
+          ${open && !readOnly ? `<button id="weekly-skill-reset-formula" class="mini-action">Reset Formula</button>` : ""}
         </div>
       </div>
       ${open ? `
-      <div class="formula-toggle-row">
-        ${weeklySkillToggleButton("useStatRanks", "Use StatRanks")}
-        ${weeklySkillToggleButton("useLast5", "Use Last 5")}
-        ${weeklySkillToggleButton("useProduction", "Use Production")}
+      <div class="formula-slider-grid skill-formula-grid primary-source-grid">
+        ${weeklySkillSlider("statRanks", "StatRanks", 0, 100, readOnly)}
+        ${weeklySkillSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
+        ${weeklySkillSlider("production2025", "2025 Production", 0, 100, readOnly)}
+        ${weeklySkillSlider("production2026", "2026 Production", 0, 100, readOnly)}
       </div>
       <p class="formula-help">Hover a slider for its meaning. Add optional factors only when you want them active.</p>
       <div class="formula-slider-grid skill-formula-grid">
-        ${baseSliders.map(([key, label]) => weeklySkillSlider(key, label)).join("")}
-        ${extraFactors.map((key) => weeklySkillSlider(key, weeklySkillFactorOptions.find(([id]) => id === key)?.[1] || key)).join("")}
+        ${baseSliders.map(([key, label]) => weeklySkillSlider(key, label, 0, 200, readOnly)).join("")}
+        ${extraFactors.map((key) => weeklySkillSlider(key, weeklySkillFactorOptions.find(([id]) => id === key)?.[1] || key, 0, 200, readOnly)).join("")}
       </div>
+      ${readOnly ? "" : `
       <div class="factor-add-row">
         <button id="weekly-skill-add-factor" class="mini-action" ${availableFactors.length ? "" : "disabled"}>+</button>
         ${optionSelect("weekly-skill-factor-select", availableFactors[0]?.[0] || "", availableFactors.length ? availableFactors : [["", "No more suggested factors"]])}
         <span>Suggested factors: game script, team total, opponent TD weakness.</span>
       </div>
+      `}
       ` : ""}
     </section>
   `;
@@ -9821,8 +9865,10 @@ function renderFantasyRanks(kind) {
         </div>
       </div>
       ${isWeekly ? `<div class="scan-strip">${teamRankingsStatusNote()}${snapsStatsStatusNote()}</div>` : `<div class="scan-strip">${fantasyProsAdpStatusNote()}</div>`}
-      ${isWeeklyQb ? renderWeeklyQbFormulaControls() : ""}
-      ${isWeekly ? renderWeeklySkillFormulaControls(state[positionKey]) : ""}
+      ${isWeeklyQb ? renderWeeklyQbFormulaControls(false) : ""}
+      ${isWeekly ? renderWeeklySkillFormulaControls(state[positionKey], false) : ""}
+      ${!isWeekly && state[positionKey] === "QB" ? renderWeeklyQbFormulaControls(true) : ""}
+      ${!isWeekly && ["RB", "WR", "TE"].includes(state[positionKey]) ? renderWeeklySkillFormulaControls(state[positionKey], true) : ""}
       <div class="table-scroll fantasy-rank-scroll">
         ${fantasyRankTable(columns, rows, filtered, state[positionKey], state[sortKey], state[directionKey])}
       </div>
@@ -11049,6 +11095,10 @@ function render() {
   content.innerHTML = views[state.page]();
   disableMobileTextAssist(content);
   disableMobileTextAssist(document.querySelector(".topbar") || document);
+  content.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => {
+    state.page = button.dataset.page;
+    render();
+  }));
   document.querySelectorAll("[data-live]").forEach((button) => button.addEventListener("click", () => {
     state.liveView = button.dataset.live;
     render();
