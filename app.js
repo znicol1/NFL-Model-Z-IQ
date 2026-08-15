@@ -7333,11 +7333,17 @@ function weeklyQbStatRankWeight() {
   return Math.max(0, Math.min(1, num(stored, options.useStatRanks ? weights.statRanks : 0) / 100));
 }
 
+function hasActual2026Production() {
+  const logs = window.FOOTBALLGUYS_GAME_LOGS;
+  return Number(logs?.year) >= 2026 && Array.isArray(logs?.players) && logs.players.some((player) => Number(player?.gamesPlayed) > 0);
+}
+
 function weeklyQbProductionWeight() {
   const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
   const options = { ...defaultWeeklyQbOptions, ...state.weeklyQbOptions };
   if (!options.useProduction && state.weeklyQbWeights?.production2025 === undefined && state.weeklyQbWeights?.production2026 === undefined) return 0;
-  return Math.max(0, Math.min(1, (num(weights.production2025, 100) + num(weights.production2026, 100)) / 200));
+  const active2026Weight = hasActual2026Production() ? num(weights.production2026, 100) : 0;
+  return Math.max(0, Math.min(1, Math.max(num(weights.production2025, 100), active2026Weight) / 100));
 }
 
 function weightedStatRankScore(statRank, ratingFallback, statWeight) {
@@ -7560,7 +7566,8 @@ function weeklySkillProductionWeight() {
   const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
   const options = weeklySkillOptions();
   if (!options.useProduction && state.weeklySkillWeights?.production2025 === undefined && state.weeklySkillWeights?.production2026 === undefined) return 0;
-  return Math.max(0, Math.min(1, (num(weights.production2025, 100) + num(weights.production2026, 100)) / 200));
+  const active2026Weight = hasActual2026Production() ? num(weights.production2026, 100) : 0;
+  return Math.max(0, Math.min(1, Math.max(num(weights.production2025, 100), active2026Weight) / 100));
 }
 
 function weeklySkillLast5Blend(mode = "blend") {
