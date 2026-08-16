@@ -81,6 +81,7 @@ const defaultWeeklySkillWeights = {
   oline: 100,
   ppg: 100,
   qb: 100,
+  cbMatch: 100,
   usage: 100,
   redZone: 100,
   gameScript: 0,
@@ -7753,18 +7754,43 @@ function weeklyGameScriptValue(teamName, week = selectedSiteWeek()) {
   return Number(margin.toFixed(1));
 }
 
+function weeklySkillGameScriptFactors(row, position) {
+  const options = weeklySkillOptions();
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const active = (options.extraFactors || []).includes("gameScript");
+  const weight = active ? num(weights.gameScript, 0) / 100 : 0;
+  if (!weight) return { rush: 1, receiving: 1, td: 1 };
+  const margin = num(row.extras["Game Script"], 0);
+  const lead = Math.max(0, margin);
+  const trail = Math.max(0, -margin);
+  if (position === "RB") {
+    return {
+      rush: Math.max(0.88, Math.min(1.18, 1 + ((lead / 55) * weight) - ((trail / 160) * weight))),
+      receiving: Math.max(0.9, Math.min(1.16, 1 + ((trail / 70) * weight) - ((lead / 220) * weight))),
+      td: Math.max(0.92, Math.min(1.1, 1 + ((margin / 140) * weight))),
+    };
+  }
+  if (position === "WR") {
+    return {
+      rush: 1,
+      receiving: Math.max(0.86, Math.min(1.18, 1 + ((trail / 70) * weight) - ((lead / 170) * weight))),
+      td: Math.max(0.92, Math.min(1.08, 1 + ((trail / 130) * weight) - ((lead / 220) * weight))),
+    };
+  }
+  return {
+    rush: 1,
+    receiving: Math.max(0.9, Math.min(1.12, 1 + ((trail / 105) * weight) - ((lead / 210) * weight))),
+    td: Math.max(0.93, Math.min(1.07, 1 + ((trail / 150) * weight) - ((lead / 260) * weight))),
+  };
+}
+
 function weeklySkillExtraFactorMultiplier(row, position) {
   const options = weeklySkillOptions();
   const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
-  const active = (options.extraFactors || []).filter((key) => num(weights[key], 0) !== 0);
+  const active = (options.extraFactors || []).filter((key) => key !== "gameScript" && num(weights[key], 0) !== 0);
   if (!active.length) return 1;
   return active.reduce((factor, key) => {
     const weight = num(weights[key], 0) / 100;
-    if (key === "gameScript") {
-      const margin = num(row.extras["Game Script"], 0);
-      const positionLean = position === "RB" ? margin : -margin * 0.35;
-      return factor * Math.max(0.92, Math.min(1.08, 1 + (positionLean / 80) * weight));
-    }
     if (key === "teamTotal") {
       return factor * Math.max(0.92, Math.min(1.1, 1 + ((num(row.extras["Team Total"], 22) - 22) / 100) * weight));
     }
@@ -7803,14 +7829,15 @@ function weeklyRbScoreBreakdown(row, mode = "blend") {
   const ypgF = Math.max(0.93, Math.min(1.07, 1 + (16.5 - ypgRank) / 220));
   const ppgF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - ppgRank) / 180, "ppg")));
   const snapF = Math.max(0.45, Math.min(1.15, 1 + scaleTerm((snapPct / 70) - 1, "usage")));
+  const scriptF = weeklySkillGameScriptFactors(row, "RB");
   const targetsEff = scaleTerm(targetsEffBase, "usage") * (jF ** 0.25) * (ypgF ** 0.2);
   const rzEff = scaleTerm(rzEffBase, "redZone") * (ppgF ** 0.3);
-  const carries = (15 * depthF * snapF * (jF ** scaleExp(0.35, "talent")) * (matchF ** scaleExp(0.38, "matchup")) * (ypgF ** 0.14)) ** 0.98;
+  const carries = (15 * scriptF.rush * depthF * snapF * (jF ** scaleExp(0.35, "talent")) * (matchF ** scaleExp(0.38, "matchup")) * (ypgF ** 0.14)) ** 0.98;
   const ypc = 4.25 * (jF ** scaleExp(0.35, "talent")) * (matchF ** scaleExp(0.3, "matchup")) * (olF ** scaleExp(0.38, "oline")) * (ypgF ** 0.28);
   const rushYds = carries * ypc;
-  const rec = (targetsEff * 0.72) ** 0.98;
+  const rec = (targetsEff * scriptF.receiving * 0.72) ** 0.98;
   const recYds = rec * (7.3 * (jF ** scaleExp(0.2, "talent")) * (matchF ** scaleExp(0.22, "matchup")) * (ypgF ** 0.19));
-  const tds = (rzEff * 0.17 * (jF ** scaleExp(1.2, "talent")) * (matchF ** scaleExp(0.88, "matchup")) * olF * (ppgF ** scaleExp(0.55, "ppg"))) ** 0.95;
+  const tds = (rzEff * scriptF.td * 0.17 * (jF ** scaleExp(1.2, "talent")) * (matchF ** scaleExp(0.88, "matchup")) * olF * (ppgF ** scaleExp(0.55, "ppg"))) ** 0.95;
   const extraF = weeklySkillExtraFactorMultiplier(row, "RB");
   const standardBase = Math.max(0, 0.1 * rushYds + 0.1 * recYds + 6 * tds);
   const standard = playOK * standardBase * extraF;
@@ -7980,18 +8007,19 @@ function weeklyWrScoreBreakdown(row, mode = "blend") {
   const depthF = Math.max(0.45, 1 - scaleTerm(0.1 * (dBkt - 1), "depth"));
   const qbF = (Math.max(0.85, Math.min(1.15, 1 + scaleTerm((qbRat - 75) / 180, "qb"))) * Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - qbRank) / 170, "qb")))) ** 0.5;
   const matchF = Math.max(0.72, Math.min(1.38, 1 + scaleTerm((50 - matchVal) / 70, "matchup")));
-  const cbF = Math.max(0.9, Math.min(1.1, 1 + (50 - cbDepthRate) / 300));
+  const cbF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((50 - cbDepthRate) / 300, "cbMatch")));
   const mF = matchF * cbF;
   const ypgF = Math.max(0.93, Math.min(1.07, 1 + (16.5 - num(row.extras["Team YPG Rank"], 16.5)) / 220));
   const ppgF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - ppgRank) / 180, "ppg")));
   const passTDF = Math.max(0.92, Math.min(1.07, 1 + (16.5 - passTDRank) / 200));
   const wrF = Math.max(0.78, Math.min(1.28, 0.9 + scaleTerm(0.38 * (wrRate - 75) / 25, "talent")));
   const usageF = Math.max(0.45, Math.min(1.2, 1 + scaleTerm((snapPct / 75) - 1, "usage")));
-  const targetEff = scaleTerm(targets, "usage") * depthF * usageF * (mF ** scaleExp(0.72, "matchup")) * (qbF ** scaleExp(0.2, "qb")) * (wrF ** scaleExp(0.35, "talent")) * (ypgF ** 0.15);
+  const scriptF = weeklySkillGameScriptFactors(row, "WR");
+  const targetEff = scaleTerm(targets, "usage") * scriptF.receiving * depthF * usageF * (mF ** scaleExp(0.72, "matchup")) * (qbF ** scaleExp(0.2, "qb")) * (wrF ** scaleExp(0.35, "talent")) * (ypgF ** 0.15);
   const rz = scaleTerm(rzBase, "redZone") * depthF * (mF ** scaleExp(0.82, "matchup")) * (ppgF ** 0.25);
   const rec = targetEff * 0.64;
   const recYds = rec * (11.7 * (mF ** scaleExp(0.55, "matchup")) * (wrF ** scaleExp(0.32, "talent")) * (qbF ** scaleExp(0.18, "qb")));
-  const tds = (rz * 0.125 * (mF ** scaleExp(1.08, "matchup")) * (wrF ** scaleExp(0.55, "talent")) * qbF * ppgF * passTDF * ((snapPct / 75) ** scaleExp(0.12, "usage"))) ** 0.95;
+  const tds = (rz * scriptF.td * 0.125 * (mF ** scaleExp(1.08, "matchup")) * (wrF ** scaleExp(0.55, "talent")) * qbF * ppgF * passTDF * ((snapPct / 75) ** scaleExp(0.12, "usage"))) ** 0.95;
   const extraF = weeklySkillExtraFactorMultiplier(row, "WR");
   const standard = playOK * Math.max(0, 0.1 * recYds + 6 * tds) * extraF;
   const half = playOK * Math.max(0, 0.1 * recYds + 6 * tds + 0.5 * rec) * extraF;
@@ -8024,11 +8052,12 @@ function weeklyTeScoreBreakdown(row, mode = "blend") {
   const olF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - olRank) / 180, "oline")));
   const ppgF = Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - ppgRank) / 180, "ppg")));
   const usageF = Math.max(0.45, Math.min(1.18, 1 + scaleTerm((snapPct / 70) - 1, "usage")));
-  const targetEff = scaleTerm(targets, "usage") * depthF * usageF * (qbF ** scaleExp(0.2, "qb")) * (ppgF ** 0.15);
+  const scriptF = weeklySkillGameScriptFactors(row, "TE");
+  const targetEff = scaleTerm(targets, "usage") * scriptF.receiving * depthF * usageF * (qbF ** scaleExp(0.2, "qb")) * (ppgF ** 0.15);
   const rz = scaleTerm(rzBase, "redZone") * depthF * (ppgF ** 0.25);
   const rec = targetEff * 0.67;
   const recYds = rec * (10.4 * (qbF ** scaleExp(0.2, "qb")) * (posF ** scaleExp(0.32, "matchup")) * (olF ** scaleExp(0.12, "oline")) * Math.max(0.92, Math.min(1.08, 1 + scaleTerm((pRating - 75) / 350, "talent"))));
-  const tds = (rz * 0.12 * qbF * posF * ppgF * ((snapPct / 75) ** scaleExp(0.12, "usage"))) ** 0.95;
+  const tds = (rz * scriptF.td * 0.12 * qbF * posF * ppgF * ((snapPct / 75) ** scaleExp(0.12, "usage"))) ** 0.95;
   const extraF = weeklySkillExtraFactorMultiplier(row, "TE");
   const standardBase = Math.max(0, 0.1 * recYds + 6 * tds);
   const standard = playOK * standardBase * extraF;
@@ -9477,9 +9506,10 @@ const weeklySkillSliderTips = {
   oline: "Blocking help from line.",
   ppg: "Model projected team scoring influence.",
   qb: "Quarterback support for catchers.",
+  cbMatch: "WR's likely CB matchup difficulty.",
   usage: "Snaps, carries, targets.",
   redZone: "High-value touchdown chances.",
-  gameScript: "Projected lead or trail.",
+  gameScript: "Lead helps RB rush; deficit helps catches.",
   teamTotal: "Projected team points.",
   opponentTd: "Opponent touchdown weakness.",
 };
@@ -9521,6 +9551,7 @@ function renderWeeklySkillFormulaControls(position, readOnly = false) {
     ["ppg", "Z's Projected PPG"],
     ["oline", "O-Line"],
     ...(position === "RB" ? [] : [["qb", "QB Context"]]),
+    ...(position === "WR" ? [["cbMatch", "CB Match"]] : []),
   ];
   const productionSliders = [
     ["usage", "Usage"],
