@@ -255,14 +255,52 @@ const defaultHomeFieldAdvantages = {
   "Washington Commanders": 0.5,
 };
 
-const kickerStadiumTiers = {
-  "Arizona Cardinals": 2, "Atlanta Falcons": 2, "Dallas Cowboys": 2, "Denver Broncos": 2, "Detroit Lions": 2, "Houston Texans": 2,
-  "Indianapolis Colts": 2, "Las Vegas Raiders": 2, "LA Chargers": 2, "LA Rams": 2, "Minnesota Vikings": 2, "New Orleans Saints": 2,
-  "Baltimore Ravens": 1, "Carolina Panthers": 1, "Cincinnati Bengals": 1, "Green Bay Packers": 1, "Jacksonville Jaguars": 1,
-  "Miami Dolphins": 1, "San Francisco 49ers": 1, "Tampa Bay Buccaneers": 1, "Tennessee Titans": 1,
-  "Buffalo Bills": 0, "Chicago Bears": 0, "Cleveland Browns": 0, "Kansas City Chiefs": 0, "New England Patriots": 0,
-  "New York Giants": 0, "New York Jets": 0, "Philadelphia Eagles": 0, "Pittsburgh Steelers": 0, "Washington Commanders": 0,
+const kickerStadiumRatings = {
+  "Arizona Cardinals": { stadium: "State Farm Stadium", rating: 2 },
+  "Atlanta Falcons": { stadium: "Mercedes-Benz Stadium", rating: 2 },
+  "Baltimore Ravens": { stadium: "M&T Bank Stadium", rating: 1 },
+  "Buffalo Bills": { stadium: "Highmark Stadium", rating: -1 },
+  "Carolina Panthers": { stadium: "Bank of America Stadium", rating: 1 },
+  "Chicago Bears": { stadium: "Soldier Field", rating: -1 },
+  "Cincinnati Bengals": { stadium: "Paycor Stadium", rating: 1 },
+  "Cleveland Browns": { stadium: "Huntington Bank Field", rating: -1 },
+  "Dallas Cowboys": { stadium: "AT&T Stadium", rating: 2 },
+  "Denver Broncos": { stadium: "Empower Field at Mile High", rating: 3 },
+  "Detroit Lions": { stadium: "Ford Field", rating: 2 },
+  "Green Bay Packers": { stadium: "Lambeau Field", rating: -1 },
+  "Houston Texans": { stadium: "NRG Stadium", rating: 2 },
+  "Indianapolis Colts": { stadium: "Lucas Oil Stadium", rating: 2 },
+  "Jacksonville Jaguars": { stadium: "EverBank Stadium", rating: 1 },
+  "Kansas City Chiefs": { stadium: "Arrowhead Stadium", rating: 0 },
+  "Las Vegas Raiders": { stadium: "Allegiant Stadium", rating: 2 },
+  "LA Chargers": { stadium: "SoFi Stadium", rating: 2 },
+  "LA Rams": { stadium: "SoFi Stadium", rating: 2 },
+  "Miami Dolphins": { stadium: "Hard Rock Stadium", rating: 1 },
+  "Minnesota Vikings": { stadium: "U.S. Bank Stadium", rating: 2 },
+  "New England Patriots": { stadium: "Gillette Stadium", rating: -1 },
+  "New Orleans Saints": { stadium: "Caesars Superdome", rating: 2 },
+  "New York Giants": { stadium: "MetLife Stadium", rating: -1 },
+  "New York Jets": { stadium: "MetLife Stadium", rating: -1 },
+  "Philadelphia Eagles": { stadium: "Lincoln Financial Field", rating: -1 },
+  "Pittsburgh Steelers": { stadium: "Acrisure Stadium", rating: -1 },
+  "San Francisco 49ers": { stadium: "Levi's Stadium", rating: 1 },
+  "Seattle Seahawks": { stadium: "Lumen Field", rating: -1 },
+  "Tampa Bay Buccaneers": { stadium: "Raymond James Stadium", rating: 1 },
+  "Tennessee Titans": { stadium: "Nissan Stadium", rating: 1 },
+  "Washington Commanders": { stadium: "Northwest Stadium", rating: 0 },
 };
+
+const neutralSiteKickerRatings = [
+  { week: "1", visitor: "San Francisco 49ers", home: "LA Rams", venue: "Melbourne Cricket Ground", rating: 0 },
+  { week: "3", visitor: "Baltimore Ravens", home: "Dallas Cowboys", venue: "Maracana Stadium", rating: 0 },
+  { week: "4", visitor: "Indianapolis Colts", home: "Washington Commanders", venue: "Tottenham Hotspur Stadium", rating: 0 },
+  { week: "5", visitor: "Philadelphia Eagles", home: "Jacksonville Jaguars", venue: "Tottenham Hotspur Stadium", rating: 0 },
+  { week: "6", visitor: "Houston Texans", home: "Jacksonville Jaguars", venue: "Wembley Stadium", rating: 0 },
+  { week: "7", visitor: "Pittsburgh Steelers", home: "New Orleans Saints", venue: "Stade de France", rating: 0 },
+  { week: "9", visitor: "Cincinnati Bengals", home: "Atlanta Falcons", venue: "Bernabeu Stadium", rating: 2 },
+  { week: "10", visitor: "New England Patriots", home: "Detroit Lions", venue: "FC Bayern Munich Arena", rating: 1 },
+  { week: "11", visitor: "Minnesota Vikings", home: "San Francisco 49ers", venue: "Estadio Banorte", rating: 3 },
+];
 
 const neutralSiteGames = [
   ["1", "San Francisco 49ers", "LA Rams"],
@@ -3244,6 +3282,24 @@ function scheduleHomeAdvantage(game, mode) {
 
 function isNeutralSiteGame(game) {
   return neutralSiteGames.some(([week, visitor, home]) => String(game.week) === String(week) && normalizeTeamName(normalizeScheduleTeam(game.visitor)) === normalizeTeamName(normalizeScheduleTeam(visitor)) && normalizeTeamName(normalizeScheduleTeam(game.home)) === normalizeTeamName(normalizeScheduleTeam(home)));
+}
+
+function neutralSiteKickerInfo(game) {
+  return neutralSiteKickerRatings.find((item) => String(game?.week) === String(item.week)
+    && normalizeTeamName(normalizeScheduleTeam(game?.visitor)) === normalizeTeamName(normalizeScheduleTeam(item.visitor))
+    && normalizeTeamName(normalizeScheduleTeam(game?.home)) === normalizeTeamName(normalizeScheduleTeam(item.home))) || null;
+}
+
+function kickerStadiumInfoForGame(game) {
+  const neutral = neutralSiteKickerInfo(game);
+  if (neutral) return { stadium: neutral.venue, rating: neutral.rating, neutral: true };
+  const home = normalizeScheduleTeam(game?.home || "");
+  return kickerStadiumRatings[home] || { stadium: home || "Unknown Stadium", rating: 0, neutral: false };
+}
+
+function kickerStadiumRatingForTeamWeek(teamName, week = selectedSiteWeek()) {
+  const game = weeklyGameForTeam(teamName, week);
+  return kickerStadiumInfoForGame(game);
 }
 
 function winChanceFromSpread(spread) {
@@ -8486,7 +8542,8 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     const ranks = teamRankingsByTeam(team.team);
     const mode = scheduleActiveMode({ week });
     const opponentTeam = teamByName(opponent);
-    const tier = kickerStadiumTiers[team.team] ?? 0;
+    const stadiumInfo = kickerStadiumRatingForTeamWeek(team.team, week);
+    const stadiumRating = num(stadiumInfo?.rating, 0);
     const rating = Number.isFinite(Number(madden?.ovr)) ? Number(madden.ovr) : num(depthKicker?.rating, num(workbook.rating, 68));
     const longFg = num(fantasyDetailValue(workbook, "50+ FGs"), Math.max(0, (rating - 70) / 6));
     const teamTotal = scheduleTeamProjectionScore(team, opponentTeam, mode, 0, week);
@@ -8503,7 +8560,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
       + scaleTerm((33 - offenseRank) / 5, "kickerOffense")
       + scaleTerm(longFg / 4, "kickerLongFg")
       + scaleTerm(fgVolume * 1.5, "kickerFgVolume")
-      + scaleTerm(tier * 2, "kickerStadium")
+      + scaleTerm(stadiumRating * 2, "kickerStadium")
       - fourthPenalty;
     const row = {
       ...workbook,
@@ -8523,7 +8580,10 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
         "4th Down Attempts/G": Number.isFinite(Number(ranks?.fourthDownAttemptsRankValue)) ? Number(ranks.fourthDownAttemptsRankValue) : ranks?.fourthDownAttemptsRankValue || "",
         "50+ FGs": Number(longFg.toFixed(1)),
         "FG Volume": Number(fgVolume.toFixed(1)),
-        "Kicker Stadium Tier": tier,
+        "Stadium Rating": stadiumRating,
+        "Kicker Stadium Tier": stadiumRating,
+        "Stadium": stadiumInfo?.stadium || "",
+        "Neutral Site": stadiumInfo?.neutral ? "Yes" : "",
         "Team Offense": Number(num(team.offenseAverage, 84).toFixed(1)),
         "Stat Source": madden ? "Madden + TeamRankings" : depthKicker ? "Depth chart + TeamRankings" : ourladsKicker ? "OurLads PK + TeamRankings" : "Fallback + TeamRankings",
       },
@@ -9069,7 +9129,8 @@ function fantasyColumnTip(label, key) {
     "extra:4th Down Attempts/G": "Actual 4th-down attempts per game; more can reduce FG chances.",
     "extra:50+ FGs": "Long-field-goal input; workbook/player stat when available, otherwise rating fallback.",
     "extra:FG Volume": "Estimated FG opportunity from team offense; player stat import not wired yet.",
-    "extra:Kicker Stadium Tier": "Kicker-friendly stadium tier: 2 best, 0 toughest.",
+    "extra:Kicker Stadium Tier": "Game venue kicking rating: 3 super, 2 strong, 1 mild, 0 neutral, -1 bad.",
+    "extra:Stadium": "Actual stadium used for this week's kicker environment.",
     "extra:Raw Model Score": "Internal unscaled model number before fantasy-point range mapping.",
     "extra:Typical Snap %": "Expected playing-time share from depth or scanned usage.",
     "extra:Typical Targets": "Expected targets from depth or scanned usage.",
@@ -9760,7 +9821,7 @@ const weeklySkillSliderTips = {
   kickerFourthDowns2026: "Ignored until real 2026 4th-down data loads.",
   kickerLongFg: "Long field-goal ability or fallback.",
   kickerFgVolume: "Team-derived field-goal opportunity estimate.",
-  kickerStadium: "Kicker-friendly stadium tier.",
+  kickerStadium: "Game venue kicking boost or penalty.",
 };
 
 const weeklySkillFactorOptions = [
