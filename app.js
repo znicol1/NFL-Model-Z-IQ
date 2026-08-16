@@ -1206,6 +1206,26 @@ function wireSelect(id, key) {
   });
 }
 
+function setFantasyRankPosition(kind, nextPosition) {
+  const isWeekly = kind === "weekly";
+  const positionKey = isWeekly ? "weeklyFantasyPosition" : "seasonFantasyPosition";
+  const viewKey = isWeekly ? "weeklyFantasyView" : "seasonFantasyView";
+  const sortKey = isWeekly ? "weeklyFantasySort" : "seasonFantasySort";
+  const directionKey = isWeekly ? "weeklyFantasySortDirection" : "seasonFantasySortDirection";
+  const depthFilterKey = isWeekly ? "weeklyFantasyDepthFilter" : "seasonFantasyDepthFilter";
+  const teamFilterKey = isWeekly ? "weeklyFantasyTeamFilter" : "seasonFantasyTeamFilter";
+  const normalized = normalizeFantasyPositionLabel(nextPosition);
+  if (state[positionKey] === normalized) return;
+  state[positionKey] = normalized;
+  state[viewKey] = "regular";
+  state[teamFilterKey] = "All Teams";
+  state[depthFilterKey] = "All Depths";
+  state[sortKey] = isWeekly ? "score" : "rank";
+  state[directionKey] = isWeekly ? "desc" : "asc";
+  if (isWeekly) state.weeklyFantasyCompareOnly = false;
+  render();
+}
+
 function liveBasePositions() {
   return ["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"];
 }
@@ -3728,6 +3748,19 @@ function teamPositionScore(team, scope) {
     return [cb, safety].filter((value) => Number.isFinite(Number(value))).reduce((sum, value, _, arr) => sum + num(value) / arr.length, 0);
   }
   return team.positionScores.find((s) => s.position === scope)?.score;
+}
+
+function teamReceivingGroupScore(team, week = selectedSiteWeek()) {
+  if (!team) return "";
+  const wrScore = teamPositionScore(team, "WR");
+  const tePlayers = depthOrderedPlayers(state.players.filter((player) => (
+    normalizeTeamName(player.team) === normalizeTeamName(team.team)
+    && groupPosition(player.position) === "TE"
+    && isPlayerAvailable(player, week)
+  )), week);
+  const te1Score = num(tePlayers[0]?.rating, teamPositionScore(team, "TE"));
+  if (Number.isFinite(Number(wrScore)) && Number.isFinite(Number(te1Score))) return (Number(wrScore) * 0.8) + (Number(te1Score) * 0.2);
+  return Number.isFinite(Number(wrScore)) ? wrScore : te1Score;
 }
 
 function quickTeamRankRows(scope, limit) {
@@ -7002,8 +7035,8 @@ olFactor = clamp(0.94, 1.06, 1 + (16.5 - OLRank) / 240)
 wrFactor = clamp(0.94, 1.06, 1 + (16.5 - WRRank) / 240)
 ppgFactor = clamp(0.92, 1.08, 1 + (16.5 - PPGRank) / 200)
 
-PassYardsTerm = 0.04 * usePassYards * depth^0.7 * rating^0.28 * matchup^0.48 * OL^0.2 * WR^0.28 * PPG^0.2
-PassTDTerm = 4 * usePassTDs * depth^0.7 * rating^0.48 * matchup^0.55 * WR^0.3 * PPG^0.22
+PassYardsTerm = 0.04 * usePassYards * depth^0.7 * rating^0.28 * matchup^0.48 * OL^0.2 * receiving^0.28 * PPG^0.2
+PassTDTerm = 4 * usePassTDs * depth^0.7 * rating^0.48 * matchup^0.55 * receiving^0.3 * PPG^0.22
 RushAttemptsTerm = 0.1 * useRushAttempts * 4.8 * rating^0.25 * matchup^0.26 * PPG^0.15
 RushTDTerm = 6 * useRushTDs * rating^0.4 * matchup^0.35`;
 }
@@ -7021,7 +7054,7 @@ function renderWeeklyQbScoreAudit(rows) {
     ["vQB Rank", "matchRank", 0],
     ["OL Rank", "olRank", 0],
     ["PPG Rank", "ppgRank", 0],
-    ["WR Rank", "wrRank", 0],
+    ["Receiving Rank", "wrRank", 0],
     ["Season PYds", "seaPY", 1],
     ["Last 5 PYds", "lfivePY", 1],
     ["Blended PYds", "usePY", 1],
@@ -7077,6 +7110,23 @@ function weeklyQbToggleButton(key, label) {
   return `<button class="formula-toggle ${active ? "active" : ""}" data-qb-option="${esc(key)}" ${disabled ? "disabled" : ""}><span>${esc(label)}</span></button>`;
 }
 
+const weeklyQbSliderTips = {
+  statRanks: "How much scanned team stat ranks influence context.",
+  last5: "How much recent production blends over season production.",
+  production2025: "How much 2025 production feeds production sliders.",
+  production2026: "Ignored until real 2026 game logs are loaded.",
+  talent: "Your QB rating influence.",
+  matchup: "Opponent vQB defensive matchup influence.",
+  depth: "Depth chart and availability influence.",
+  oline: "Offensive line support influence.",
+  ppg: "Model projected team scoring influence.",
+  wr: "WR1-4 plus TE1 receiving support influence.",
+  passYards: "Passing yard production influence.",
+  passTds: "Passing touchdown production influence.",
+  rushAttempts: "QB rushing attempt production influence.",
+  rushTds: "QB rushing touchdown production influence.",
+};
+
 function weeklyQbSlider(key, label, min = 0, max = 200, readOnly = false) {
   const rawValue = num(state.weeklyQbWeights[key], defaultWeeklyQbWeights[key] ?? 100);
   const value = Math.max(min, Math.min(max, Math.round(rawValue / 10) * 10));
@@ -7084,7 +7134,7 @@ function weeklyQbSlider(key, label, min = 0, max = 200, readOnly = false) {
   const productionWeight = weeklyQbProductionWeight();
   const disabled = readOnly || (productionKeys.includes(key) && productionWeight <= 0);
   return `
-    <label class="formula-slider ${disabled ? "disabled" : ""}">
+    <label class="formula-slider ${disabled ? "disabled" : ""}" title="${esc(weeklyQbSliderTips[key] || "Adjusts this QB score factor.")}">
       <span>${esc(label)}</span>
       <input type="range" min="${min}" max="${max}" step="10" value="${esc(value)}" data-qb-weight="${esc(key)}" ${disabled ? "disabled" : ""} />
       <b>${esc(value)}%</b>
@@ -7112,7 +7162,7 @@ function renderWeeklyQbFormulaControls(readOnly = false) {
         ${weeklyQbSlider("ppg", "Z's Projected PPG", 0, 200, readOnly)}
         ${weeklyQbSlider("depth", "Depth", 0, 200, readOnly)}
         ${weeklyQbSlider("oline", "O-Line", 0, 200, readOnly)}
-        ${weeklyQbSlider("wr", "WR Group", 0, 200, readOnly)}
+        ${weeklyQbSlider("wr", "Receiving Group", 0, 200, readOnly)}
       </div>
       <div class="formula-slider-grid primary-source-grid">
         ${weeklyQbSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
@@ -7368,7 +7418,7 @@ function weeklyQbScoreBreakdown(row, mode = "blend") {
   const matchRank = num(row.extras["Matchup Rating (Low is good)"], 16.5);
   const rateP = num(row.rating, 75);
   const olRank = num(row.extras["OL Rank"], 16.5);
-  const wrRank = num(row.extras["WR Group Rank"], 16.5);
+  const wrRank = num(row.extras["Receiving Group Rank"] || row.extras["WR Group Rank"], 16.5);
   const ppgRank = num(row.extras["PPG Rank"], 16.5);
   const blendProduction = (value, fallback) => fallback + ((num(value, fallback) - fallback) * productionWeight);
   const seaPY = blendProduction(row.extras["Typical Pass Yards"], 225);
@@ -7406,7 +7456,7 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
   const teams = state.data?.teams || [];
   const allQbs = state.players.filter((player) => player.team !== "Free Agent" && (groupPosition(player.position) === "QB" || player.position === "QB"));
   const rankedTeamsByOl = teams.map((team) => ({ team, score: teamPositionScore(team, "OL") })).filter((row) => Number.isFinite(Number(row.score)));
-  const rankedTeamsByWr = teams.map((team) => ({ team, score: teamPositionScore(team, "WR") })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamsByWr = teams.map((team) => ({ team, score: teamReceivingGroupScore(team, week) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByVqb = teams.map((team) => ({ team, score: qbDefenseRatingForTeam(team) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamsByStatVqb = teams.map((team) => ({ team, score: teamRankingsByTeam(team.team)?.passAllowedStatAvg })).filter((row) => Number.isFinite(Number(row.score)));
   const statRankWeight = weeklyQbStatRankWeight();
@@ -7422,7 +7472,7 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
     const opponentRanks = teamRankingsByTeam(opponent);
     const statPack = weeklyQbStatPack(player, workbookRow);
     const olRating = team ? teamPositionScore(team, "OL") : averageFinite(teams.map((item) => teamPositionScore(item, "OL")), 82);
-    const wrRating = team ? teamPositionScore(team, "WR") : averageFinite(teams.map((item) => teamPositionScore(item, "WR")), 84);
+    const wrRating = team ? teamReceivingGroupScore(team, week) : averageFinite(teams.map((item) => teamReceivingGroupScore(item, week)), 84);
     const olRow = { team, score: olRating };
     const wrRow = { team, score: wrRating };
     const ppgRow = { team, score: weightedStatRankScore(teamRankingsByTeam(player.team)?.offPointsRank, num(team?.offenseRating, 16), statRankWeight) };
@@ -7443,6 +7493,8 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
       "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(3)) : "",
       "OL Rank": rankNumber(rankedTeamsByOl, (item) => item.score, olRow),
       "PPG Rank": rankNumber(rankedByPpg, (item) => item.score, ppgRow),
+      "Receiving Group Rating": Number.isFinite(Number(wrRating)) ? Number(wrRating.toFixed(3)) : "",
+      "Receiving Group Rank": rankNumber(rankedTeamsByWr, (item) => item.score, wrRow),
       "WR Group Rating": Number.isFinite(Number(wrRating)) ? Number(wrRating.toFixed(3)) : "",
       "WR Group Rank": rankNumber(rankedTeamsByWr, (item) => item.score, wrRow),
       "Typical Pass Yards": Number(statPack.season.passYards.toFixed(1)),
@@ -8279,7 +8331,7 @@ function seasonTeamContextValueFor(row, position) {
   if (position === "QB") return averageFinite([
     fantasyDetailValue(row, "OL Rank"),
     fantasyDetailValue(row, "PPG Rank"),
-    fantasyDetailValue(row, "WR Group Rank"),
+    fantasyDetailValue(row, "Receiving Group Rank") || fantasyDetailValue(row, "WR Group Rank"),
   ], "");
   if (position === "RB") return averageFinite([
     fantasyDetailValue(row, "OL Rank"),
@@ -8619,7 +8671,8 @@ function fantasyColumnTip(label, key) {
     "extra:Player Rating Rank": "Rank of this QB rating among all QBs in this view.",
     "extra:OL Rank": "Rank of this QB team's O-line rating against the league.",
     "extra:PPG Rank": "Rank of this QB team's scoring offense from TeamRankings/offense rating.",
-    "extra:WR Group Rank": "Rank of this QB team's WR group rating against the league.",
+    "extra:Receiving Group Rank": "Rank of WR1-4 plus TE1 receiving support; lower is better.",
+    "extra:WR Group Rank": "Legacy alias for receiving group rank.",
     "extra:Games Played": "Footballguys games with non-zero QB stat lines.",
     "extra:Typical Pass Yards": "Average pass yards from Footballguys, skipping games not played.",
     "extra:Pass Yards Bonus Score": "Pass-yard average divided by 100, then multiplied by 2.",
@@ -8799,7 +8852,7 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("PPG Rank", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("WR Rank", "extra:WR Group Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Rec Rank", "extra:Receiving Group Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, sortDir: "desc" }),
       fantasyColumn("PYds", "extra:Typical Pass Yards", "num cf", { group: "Production", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("PTD", "extra:Typical Pass TDs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -8959,9 +9012,10 @@ function fantasyValue(row, key, position) {
   if (key === "team") return row.team ? teamCellFull(row.team) : "-";
   if (key === "opponent") return row.opponent ? teamCellFull(row.opponent) : "-";
   if (key === "seasonContext") {
-    return `<div class="fantasy-extra-chips compact">${["OL Rank", "PPG Rank", "QB Rating", "QB Rank", "WR Group Rank"].map((label) => {
-      const value = fantasyDetailValue(row, label);
-      return value === null || value === undefined || value === "" ? "" : `<span><b>${esc(label)}</b>${esc(fantasyDisplay(value, 1))}</span>`;
+    return `<div class="fantasy-extra-chips compact">${["OL Rank", "PPG Rank", "QB Rating", "QB Rank", "Receiving Group Rank"].map((label) => {
+      const value = fantasyDetailValue(row, label) || (label === "Receiving Group Rank" ? fantasyDetailValue(row, "WR Group Rank") : "");
+      const shown = label === "Receiving Group Rank" ? "Receiving Rank" : label;
+      return value === null || value === undefined || value === "" ? "" : `<span><b>${esc(shown)}</b>${esc(fantasyDisplay(value, 1))}</span>`;
     }).join("")}</div>`;
   }
   if (key === "seasonWeeks") {
@@ -9278,11 +9332,15 @@ function wireWeeklyQbFormulaControls() {
 }
 
 const weeklySkillSliderTips = {
+  statRanks: "How much scanned team stat ranks influence context.",
+  last5: "How much recent production blends over season production.",
+  production2025: "How much 2025 production feeds usage stats.",
+  production2026: "Ignored until real 2026 game logs are loaded.",
   depth: "Depth chart role and availability.",
   matchup: "Opponent position strength.",
   talent: "Your player rating.",
   oline: "Blocking help from line.",
-  ppg: "Team scoring environment.",
+  ppg: "Model projected team scoring influence.",
   qb: "Quarterback support for catchers.",
   usage: "Snaps, carries, targets.",
   redZone: "High-value touchdown chances.",
@@ -9791,6 +9849,7 @@ function renderFantasyRanks(kind) {
   const positions = fantasyRankPositions(kind);
   const normalizedPosition = normalizeFantasyPositionLabel(state[positionKey]);
   state[positionKey] = positions.includes(normalizedPosition) ? normalizedPosition : positions[0] || "QB";
+  if (isWeekly && !positions.includes(state.weeklyFantasyPosition)) state.weeklyFantasyPosition = "QB";
   const isWeeklyQb = isWeekly && state[positionKey] === "QB";
   const item = fantasyRankItem(kind, state[positionKey]);
   const usesPpr = ["RB", "WR", "TE"].includes(state[positionKey]);
@@ -9818,17 +9877,14 @@ function renderFantasyRanks(kind) {
   const weekLabel = isWeekly ? esc(siteWeekLabel()) : "";
   const formulaNote = item.scoreFormulaSample ? item.scoreFormulaSample : "No score formula was stored in the exported sample for this sheet.";
   setTimeout(() => {
-    document.querySelector(`#${kind}-fantasy-position`)?.addEventListener("change", (event) => {
+    const positionSelect = document.querySelector(`#${kind}-fantasy-position`);
+    const changeFantasyPosition = (event) => {
       const nextPosition = normalizeFantasyPositionLabel(event.target.value);
-      state[positionKey] = nextPosition;
-      state[viewKey] = "regular";
-      state[teamFilterKey] = "All Teams";
-      state[depthFilterKey] = "All Depths";
-      state[sortKey] = isWeekly ? "score" : "rank";
-      state[directionKey] = isWeekly ? "desc" : "asc";
-      if (isWeekly) state.weeklyFantasyCompareOnly = false;
-      render();
-    });
+      if (!positions.includes(nextPosition) || state[positionKey] === nextPosition) return;
+      setFantasyRankPosition(kind, nextPosition);
+    };
+    positionSelect?.addEventListener("input", changeFantasyPosition);
+    positionSelect?.addEventListener("change", changeFantasyPosition);
     wireSelect(`${kind}-fantasy-view`, viewKey);
     wireSelect(`${kind}-fantasy-sort`, sortKey);
     wireSelect(`${kind}-fantasy-limit`, limitKey);
@@ -10148,7 +10204,7 @@ function fantasySourceStyle(position, key, value, reverse = false) {
 function fantasyContextChips(row, position) {
   if (!row) return "";
   const labels = position === "QB"
-    ? ["OL Rank", "PPG Rank", "WR Group Rank"]
+    ? ["OL Rank", "PPG Rank", "Receiving Group Rank"]
     : position === "RB"
       ? ["OL Rank", "YPG Rank", "PPG Rank", "Game Script", "Team Total"]
       : position === "DST"
@@ -10164,6 +10220,7 @@ function fantasyContextChips(row, position) {
     const shortLabel = {
       "OL Rank": "OL",
       "PPG Rank": "PPG",
+      "Receiving Group Rank": "REC",
       "WR Group Rank": "WRs",
       "YPG Rank": "YPG",
       "QB Rank": "QB",
@@ -11121,6 +11178,10 @@ function render() {
   content.innerHTML = views[state.page]();
   disableMobileTextAssist(content);
   disableMobileTextAssist(document.querySelector(".topbar") || document);
+  content.querySelector("#weekly-fantasy-position")?.addEventListener("input", (event) => setFantasyRankPosition("weekly", event.target.value));
+  content.querySelector("#weekly-fantasy-position")?.addEventListener("change", (event) => setFantasyRankPosition("weekly", event.target.value));
+  content.querySelector("#season-fantasy-position")?.addEventListener("input", (event) => setFantasyRankPosition("season", event.target.value));
+  content.querySelector("#season-fantasy-position")?.addEventListener("change", (event) => setFantasyRankPosition("season", event.target.value));
   content.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => {
     state.page = button.dataset.page;
     render();
