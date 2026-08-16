@@ -1,5 +1,5 @@
 window.TEAM_RANKINGS_SCAN = {
-  "fetchedAt": "2026-08-16T12:02:33.134Z",
+  "fetchedAt": "2026-08-16T12:52:09.993Z",
   "source": "teamrankings.com",
   "metrics": [
     {

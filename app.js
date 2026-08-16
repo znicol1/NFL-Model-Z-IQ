@@ -1620,6 +1620,23 @@ function ratingBadge(value) {
   return `<span class="rating-fill" style="--pct:${pct}%; --rating-bg:${ratingScaleColor(value, 68, 100)}"><span>${fmt(value, 0)}</span></span>`;
 }
 
+function displayPersonName(value) {
+  const raw = String(value || "").replace(/\s+\(([A-Z]{2,3}|LA|LV|SF|TB|KC|NE|NO|GB|ARI|ATL|BAL|BUF|CAR|CHI|CIN|CLE|DAL|DEN|DET|HOU|IND|JAX|LAC|LAR|MIA|MIN|NYG|NYJ|PHI|PIT|SEA|TEN|WAS)\)\s*$/i, "").trim();
+  if (!raw) return "";
+  const mostlyUpper = raw.replace(/[^A-Za-z]/g, "") === raw.replace(/[^A-Za-z]/g, "").toUpperCase();
+  const base = mostlyUpper
+    ? raw.toLowerCase().replace(/[A-Za-z]+(?:-[A-Za-z]+)*/g, (word) => word.split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join("-"))
+    : raw;
+  return base
+    .replace(/\bIi\b/g, "II")
+    .replace(/\bIii\b/g, "III")
+    .replace(/\bIv\b/g, "IV")
+    .replace(/\bJr\b\.?/g, "Jr.")
+    .replace(/\bSr\b\.?/g, "Sr.")
+    .replace(/\bMc([a-z])/g, (_, letter) => `Mc${letter.toUpperCase()}`)
+    .replace(/\bO'([a-z])/g, (_, letter) => `O'${letter.toUpperCase()}`);
+}
+
 function pffPositionSlug(pos) {
   const group = groupPosition(pos);
   const map = { QB: "qb", RB: "hb", WR: "wr", TE: "te", OT: "t", OG: "g", C: "c", IDL: "di", EDGE: "ed", LB: "lb", CB: "cb", S: "s" };
@@ -7381,6 +7398,24 @@ function averageFinite(values, fallback = null) {
   return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : fallback;
 }
 
+function applyFantasyScoreRange(rows, minScore, maxScore) {
+  const rawValues = rows.map((row) => Number(row.score)).filter(Number.isFinite);
+  const low = Math.min(...rawValues);
+  const high = Math.max(...rawValues);
+  rows.forEach((row) => {
+    const raw = Number(row.score);
+    row.extras ||= {};
+    row.extras["Raw Model Score"] = Number.isFinite(raw) ? Number(raw.toFixed(2)) : "";
+    const pct = Number.isFinite(raw) && high > low ? (raw - low) / (high - low) : 0.5;
+    const ranged = minScore + (Math.max(0, Math.min(1, pct)) * (maxScore - minScore));
+    row.score = Number(ranged.toFixed(1));
+    row.seasonScore = row.score;
+    row.last5Score = row.score;
+    row.value = row.score;
+  });
+  return rows;
+}
+
 function floorTo(value, step) {
   const number = Number(value);
   return Number.isFinite(number) && step ? Math.floor(number / step) * step : "";
@@ -8378,6 +8413,7 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
     row.value = generatedScore;
     return row;
   });
+  applyFantasyScoreRange(rows, 4.6, 8.8);
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -8391,6 +8427,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
   const week = weekOverride || selectedSiteWeek() || 1;
   const teams = state.data?.teams || [];
   const rankedOffense = teams.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedTeamTotals = teams.map((team) => ({ team, score: scheduleTeamProjectionScore(team, teamByName(scheduleOpponent(team.team, week)), scheduleActiveMode({ week }), 0, week) })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = (state.data?.teams || []).map((team) => {
     const madden = maddenKickerForTeam(team.team);
     const depthKicker = depthKickerForTeam(team.team);
@@ -8398,18 +8435,23 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     const workbook = workbookRows.find((row) => normalizeTeamName(row.team) === normalizeTeamName(team.team)) || {};
     const opponent = scheduleOpponent(team.team, week);
     const ranks = teamRankingsByTeam(team.team);
+    const mode = scheduleActiveMode({ week });
+    const opponentTeam = teamByName(opponent);
     const tier = kickerStadiumTiers[team.team] ?? 0;
     const rating = Number.isFinite(Number(madden?.ovr)) ? Number(madden.ovr) : num(depthKicker?.rating, num(workbook.rating, 68));
-    const goForItPenalty = num(fantasyDetailValue(workbook, "Go For It Penalty"), 2);
     const longFg = num(fantasyDetailValue(workbook, "50+ FGs"), Math.max(0, (rating - 70) / 6));
-    const fgVolume = Math.max(1, 4 + ((num(team.offenseAverage, 84) - 84) / 10));
+    const teamTotal = scheduleTeamProjectionScore(team, opponentTeam, mode, 0, week);
+    const offenseRank = rankNumber(rankedOffense, (item) => item.score, { team, score: team.offenseAverage }) || 16.5;
+    const teamTotalRank = rankNumber(rankedTeamTotals, (item) => item.score, { team, score: teamTotal }) || 16.5;
+    const fgVolume = Math.max(1, 2.2 + ((num(team.offenseAverage, 84) - 82) / 8) + ((num(teamTotal, 20) - 19) / 5));
     const fourthRank = num(ranks?.fourthDownAttemptsRank, 16.5);
+    const fourthDifficulty = Number.isFinite(Number(ranks?.fourthDownAttemptsRank)) ? 33 - fourthRank : 16.5;
     const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
     const scaleTerm = (value, key) => value * (num(weights[key], 100) / 100);
     const fourthWeight = weeklySeasonStatWeight("kickerFourthDowns");
     const fourthPenalty = ((16.5 - fourthRank) * 0.08) * fourthWeight;
     const score = scaleTerm(rating / 10, "kickerRating")
-      + scaleTerm(goForItPenalty, "kickerOffense")
+      + scaleTerm((33 - offenseRank) / 5, "kickerOffense")
       + scaleTerm(longFg / 4, "kickerLongFg")
       + scaleTerm(fgVolume * 1.5, "kickerFgVolume")
       + scaleTerm(tier * 2, "kickerStadium")
@@ -8417,15 +8459,17 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     const row = {
       ...workbook,
       position: "Kicker",
-      player: madden?.player || depthKicker?.player || ourladsKicker?.player || `${team.teamAbbrev || team.team} Kicker`,
+      player: displayPersonName(madden?.player || depthKicker?.player || ourladsKicker?.player || workbook.player || `${team.teamAbbrev || team.team} Kicker`),
       team: team.team,
       opponent,
       rating,
       extras: {
         ...(workbook.extras || {}),
-        "Madden K Rating": rating,
-        "Team Offense Rank": rankNumber(rankedOffense, (item) => item.score, { team, score: team.offenseAverage }) || "",
-        "Go For It Penalty": Number(goForItPenalty.toFixed(1)),
+        "Player Rating": rating,
+        "Team Offense Rank": offenseRank,
+        "Team Total": Number(num(teamTotal, 20).toFixed(1)),
+        "Team Total Rank": teamTotalRank,
+        "4th Down Difficulty": Number(fourthDifficulty.toFixed(1)),
         "4th Down Attempts Rank": Number.isFinite(Number(ranks?.fourthDownAttemptsRank)) ? ranks.fourthDownAttemptsRank : "",
         "4th Down Attempts/G": Number.isFinite(Number(ranks?.fourthDownAttemptsRankValue)) ? Number(ranks.fourthDownAttemptsRankValue) : ranks?.fourthDownAttemptsRankValue || "",
         "50+ FGs": Number(longFg.toFixed(1)),
@@ -8442,6 +8486,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     row.value = generatedScore;
     return row;
   });
+  applyFantasyScoreRange(rows, 5.9, 8.8);
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -8966,14 +9011,17 @@ function fantasyColumnTip(label, key) {
     "extra:Opp QB Rank": "Opponent QB difficulty rank; higher is easier for DST.",
     "extra:Opponent Off Rank": "Opponent offense difficulty rank; higher is easier for DST.",
     "extra:Opp PPG Rank": "Opponent scoring difficulty rank; higher is easier for DST.",
-    "extra:Madden K Rating": "Kicker rating from Madden; depth/OurLads fallback if missing.",
+    "extra:Player Rating": "Kicker rating from Madden, depth chart, or fallback.",
     "extra:Team Offense Rank": "Rank of team offense rating; better teams create more kicks.",
-    "extra:Go For It Penalty": "Legacy kicker context; higher is currently a small boost.",
+    "extra:Team Total": "Model projected points for this kicker's team.",
+    "extra:Team Total Rank": "Rank of projected team points; lower is better.",
+    "extra:4th Down Difficulty": "Higher means more 4th-down attempts hurting FG chances.",
     "extra:4th Down Attempts Rank": "TeamRankings 4th-down attempts rank; lower is worse for kickers.",
     "extra:4th Down Attempts/G": "Actual 4th-down attempts per game; more can reduce FG chances.",
     "extra:50+ FGs": "Long-field-goal input; workbook/player stat when available, otherwise rating fallback.",
     "extra:FG Volume": "Estimated FG opportunity from team offense; player stat import not wired yet.",
     "extra:Kicker Stadium Tier": "Kicker-friendly stadium tier: 2 best, 0 toughest.",
+    "extra:Raw Model Score": "Internal unscaled model number before fantasy-point range mapping.",
     "extra:Typical Snap %": "Expected playing-time share from depth or scanned usage.",
     "extra:Typical Targets": "Expected targets from depth or scanned usage.",
     "extra:Typical Red Zone Opportunities": "Expected red-zone chances from depth or scanned usage.",
@@ -9259,14 +9307,17 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Player", sortDir: "asc" }),
       fantasyColumn("Week Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Madden K", "extra:Madden K Rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Player Rating", "extra:Player Rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Off Rank", "extra:Team Offense Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Go 4th", "extra:Go For It Penalty", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("4th Rank", "extra:4th Down Attempts Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
+      fantasyColumn("Total Rank", "extra:Team Total Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("4th Diff", "extra:4th Down Difficulty", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
+      fantasyColumn("4th Rank", "extra:4th Down Attempts Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("4th/G", "extra:4th Down Attempts/G", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
       fantasyColumn("50+ FGs", "extra:50+ FGs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("FG Vol", "extra:FG Volume", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Stadium", "extra:Kicker Stadium Tier", "num cf rank-col", { group: "Environment", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("Raw", "extra:Raw Model Score", "num cf", { group: "Source", heat: true, sortDir: "desc" }),
       fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
     ];
   }
@@ -10568,12 +10619,12 @@ function fantasyContextChips(row, position) {
       : position === "DST"
         ? ["Defense Rank", "Sacks Rank", "Takeaways Rank", "Opp PPG Rank"]
         : position === "K"
-          ? ["Team Offense Rank", "Go For It Penalty", "Kicker Stadium Tier"]
+          ? ["Team Offense Rank", "Team Total Rank", "4th Down Difficulty", "Kicker Stadium Tier"]
           : ["QB Rank", "PPG Rank", "YPG Rank", "Game Script", "Team Total"];
   return labels.map((label) => {
     const fixed = label === "YPG Rank" ? "Team YPG Rank" : label;
     const value = fantasyDetailValue(row, fixed);
-    const reverse = /rank/i.test(label) || ["Go For It Penalty"].includes(label);
+    const reverse = /rank/i.test(label) || ["4th Down Difficulty"].includes(label);
     const style = fantasySourceStyle(position, `extra:${fixed}`, value, reverse);
     const shortLabel = {
       "OL Rank": "OL",
@@ -10587,7 +10638,8 @@ function fantasyContextChips(row, position) {
       "Takeaways Rank": "Take",
       "Opp PPG Rank": "Opp PPG",
       "Team Offense Rank": "Off",
-      "Go For It Penalty": "4th",
+      "4th Down Difficulty": "4th",
+      "Team Total Rank": "Total",
       "Kicker Stadium Tier": "Stadium",
     }[label] || label;
     return value === "" || value === undefined ? "" : `<span ${style}><b>${esc(shortLabel)}</b>${esc(fantasyDisplay(value, Number.isFinite(Number(value)) && Math.abs(Number(value)) < 10 ? 1 : 0))}</span>`;
@@ -11621,5 +11673,6 @@ load.then((data) => {
 }).catch(() => {
   content.innerHTML = `<section class="panel"><h2>Data did not load</h2><p class="note">Serve this folder locally so the browser can read data.json.</p></section>`;
 });
+
 
 
