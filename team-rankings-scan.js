@@ -1,5 +1,5 @@
 window.TEAM_RANKINGS_SCAN = {
-  "fetchedAt": "2026-08-06T20:37:15.875Z",
+  "fetchedAt": "2026-08-16T12:02:33.134Z",
   "source": "teamrankings.com",
   "metrics": [
     {
@@ -57,6 +57,27 @@ window.TEAM_RANKINGS_SCAN = {
       "column": "AM",
       "url": "https://www.teamrankings.com/nfl/stat/opponent-passing-touchdowns-per-game",
       "count": 32
+    },
+    {
+      "key": "sacksRank",
+      "label": "Sacks/G",
+      "column": "DEF",
+      "url": "https://www.teamrankings.com/nfl/stat/sacks-per-game",
+      "count": 32
+    },
+    {
+      "key": "takeawaysRank",
+      "label": "Takeaways/G",
+      "column": "DEF",
+      "url": "https://www.teamrankings.com/nfl/stat/takeaways-per-game",
+      "count": 32
+    },
+    {
+      "key": "fourthDownAttemptsRank",
+      "label": "4th Down Attempts/G",
+      "column": "K",
+      "url": "https://www.teamrankings.com/nfl/stat/fourth-downs-per-game",
+      "count": 32
     }
   ],
   "teams": [
@@ -70,7 +91,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Arizona",
         "rushTdAllowedRank": "Arizona",
         "passYardsAllowedRank": "Arizona",
-        "passTdAllowedRank": "Arizona"
+        "passTdAllowedRank": "Arizona",
+        "sacksRank": "Arizona",
+        "takeawaysRank": "Arizona",
+        "fourthDownAttemptsRank": "Arizona"
       },
       "offYardsRank": 17,
       "offYardsRankValue": "327.0",
@@ -88,10 +112,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "231.9",
       "passTdAllowedRank": 26,
       "passTdAllowedRankValue": "1.8",
+      "sacksRank": 28,
+      "sacksRankValue": "1.8",
+      "takeawaysRank": 20,
+      "takeawaysRankValue": "1.1",
+      "fourthDownAttemptsRank": 16,
+      "fourthDownAttemptsRankValue": "1.6",
       "offStatAvg": 4.333,
       "defStatAvg": 6.111,
       "rushAllowedStatAvg": 5.556,
-      "passAllowedStatAvg": 5.556
+      "passAllowedStatAvg": 5.556,
+      "defFantasyStatAvg": 5.333
     },
     {
       "team": "Atlanta Falcons",
@@ -103,7 +134,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Atlanta",
         "rushTdAllowedRank": "Atlanta",
         "passYardsAllowedRank": "Atlanta",
-        "passTdAllowedRank": "Atlanta"
+        "passTdAllowedRank": "Atlanta",
+        "sacksRank": "Atlanta",
+        "takeawaysRank": "Atlanta",
+        "fourthDownAttemptsRank": "Atlanta"
       },
       "offYardsRank": 14,
       "offYardsRankValue": "333.0",
@@ -121,10 +155,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "200.4",
       "passTdAllowedRank": 19,
       "passTdAllowedRankValue": "1.6",
+      "sacksRank": 2,
+      "sacksRankValue": "3.4",
+      "takeawaysRank": 8,
+      "takeawaysRankValue": "1.4",
+      "fourthDownAttemptsRank": 16,
+      "fourthDownAttemptsRankValue": "1.6",
       "offStatAvg": 4.111,
       "defStatAvg": 3.778,
       "rushAllowedStatAvg": 3.444,
-      "passAllowedStatAvg": 3.333
+      "passAllowedStatAvg": 3.333,
+      "defFantasyStatAvg": 1.111
     },
     {
       "team": "Baltimore Ravens",
@@ -136,7 +177,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Baltimore",
         "rushTdAllowedRank": "Baltimore",
         "passYardsAllowedRank": "Baltimore",
-        "passTdAllowedRank": "Baltimore"
+        "passTdAllowedRank": "Baltimore",
+        "sacksRank": "Baltimore",
+        "takeawaysRank": "Baltimore",
+        "fourthDownAttemptsRank": "Baltimore"
       },
       "offYardsRank": 15,
       "offYardsRankValue": "332.2",
@@ -154,10 +198,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "247.9",
       "passTdAllowedRank": 11,
       "passTdAllowedRankValue": "1.4",
+      "sacksRank": 28,
+      "sacksRankValue": "1.8",
+      "takeawaysRank": 17,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 21,
+      "fourthDownAttemptsRankValue": "1.5",
       "offStatAvg": 2.778,
       "defStatAvg": 4.667,
       "rushAllowedStatAvg": 3.222,
-      "passAllowedStatAvg": 4.556
+      "passAllowedStatAvg": 4.556,
+      "defFantasyStatAvg": 5
     },
     {
       "team": "Buffalo Bills",
@@ -169,7 +220,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Buffalo",
         "rushTdAllowedRank": "Buffalo",
         "passYardsAllowedRank": "Buffalo",
-        "passTdAllowedRank": "Buffalo"
+        "passTdAllowedRank": "Buffalo",
+        "sacksRank": "Buffalo",
+        "takeawaysRank": "Buffalo",
+        "fourthDownAttemptsRank": "Buffalo"
       },
       "offYardsRank": 3,
       "offYardsRankValue": "378.2",
@@ -187,10 +241,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "165.9",
       "passTdAllowedRank": 9,
       "passTdAllowedRankValue": "1.3",
+      "sacksRank": 26,
+      "sacksRankValue": "1.9",
+      "takeawaysRank": 16,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 10,
+      "fourthDownAttemptsRankValue": "1.8",
       "offStatAvg": 0.667,
       "defStatAvg": 2.222,
       "rushAllowedStatAvg": 6.444,
-      "passAllowedStatAvg": 1.222
+      "passAllowedStatAvg": 1.222,
+      "defFantasyStatAvg": 4.667
     },
     {
       "team": "Carolina Panthers",
@@ -202,7 +263,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Carolina",
         "rushTdAllowedRank": "Carolina",
         "passYardsAllowedRank": "Carolina",
-        "passTdAllowedRank": "Carolina"
+        "passTdAllowedRank": "Carolina",
+        "sacksRank": "Carolina",
+        "takeawaysRank": "Carolina",
+        "fourthDownAttemptsRank": "Carolina"
       },
       "offYardsRank": 27,
       "offYardsRankValue": "297.7",
@@ -220,10 +284,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "209.0",
       "passTdAllowedRank": 8,
       "passTdAllowedRankValue": "1.3",
+      "sacksRank": 30,
+      "sacksRankValue": "1.7",
+      "takeawaysRank": 15,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 2,
+      "fourthDownAttemptsRankValue": "2.4",
       "offStatAvg": 6,
       "defStatAvg": 3.556,
       "rushAllowedStatAvg": 5.222,
-      "passAllowedStatAvg": 2.556
+      "passAllowedStatAvg": 2.556,
+      "defFantasyStatAvg": 5
     },
     {
       "team": "Chicago Bears",
@@ -235,7 +306,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Chicago",
         "rushTdAllowedRank": "Chicago",
         "passYardsAllowedRank": "Chicago",
-        "passTdAllowedRank": "Chicago"
+        "passTdAllowedRank": "Chicago",
+        "sacksRank": "Chicago",
+        "takeawaysRank": "Chicago",
+        "fourthDownAttemptsRank": "Chicago"
       },
       "offYardsRank": 4,
       "offYardsRankValue": "375.7",
@@ -253,10 +327,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "232.3",
       "passTdAllowedRank": 28,
       "passTdAllowedRankValue": "1.9",
+      "sacksRank": 21,
+      "sacksRankValue": "2.1",
+      "takeawaysRank": 3,
+      "takeawaysRankValue": "1.7",
+      "fourthDownAttemptsRank": 4,
+      "fourthDownAttemptsRankValue": "2.2",
       "offStatAvg": 1.444,
       "defStatAvg": 5.778,
       "rushAllowedStatAvg": 4.556,
-      "passAllowedStatAvg": 5.889
+      "passAllowedStatAvg": 5.889,
+      "defFantasyStatAvg": 2.667
     },
     {
       "team": "Cincinnati Bengals",
@@ -268,7 +349,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Cincinnati",
         "rushTdAllowedRank": "Cincinnati",
         "passYardsAllowedRank": "Cincinnati",
-        "passTdAllowedRank": "Cincinnati"
+        "passTdAllowedRank": "Cincinnati",
+        "sacksRank": "Cincinnati",
+        "takeawaysRank": "Cincinnati",
+        "fourthDownAttemptsRank": "Cincinnati"
       },
       "offYardsRank": 16,
       "offYardsRankValue": "330.4",
@@ -286,10 +370,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "235.1",
       "passTdAllowedRank": 29,
       "passTdAllowedRankValue": "1.9",
+      "sacksRank": 22,
+      "sacksRankValue": "2.1",
+      "takeawaysRank": 12,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 29,
+      "fourthDownAttemptsRankValue": "1.2",
       "offStatAvg": 3.111,
       "defStatAvg": 6.778,
       "rushAllowedStatAvg": 5.778,
-      "passAllowedStatAvg": 6.111
+      "passAllowedStatAvg": 6.111,
+      "defFantasyStatAvg": 3.778
     },
     {
       "team": "Cleveland Browns",
@@ -301,7 +392,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Cleveland",
         "rushTdAllowedRank": "Cleveland",
         "passYardsAllowedRank": "Cleveland",
-        "passTdAllowedRank": "Cleveland"
+        "passTdAllowedRank": "Cleveland",
+        "sacksRank": "Cleveland",
+        "takeawaysRank": "Cleveland",
+        "fourthDownAttemptsRank": "Cleveland"
       },
       "offYardsRank": 30,
       "offYardsRankValue": "262.1",
@@ -319,10 +413,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "167.2",
       "passTdAllowedRank": 16,
       "passTdAllowedRankValue": "1.5",
+      "sacksRank": 3,
+      "sacksRankValue": "3.1",
+      "takeawaysRank": 22,
+      "takeawaysRankValue": "1.1",
+      "fourthDownAttemptsRank": 13,
+      "fourthDownAttemptsRankValue": "1.7",
       "offStatAvg": 6.778,
       "defStatAvg": 1.889,
       "rushAllowedStatAvg": 3,
-      "passAllowedStatAvg": 2.111
+      "passAllowedStatAvg": 2.111,
+      "defFantasyStatAvg": 2.778
     },
     {
       "team": "Dallas Cowboys",
@@ -334,7 +435,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Dallas",
         "rushTdAllowedRank": "Dallas",
         "passYardsAllowedRank": "Dallas",
-        "passTdAllowedRank": "Dallas"
+        "passTdAllowedRank": "Dallas",
+        "sacksRank": "Dallas",
+        "takeawaysRank": "Dallas",
+        "fourthDownAttemptsRank": "Dallas"
       },
       "offYardsRank": 2,
       "offYardsRankValue": "391.9",
@@ -352,10 +456,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "251.5",
       "passTdAllowedRank": 31,
       "passTdAllowedRankValue": "2.1",
+      "sacksRank": 22,
+      "sacksRankValue": "2.1",
+      "takeawaysRank": 30,
+      "takeawaysRankValue": "0.7",
+      "fourthDownAttemptsRank": 5,
+      "fourthDownAttemptsRankValue": "2.1",
       "offStatAvg": 0.778,
       "defStatAvg": 6.889,
       "rushAllowedStatAvg": 6.111,
-      "passAllowedStatAvg": 7
+      "passAllowedStatAvg": 7,
+      "defFantasyStatAvg": 5.778
     },
     {
       "team": "Denver Broncos",
@@ -367,7 +478,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Denver",
         "rushTdAllowedRank": "Denver",
         "passYardsAllowedRank": "Denver",
-        "passTdAllowedRank": "Denver"
+        "passTdAllowedRank": "Denver",
+        "sacksRank": "Denver",
+        "takeawaysRank": "Denver",
+        "fourthDownAttemptsRank": "Denver"
       },
       "offYardsRank": 12,
       "offYardsRankValue": "334.5",
@@ -385,10 +499,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "184.9",
       "passTdAllowedRank": 5,
       "passTdAllowedRankValue": "1.1",
+      "sacksRank": 1,
+      "sacksRankValue": "4.0",
+      "takeawaysRank": 23,
+      "takeawaysRankValue": "1.0",
+      "fourthDownAttemptsRank": 30,
+      "fourthDownAttemptsRankValue": "1.2",
       "offStatAvg": 3,
       "defStatAvg": 0.778,
       "rushAllowedStatAvg": 1,
-      "passAllowedStatAvg": 1.333
+      "passAllowedStatAvg": 1.333,
+      "defFantasyStatAvg": 2.667
     },
     {
       "team": "Detroit Lions",
@@ -400,7 +521,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Detroit",
         "rushTdAllowedRank": "Detroit",
         "passYardsAllowedRank": "Detroit",
-        "passTdAllowedRank": "Detroit"
+        "passTdAllowedRank": "Detroit",
+        "sacksRank": "Detroit",
+        "takeawaysRank": "Detroit",
+        "fourthDownAttemptsRank": "Detroit"
       },
       "offYardsRank": 5,
       "offYardsRankValue": "374.2",
@@ -418,10 +542,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "218.2",
       "passTdAllowedRank": 26,
       "passTdAllowedRankValue": "1.8",
+      "sacksRank": 5,
+      "sacksRankValue": "2.9",
+      "takeawaysRank": 20,
+      "takeawaysRankValue": "1.1",
+      "fourthDownAttemptsRank": 11,
+      "fourthDownAttemptsRankValue": "1.8",
       "offStatAvg": 1,
       "defStatAvg": 4.333,
       "rushAllowedStatAvg": 3.333,
-      "passAllowedStatAvg": 5
+      "passAllowedStatAvg": 5,
+      "defFantasyStatAvg": 2.778
     },
     {
       "team": "Green Bay Packers",
@@ -433,7 +564,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Green Bay",
         "rushTdAllowedRank": "Green Bay",
         "passYardsAllowedRank": "Green Bay",
-        "passTdAllowedRank": "Green Bay"
+        "passTdAllowedRank": "Green Bay",
+        "sacksRank": "Green Bay",
+        "takeawaysRank": "Green Bay",
+        "fourthDownAttemptsRank": "Green Bay"
       },
       "offYardsRank": 11,
       "offYardsRankValue": "337.5",
@@ -451,10 +585,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "202.9",
       "passTdAllowedRank": 14,
       "passTdAllowedRankValue": "1.4",
+      "sacksRank": 25,
+      "sacksRankValue": "2.1",
+      "takeawaysRank": 25,
+      "takeawaysRankValue": "0.9",
+      "fourthDownAttemptsRank": 19,
+      "fourthDownAttemptsRankValue": "1.6",
       "offStatAvg": 2.778,
       "defStatAvg": 2.778,
       "rushAllowedStatAvg": 3.222,
-      "passAllowedStatAvg": 3.111
+      "passAllowedStatAvg": 3.111,
+      "defFantasyStatAvg": 5.556
     },
     {
       "team": "Houston Texans",
@@ -466,7 +607,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Houston",
         "rushTdAllowedRank": "Houston",
         "passYardsAllowedRank": "Houston",
-        "passTdAllowedRank": "Houston"
+        "passTdAllowedRank": "Houston",
+        "sacksRank": "Houston",
+        "takeawaysRank": "Houston",
+        "fourthDownAttemptsRank": "Houston"
       },
       "offYardsRank": 19,
       "offYardsRankValue": "326.7",
@@ -484,10 +628,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "179.3",
       "passTdAllowedRank": 6,
       "passTdAllowedRankValue": "1.2",
+      "sacksRank": 4,
+      "sacksRankValue": "2.9",
+      "takeawaysRank": 1,
+      "takeawaysRankValue": "1.8",
+      "fourthDownAttemptsRank": 31,
+      "fourthDownAttemptsRankValue": "1.1",
       "offStatAvg": 3.556,
       "defStatAvg": 0.333,
       "rushAllowedStatAvg": 0.889,
-      "passAllowedStatAvg": 1.222
+      "passAllowedStatAvg": 1.222,
+      "defFantasyStatAvg": 0.556
     },
     {
       "team": "Indianapolis Colts",
@@ -499,7 +650,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Indianapolis",
         "rushTdAllowedRank": "Indianapolis",
         "passYardsAllowedRank": "Indianapolis",
-        "passTdAllowedRank": "Indianapolis"
+        "passTdAllowedRank": "Indianapolis",
+        "sacksRank": "Indianapolis",
+        "takeawaysRank": "Indianapolis",
+        "fourthDownAttemptsRank": "Indianapolis"
       },
       "offYardsRank": 9,
       "offYardsRankValue": "345.6",
@@ -517,10 +671,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "247.9",
       "passTdAllowedRank": 13,
       "passTdAllowedRankValue": "1.4",
+      "sacksRank": 15,
+      "sacksRankValue": "2.3",
+      "takeawaysRank": 12,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 18,
+      "fourthDownAttemptsRankValue": "1.6",
       "offStatAvg": 1.778,
       "defStatAvg": 4.889,
       "rushAllowedStatAvg": 2.667,
-      "passAllowedStatAvg": 4.889
+      "passAllowedStatAvg": 4.889,
+      "defFantasyStatAvg": 3
     },
     {
       "team": "Jacksonville Jaguars",
@@ -532,7 +693,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Jacksonville",
         "rushTdAllowedRank": "Jacksonville",
         "passYardsAllowedRank": "Jacksonville",
-        "passTdAllowedRank": "Jacksonville"
+        "passTdAllowedRank": "Jacksonville",
+        "sacksRank": "Jacksonville",
+        "takeawaysRank": "Jacksonville",
+        "fourthDownAttemptsRank": "Jacksonville"
       },
       "offYardsRank": 10,
       "offYardsRankValue": "338.6",
@@ -550,10 +714,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "220.4",
       "passTdAllowedRank": 14,
       "passTdAllowedRankValue": "1.4",
+      "sacksRank": 27,
+      "sacksRankValue": "1.8",
+      "takeawaysRank": 2,
+      "takeawaysRankValue": "1.8",
+      "fourthDownAttemptsRank": 15,
+      "fourthDownAttemptsRankValue": "1.7",
       "offStatAvg": 1.778,
       "defStatAvg": 2.222,
       "rushAllowedStatAvg": 1.444,
-      "passAllowedStatAvg": 3.778
+      "passAllowedStatAvg": 3.778,
+      "defFantasyStatAvg": 3.222
     },
     {
       "team": "Kansas City Chiefs",
@@ -565,7 +736,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Kansas City",
         "rushTdAllowedRank": "Kansas City",
         "passYardsAllowedRank": "Kansas City",
-        "passTdAllowedRank": "Kansas City"
+        "passTdAllowedRank": "Kansas City",
+        "sacksRank": "Kansas City",
+        "takeawaysRank": "Kansas City",
+        "fourthDownAttemptsRank": "Kansas City"
       },
       "offYardsRank": 20,
       "offYardsRankValue": "320.6",
@@ -583,10 +757,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "195.8",
       "passTdAllowedRank": 4,
       "passTdAllowedRankValue": "1.1",
+      "sacksRank": 22,
+      "sacksRankValue": "2.1",
+      "takeawaysRank": 28,
+      "takeawaysRankValue": "0.8",
+      "fourthDownAttemptsRank": 8,
+      "fourthDownAttemptsRankValue": "1.9",
       "offStatAvg": 4.444,
       "defStatAvg": 1.667,
       "rushAllowedStatAvg": 2,
-      "passAllowedStatAvg": 1.556
+      "passAllowedStatAvg": 1.556,
+      "defFantasyStatAvg": 5.556
     },
     {
       "team": "LA Chargers",
@@ -598,7 +779,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "LA Chargers",
         "rushTdAllowedRank": "LA Chargers",
         "passYardsAllowedRank": "LA Chargers",
-        "passTdAllowedRank": "LA Chargers"
+        "passTdAllowedRank": "LA Chargers",
+        "sacksRank": "LA Chargers",
+        "takeawaysRank": "LA Chargers",
+        "fourthDownAttemptsRank": "LA Chargers"
       },
       "offYardsRank": 18,
       "offYardsRankValue": "326.8",
@@ -616,10 +800,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "182.9",
       "passTdAllowedRank": 2,
       "passTdAllowedRankValue": "0.9",
+      "sacksRank": 9,
+      "sacksRankValue": "2.8",
+      "takeawaysRank": 7,
+      "takeawaysRankValue": "1.4",
+      "fourthDownAttemptsRank": 27,
+      "fourthDownAttemptsRankValue": "1.3",
       "offStatAvg": 4.667,
       "defStatAvg": 1.556,
       "rushAllowedStatAvg": 2.556,
-      "passAllowedStatAvg": 0.889
+      "passAllowedStatAvg": 0.889,
+      "defFantasyStatAvg": 1.778
     },
     {
       "team": "LA Rams",
@@ -631,7 +822,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "LA Rams",
         "rushTdAllowedRank": "LA Rams",
         "passYardsAllowedRank": "LA Rams",
-        "passTdAllowedRank": "LA Rams"
+        "passTdAllowedRank": "LA Rams",
+        "sacksRank": "LA Rams",
+        "takeawaysRank": "LA Rams",
+        "fourthDownAttemptsRank": "LA Rams"
       },
       "offYardsRank": 1,
       "offYardsRankValue": "397.0",
@@ -649,10 +843,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "225.6",
       "passTdAllowedRank": 20,
       "passTdAllowedRankValue": "1.6",
+      "sacksRank": 11,
+      "sacksRankValue": "2.6",
+      "takeawaysRank": 6,
+      "takeawaysRankValue": "1.6",
+      "fourthDownAttemptsRank": 12,
+      "fourthDownAttemptsRankValue": "1.8",
       "offStatAvg": 0.222,
       "defStatAvg": 3.222,
       "rushAllowedStatAvg": 1.556,
-      "passAllowedStatAvg": 4.667
+      "passAllowedStatAvg": 4.667,
+      "defFantasyStatAvg": 1.889
     },
     {
       "team": "Las Vegas Raiders",
@@ -664,7 +865,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Las Vegas",
         "rushTdAllowedRank": "Las Vegas",
         "passYardsAllowedRank": "Las Vegas",
-        "passTdAllowedRank": "Las Vegas"
+        "passTdAllowedRank": "Las Vegas",
+        "sacksRank": "Las Vegas",
+        "takeawaysRank": "Las Vegas",
+        "fourthDownAttemptsRank": "Las Vegas"
       },
       "offYardsRank": 32,
       "offYardsRankValue": "247.0",
@@ -682,10 +886,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "201.0",
       "passTdAllowedRank": 11,
       "passTdAllowedRankValue": "1.4",
+      "sacksRank": 19,
+      "sacksRankValue": "2.2",
+      "takeawaysRank": 24,
+      "takeawaysRankValue": "0.9",
+      "fourthDownAttemptsRank": 8,
+      "fourthDownAttemptsRankValue": "1.9",
       "offStatAvg": 7.111,
       "defStatAvg": 4.222,
       "rushAllowedStatAvg": 5.444,
-      "passAllowedStatAvg": 2.556
+      "passAllowedStatAvg": 2.556,
+      "defFantasyStatAvg": 4.778
     },
     {
       "team": "Miami Dolphins",
@@ -697,7 +908,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Miami",
         "rushTdAllowedRank": "Miami",
         "passYardsAllowedRank": "Miami",
-        "passTdAllowedRank": "Miami"
+        "passTdAllowedRank": "Miami",
+        "sacksRank": "Miami",
+        "takeawaysRank": "Miami",
+        "fourthDownAttemptsRank": "Miami"
       },
       "offYardsRank": 25,
       "offYardsRankValue": "300.7",
@@ -715,10 +929,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "216.4",
       "passTdAllowedRank": 22,
       "passTdAllowedRankValue": "1.7",
+      "sacksRank": 15,
+      "sacksRankValue": "2.3",
+      "takeawaysRank": 17,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 26,
+      "fourthDownAttemptsRankValue": "1.4",
       "offStatAvg": 5.556,
       "defStatAvg": 5.111,
       "rushAllowedStatAvg": 5.222,
-      "passAllowedStatAvg": 4.444
+      "passAllowedStatAvg": 4.444,
+      "defFantasyStatAvg": 3.556
     },
     {
       "team": "Minnesota Vikings",
@@ -730,7 +951,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Minnesota",
         "rushTdAllowedRank": "Minnesota",
         "passYardsAllowedRank": "Minnesota",
-        "passTdAllowedRank": "Minnesota"
+        "passTdAllowedRank": "Minnesota",
+        "sacksRank": "Minnesota",
+        "takeawaysRank": "Minnesota",
+        "fourthDownAttemptsRank": "Minnesota"
       },
       "offYardsRank": 28,
       "offYardsRankValue": "275.0",
@@ -748,10 +972,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "158.5",
       "passTdAllowedRank": 1,
       "passTdAllowedRankValue": "0.9",
+      "sacksRank": 5,
+      "sacksRankValue": "2.9",
+      "takeawaysRank": 12,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 24,
+      "fourthDownAttemptsRankValue": "1.4",
       "offStatAvg": 6,
       "defStatAvg": 1,
       "rushAllowedStatAvg": 3.444,
-      "passAllowedStatAvg": 0.222
+      "passAllowedStatAvg": 0.222,
+      "defFantasyStatAvg": 1.889
     },
     {
       "team": "New England Patriots",
@@ -763,7 +994,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "New England",
         "rushTdAllowedRank": "New England",
         "passYardsAllowedRank": "New England",
-        "passTdAllowedRank": "New England"
+        "passTdAllowedRank": "New England",
+        "sacksRank": "New England",
+        "takeawaysRank": "New England",
+        "fourthDownAttemptsRank": "New England"
       },
       "offYardsRank": 6,
       "offYardsRankValue": "362.6",
@@ -781,10 +1015,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "185.7",
       "passTdAllowedRank": 10,
       "passTdAllowedRankValue": "1.3",
+      "sacksRank": 18,
+      "sacksRankValue": "2.3",
+      "takeawaysRank": 10,
+      "takeawaysRankValue": "1.3",
+      "fourthDownAttemptsRank": 25,
+      "fourthDownAttemptsRankValue": "1.4",
       "offStatAvg": 1.556,
       "defStatAvg": 0.889,
       "rushAllowedStatAvg": 0.889,
-      "passAllowedStatAvg": 2
+      "passAllowedStatAvg": 2,
+      "defFantasyStatAvg": 3.111
     },
     {
       "team": "New Orleans Saints",
@@ -796,7 +1037,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "New Orleans",
         "rushTdAllowedRank": "New Orleans",
         "passYardsAllowedRank": "New Orleans",
-        "passTdAllowedRank": "New Orleans"
+        "passTdAllowedRank": "New Orleans",
+        "sacksRank": "New Orleans",
+        "takeawaysRank": "New Orleans",
+        "fourthDownAttemptsRank": "New Orleans"
       },
       "offYardsRank": 23,
       "offYardsRankValue": "313.6",
@@ -814,10 +1058,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "179.2",
       "passTdAllowedRank": 16,
       "passTdAllowedRankValue": "1.5",
+      "sacksRank": 10,
+      "sacksRankValue": "2.6",
+      "takeawaysRank": 17,
+      "takeawaysRankValue": "1.2",
+      "fourthDownAttemptsRank": 7,
+      "fourthDownAttemptsRankValue": "2.0",
       "offStatAvg": 5.667,
       "defStatAvg": 2.556,
       "rushAllowedStatAvg": 2.889,
-      "passAllowedStatAvg": 2.222
+      "passAllowedStatAvg": 2.222,
+      "defFantasyStatAvg": 3
     },
     {
       "team": "New York Giants",
@@ -829,7 +1080,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "NY Giants",
         "rushTdAllowedRank": "NY Giants",
         "passYardsAllowedRank": "NY Giants",
-        "passTdAllowedRank": "NY Giants"
+        "passTdAllowedRank": "NY Giants",
+        "sacksRank": "NY Giants",
+        "takeawaysRank": "NY Giants",
+        "fourthDownAttemptsRank": "NY Giants"
       },
       "offYardsRank": 13,
       "offYardsRankValue": "333.5",
@@ -847,10 +1101,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "214.2",
       "passTdAllowedRank": 16,
       "passTdAllowedRankValue": "1.5",
+      "sacksRank": 15,
+      "sacksRankValue": "2.3",
+      "takeawaysRank": 26,
+      "takeawaysRankValue": "0.9",
+      "fourthDownAttemptsRank": 3,
+      "fourthDownAttemptsRankValue": "2.3",
       "offStatAvg": 3.222,
       "defStatAvg": 5.889,
       "rushAllowedStatAvg": 6.556,
-      "passAllowedStatAvg": 3.556
+      "passAllowedStatAvg": 3.556,
+      "defFantasyStatAvg": 4.556
     },
     {
       "team": "New York Jets",
@@ -862,7 +1123,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "NY Jets",
         "rushTdAllowedRank": "NY Jets",
         "passYardsAllowedRank": "NY Jets",
-        "passTdAllowedRank": "NY Jets"
+        "passTdAllowedRank": "NY Jets",
+        "sacksRank": "NY Jets",
+        "takeawaysRank": "NY Jets",
+        "fourthDownAttemptsRank": "NY Jets"
       },
       "offYardsRank": 29,
       "offYardsRankValue": "263.6",
@@ -880,10 +1144,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "216.1",
       "passTdAllowedRank": 32,
       "passTdAllowedRankValue": "2.1",
+      "sacksRank": 31,
+      "sacksRankValue": "1.5",
+      "takeawaysRank": 32,
+      "takeawaysRankValue": "0.2",
+      "fourthDownAttemptsRank": 1,
+      "fourthDownAttemptsRankValue": "2.4",
       "offStatAvg": 6.444,
       "defStatAvg": 6.222,
       "rushAllowedStatAvg": 6.222,
-      "passAllowedStatAvg": 5.444
+      "passAllowedStatAvg": 5.444,
+      "defFantasyStatAvg": 7
     },
     {
       "team": "Philadelphia Eagles",
@@ -895,7 +1166,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Philadelphia",
         "rushTdAllowedRank": "Philadelphia",
         "passYardsAllowedRank": "Philadelphia",
-        "passTdAllowedRank": "Philadelphia"
+        "passTdAllowedRank": "Philadelphia",
+        "sacksRank": "Philadelphia",
+        "takeawaysRank": "Philadelphia",
+        "fourthDownAttemptsRank": "Philadelphia"
       },
       "offYardsRank": 24,
       "offYardsRankValue": "311.0",
@@ -913,10 +1187,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "195.1",
       "passTdAllowedRank": 2,
       "passTdAllowedRankValue": "0.9",
+      "sacksRank": 14,
+      "sacksRankValue": "2.4",
+      "takeawaysRank": 11,
+      "takeawaysRankValue": "1.3",
+      "fourthDownAttemptsRank": 22,
+      "fourthDownAttemptsRankValue": "1.4",
       "offStatAvg": 4.778,
       "defStatAvg": 2,
       "rushAllowedStatAvg": 4.889,
-      "passAllowedStatAvg": 1.222
+      "passAllowedStatAvg": 1.222,
+      "defFantasyStatAvg": 2.778
     },
     {
       "team": "Pittsburgh Steelers",
@@ -928,7 +1209,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Pittsburgh",
         "rushTdAllowedRank": "Pittsburgh",
         "passYardsAllowedRank": "Pittsburgh",
-        "passTdAllowedRank": "Pittsburgh"
+        "passTdAllowedRank": "Pittsburgh",
+        "sacksRank": "Pittsburgh",
+        "takeawaysRank": "Pittsburgh",
+        "fourthDownAttemptsRank": "Pittsburgh"
       },
       "offYardsRank": 26,
       "offYardsRankValue": "299.2",
@@ -946,10 +1230,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "244.9",
       "passTdAllowedRank": 23,
       "passTdAllowedRankValue": "1.7",
+      "sacksRank": 7,
+      "sacksRankValue": "2.8",
+      "takeawaysRank": 4,
+      "takeawaysRankValue": "1.7",
+      "fourthDownAttemptsRank": 22,
+      "fourthDownAttemptsRankValue": "1.4",
       "offStatAvg": 4.778,
       "defStatAvg": 5,
       "rushAllowedStatAvg": 2.111,
-      "passAllowedStatAvg": 5.778
+      "passAllowedStatAvg": 5.778,
+      "defFantasyStatAvg": 1.222
     },
     {
       "team": "San Francisco 49ers",
@@ -961,7 +1252,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "San Francisco",
         "rushTdAllowedRank": "San Francisco",
         "passYardsAllowedRank": "San Francisco",
-        "passTdAllowedRank": "San Francisco"
+        "passTdAllowedRank": "San Francisco",
+        "sacksRank": "San Francisco",
+        "takeawaysRank": "San Francisco",
+        "fourthDownAttemptsRank": "San Francisco"
       },
       "offYardsRank": 8,
       "offYardsRankValue": "345.8",
@@ -979,10 +1273,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "222.3",
       "passTdAllowedRank": 21,
       "passTdAllowedRankValue": "1.6",
+      "sacksRank": 32,
+      "sacksRankValue": "1.2",
+      "takeawaysRank": 27,
+      "takeawaysRankValue": "0.8",
+      "fourthDownAttemptsRank": 28,
+      "fourthDownAttemptsRankValue": "1.3",
       "offStatAvg": 2.111,
       "defStatAvg": 3.667,
       "rushAllowedStatAvg": 3,
-      "passAllowedStatAvg": 4.667
+      "passAllowedStatAvg": 4.667,
+      "defFantasyStatAvg": 6.556
     },
     {
       "team": "Seattle Seahawks",
@@ -994,7 +1295,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Seattle",
         "rushTdAllowedRank": "Seattle",
         "passYardsAllowedRank": "Seattle",
-        "passTdAllowedRank": "Seattle"
+        "passTdAllowedRank": "Seattle",
+        "sacksRank": "Seattle",
+        "takeawaysRank": "Seattle",
+        "fourthDownAttemptsRank": "Seattle"
       },
       "offYardsRank": 7,
       "offYardsRankValue": "349.3",
@@ -1012,10 +1316,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "202.1",
       "passTdAllowedRank": 7,
       "passTdAllowedRankValue": "1.3",
+      "sacksRank": 8,
+      "sacksRankValue": "2.8",
+      "takeawaysRank": 5,
+      "takeawaysRankValue": "1.6",
+      "fourthDownAttemptsRank": 32,
+      "fourthDownAttemptsRankValue": "0.6",
       "offStatAvg": 1,
       "defStatAvg": 0.889,
       "rushAllowedStatAvg": 0.444,
-      "passAllowedStatAvg": 2.222
+      "passAllowedStatAvg": 2.222,
+      "defFantasyStatAvg": 1.444
     },
     {
       "team": "Tampa Bay Buccaneers",
@@ -1027,7 +1338,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Tampa Bay",
         "rushTdAllowedRank": "Tampa Bay",
         "passYardsAllowedRank": "Tampa Bay",
-        "passTdAllowedRank": "Tampa Bay"
+        "passTdAllowedRank": "Tampa Bay",
+        "sacksRank": "Tampa Bay",
+        "takeawaysRank": "Tampa Bay",
+        "fourthDownAttemptsRank": "Tampa Bay"
       },
       "offYardsRank": 21,
       "offYardsRankValue": "320.4",
@@ -1045,10 +1359,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "238.2",
       "passTdAllowedRank": 24,
       "passTdAllowedRankValue": "1.8",
+      "sacksRank": 19,
+      "sacksRankValue": "2.2",
+      "takeawaysRank": 8,
+      "takeawaysRankValue": "1.4",
+      "fourthDownAttemptsRank": 13,
+      "fourthDownAttemptsRankValue": "1.7",
       "offStatAvg": 4.333,
       "defStatAvg": 4.444,
       "rushAllowedStatAvg": 2.444,
-      "passAllowedStatAvg": 5.667
+      "passAllowedStatAvg": 5.667,
+      "defFantasyStatAvg": 3
     },
     {
       "team": "Tennessee Titans",
@@ -1060,7 +1381,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Tennessee",
         "rushTdAllowedRank": "Tennessee",
         "passYardsAllowedRank": "Tennessee",
-        "passTdAllowedRank": "Tennessee"
+        "passTdAllowedRank": "Tennessee",
+        "sacksRank": "Tennessee",
+        "takeawaysRank": "Tennessee",
+        "fourthDownAttemptsRank": "Tennessee"
       },
       "offYardsRank": 31,
       "offYardsRankValue": "259.6",
@@ -1078,10 +1402,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "230.5",
       "passTdAllowedRank": 24,
       "passTdAllowedRankValue": "1.8",
+      "sacksRank": 12,
+      "sacksRankValue": "2.5",
+      "takeawaysRank": 28,
+      "takeawaysRankValue": "0.8",
+      "fourthDownAttemptsRank": 5,
+      "fourthDownAttemptsRankValue": "2.1",
       "offStatAvg": 6.778,
       "defStatAvg": 5.444,
       "rushAllowedStatAvg": 4.667,
-      "passAllowedStatAvg": 5.222
+      "passAllowedStatAvg": 5.222,
+      "defFantasyStatAvg": 4.444
     },
     {
       "team": "Washington Commanders",
@@ -1093,7 +1424,10 @@ window.TEAM_RANKINGS_SCAN = {
         "rushYardsAllowedRank": "Washington",
         "rushTdAllowedRank": "Washington",
         "passYardsAllowedRank": "Washington",
-        "passTdAllowedRank": "Washington"
+        "passTdAllowedRank": "Washington",
+        "sacksRank": "Washington",
+        "takeawaysRank": "Washington",
+        "fourthDownAttemptsRank": "Washington"
       },
       "offYardsRank": 22,
       "offYardsRankValue": "318.8",
@@ -1111,10 +1445,17 @@ window.TEAM_RANKINGS_SCAN = {
       "passYardsAllowedRankValue": "242.5",
       "passTdAllowedRank": 29,
       "passTdAllowedRankValue": "1.9",
+      "sacksRank": 12,
+      "sacksRankValue": "2.5",
+      "takeawaysRank": 31,
+      "takeawaysRankValue": "0.6",
+      "fourthDownAttemptsRank": 20,
+      "fourthDownAttemptsRankValue": "1.5",
       "offStatAvg": 4.778,
       "defStatAvg": 6.556,
       "rushAllowedStatAvg": 5.556,
-      "passAllowedStatAvg": 6.333
+      "passAllowedStatAvg": 6.333,
+      "defFantasyStatAvg": 4.778
     }
   ]
 };
