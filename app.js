@@ -416,11 +416,15 @@ let globalSearchTimer = null;
 let quickPlayerSearchTimer = null;
 let scheduleProjectionCache = new Map();
 let fantasyRowsCache = new Map();
+let scheduleGamesCache = { regular: null, calendar: null, games: null };
+let selectedWeekCache = { siteWeek: null, dateKey: "", value: "" };
 let dataRevision = 0;
 
 function invalidateProjectionCaches() {
   scheduleProjectionCache.clear();
   fantasyRowsCache.clear();
+  scheduleGamesCache = { regular: null, calendar: null, games: null };
+  selectedWeekCache = { siteWeek: null, dateKey: "", value: "" };
   dataRevision += 1;
 }
 
@@ -761,13 +765,14 @@ function playerDepthLock(player, week = selectedSiteWeek()) {
 function assignDepthSlots(players = []) {
   const nextPlayers = players.map((player) => ({ ...player }));
   const groups = new Map();
+  const week = selectedSiteWeek();
   nextPlayers.forEach((player) => {
     if (!player) return;
     if (normalizeTeamName(player.team) === "Free Agent") {
       player.depth = 0;
       return;
     }
-    if (!isPlayerAvailable(player)) return;
+    if (!isPlayerAvailable(player, week)) return;
     if (!Number.isFinite(Number(player.rating))) return;
     const key = `${normalizeTeamName(player.team)}__${String(player.position || "").toUpperCase()}`;
     if (!groups.has(key)) groups.set(key, []);
@@ -1138,12 +1143,15 @@ function calendarGames() {
 function scheduleGames() {
   const regular = state.data?.schedule || [];
   const calendar = calendarGames();
+  if (scheduleGamesCache.regular === regular && scheduleGamesCache.calendar === calendar && scheduleGamesCache.games) return scheduleGamesCache.games;
   if (!calendar.length) return regular;
-  return calendar.map((game, index) => {
+  const games = calendar.map((game, index) => {
     const canonicalGame = { ...game, visitor: normalizeTeamName(game.visitor), home: normalizeTeamName(game.home) };
     const matched = regular.find((item) => String(item.week) === String(game.week) && normalizeTeamName(item.visitor) === canonicalGame.visitor && normalizeTeamName(item.home) === canonicalGame.home);
     return { ...(matched || {}), ...canonicalGame, calendarIndex: index, preseason: String(game.week).startsWith("Pre") };
   });
+  scheduleGamesCache = { regular, calendar, games };
+  return games;
 }
 
 function scheduleWeekOptions(includeAll = true) {
@@ -1172,7 +1180,11 @@ function autoSiteWeek(today = new Date()) {
 }
 
 function selectedSiteWeek() {
-  return scheduleWeekGroupKey(state.siteWeek === "auto" ? autoSiteWeek() : state.siteWeek);
+  const dateKey = new Date().toDateString();
+  if (selectedWeekCache.siteWeek === state.siteWeek && selectedWeekCache.dateKey === dateKey) return selectedWeekCache.value;
+  const value = scheduleWeekGroupKey(state.siteWeek === "auto" ? autoSiteWeek() : state.siteWeek);
+  selectedWeekCache = { siteWeek: state.siteWeek, dateKey, value };
+  return value;
 }
 
 function siteWeekLabel() {
@@ -7849,12 +7861,12 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
       "Game Script": weeklyGameScriptValue(player.team, week),
       "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Rush TDs Allowed Rank": teamRankingsByTeam(opponent)?.rushTdAllowedRank || "",
-      "Typical Snap %": Number(stats.season.snapPct.toFixed(1)),
-      "Typical Targets": Number(stats.season.targets.toFixed(2)),
-      "Typical Red Zone Opportunities": Number(stats.season.rz.toFixed(2)),
-      "!!LAST 5!!\nTypical Snap %": Number(stats.last5.snapPct.toFixed(1)),
-      "!!LAST 5!!\nTypical Targets": Number(stats.last5.targets.toFixed(2)),
-      "!!LAST 5!!\nTypical Red Zone Opportunities": Number(stats.last5.rz.toFixed(2)),
+      "Typical Snap %": Number(num(stats.season.snapPct, 0).toFixed(1)),
+      "Typical Targets": Number(num(stats.season.targets, 0).toFixed(2)),
+      "Typical Red Zone Opportunities": Number(num(stats.season.rz, 0).toFixed(2)),
+      "!!LAST 5!!\nTypical Snap %": Number(num(stats.last5.snapPct, num(stats.season.snapPct, 0)).toFixed(1)),
+      "!!LAST 5!!\nTypical Targets": Number(num(stats.last5.targets, num(stats.season.targets, 0)).toFixed(2)),
+      "!!LAST 5!!\nTypical Red Zone Opportunities": Number(num(stats.last5.rz, num(stats.season.rz, 0)).toFixed(2)),
       "Stat Source": stats.usedClay ? "Clay projection*" : "Depth/rating formula; RB Footballguys scan pending",
     };
     const row = {
@@ -7885,11 +7897,11 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
     row.extras[".5PPR"] = blend.half;
     row.extras["Full PPR"] = blend.full;
     row.extras["FullPPR"] = blend.full;
-    row.extras["Carries"] = Number(blend.carries.toFixed(1));
-    row.extras["Rush Yds"] = Number(blend.rushYds.toFixed(1));
-    row.extras["Receptions"] = Number(blend.rec.toFixed(1));
-    row.extras["Rec Yds"] = Number(blend.recYds.toFixed(1));
-    row.extras["TDs"] = Number(blend.tds.toFixed(2));
+    row.extras["Carries"] = Number(num(blend.carries, 0).toFixed(1));
+    row.extras["Rush Yds"] = Number(num(blend.rushYds, 0).toFixed(1));
+    row.extras["Receptions"] = Number(num(blend.rec, 0).toFixed(1));
+    row.extras["Rec Yds"] = Number(num(blend.recYds, 0).toFixed(1));
+    row.extras["TDs"] = Number(num(blend.tds, 0).toFixed(2));
     return row;
   });
   rows.forEach((row) => {
@@ -8064,12 +8076,12 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
       "Game Script": weeklyGameScriptValue(player.team, week),
       "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Team PPG": Number(num(team?.offenseRating, 84).toFixed(1)),
-      "Typical Snap %": Number(stats.season.snapPct.toFixed(1)),
-      "Typical Targets": Number(stats.season.targets.toFixed(2)),
-      "Typical Red Zone Opportunities": Number(stats.season.rz.toFixed(2)),
-      "!!LAST 5!!\nTypical Snap %": Number(stats.last5.snapPct.toFixed(1)),
-      "!!LAST 5!!\nTypical Targets": Number(stats.last5.targets.toFixed(2)),
-      "!!LAST 5!!\nTypical Red Zone Opportunities": Number(stats.last5.rz.toFixed(2)),
+      "Typical Snap %": Number(num(stats.season.snapPct, 0).toFixed(1)),
+      "Typical Targets": Number(num(stats.season.targets, 0).toFixed(2)),
+      "Typical Red Zone Opportunities": Number(num(stats.season.rz, 0).toFixed(2)),
+      "!!LAST 5!!\nTypical Snap %": Number(num(stats.last5.snapPct, num(stats.season.snapPct, 0)).toFixed(1)),
+      "!!LAST 5!!\nTypical Targets": Number(num(stats.last5.targets, num(stats.season.targets, 0)).toFixed(2)),
+      "!!LAST 5!!\nTypical Red Zone Opportunities": Number(num(stats.last5.rz, num(stats.season.rz, 0)).toFixed(2)),
       "Stat Source": stats.usedClay ? "Clay projection*" : "Depth/rating formula; Footballguys usage scan pending",
     };
     const row = {
@@ -8101,12 +8113,12 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
     row.extras[".5PPR"] = blend.half;
     row.extras["Full PPR"] = blend.full;
     row.extras["FullPPR"] = blend.full;
-    row.extras["Targets"] = Number(blend.targets.toFixed(1));
-    row.extras["Snap %"] = Number(blend.snapPct.toFixed(1));
-    row.extras["RZone"] = Number(blend.rz.toFixed(2));
-    row.extras["Receptions"] = Number(blend.rec.toFixed(1));
-    row.extras["Rec Yds"] = Number(blend.recYds.toFixed(1));
-    row.extras["TDs"] = Number(blend.tds.toFixed(2));
+    row.extras["Targets"] = Number(num(blend.targets, 0).toFixed(1));
+    row.extras["Snap %"] = Number(num(blend.snapPct, 0).toFixed(1));
+    row.extras["RZone"] = Number(num(blend.rz, 0).toFixed(2));
+    row.extras["Receptions"] = Number(num(blend.rec, 0).toFixed(1));
+    row.extras["Rec Yds"] = Number(num(blend.recYds, 0).toFixed(1));
+    row.extras["TDs"] = Number(num(blend.tds, 0).toFixed(2));
     return row;
   });
   rows.forEach((row) => {
@@ -9266,6 +9278,10 @@ function fantasySortIndicator(column, activeSort, direction) {
 function fantasyRankTable(columns, rows, allRows, position, activeSort = "", direction = "") {
   const widths = columns.map((column) => fantasyColumnWidth(column, rows.length ? rows : allRows, position));
   const groupStarts = fantasyGroupStartClasses(columns);
+  const heatValues = new Map();
+  columns.forEach((column) => {
+    if (column.heat) heatValues.set(column.key, allRows.map((item) => fantasyValue(item, column.key, position)));
+  });
   return `
     <table class="fantasy-board-table" style="min-width:${widths.reduce((sum, width) => sum + width, 0)}px">
       <colgroup>${widths.map((width) => `<col style="width:${width}px" />`).join("")}</colgroup>
@@ -9277,12 +9293,12 @@ function fantasyRankTable(columns, rows, allRows, position, activeSort = "", dir
           </button>`}
         </th>`).join("")}</tr>
       </thead>
-      <tbody>${rows.map((row) => `<tr>${columns.map((column, index) => fantasyTd(row, column, allRows, position, index, groupStarts.has(index))).join("")}</tr>`).join("")}</tbody>
+      <tbody>${rows.map((row) => `<tr>${columns.map((column, index) => fantasyTd(row, column, allRows, position, index, groupStarts.has(index), heatValues)).join("")}</tr>`).join("")}</tbody>
     </table>
   `;
 }
 
-function fantasyTd(row, column, allRows, position, index = -1, groupStart = false) {
+function fantasyTd(row, column, allRows, position, index = -1, groupStart = false, heatValues = new Map()) {
   const value = fantasyValue(row, column.key, position);
   const marker = fantasyClayMarker(row, column.key);
   const freezeClass = `${index === 0 ? " frozen-compare" : ""}${index === 1 ? " frozen-rank" : ""}${index === 2 && column.key === "name" ? " frozen-name" : ""}`;
@@ -9290,7 +9306,7 @@ function fantasyTd(row, column, allRows, position, index = -1, groupStart = fals
   if (column.key === "compareSelect" || column.key === "fantasyStar" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "seasonSchedule" || column.key === "compactDetails") {
     return `<td class="${column.cls || ""}${freezeClass}${groupClass}">${value || "-"}</td>`;
   }
-  const values = allRows.map((item) => fantasyValue(item, column.key, position));
+  const values = heatValues.get(column.key) || allRows.map((item) => fantasyValue(item, column.key, position));
   if (column.heat) return fantasyCellWithClass(value, values, Boolean(column.reverse), column.digits ?? 1, `${column.cls || ""}${freezeClass}${groupClass}`, marker);
   return `<td class="${column.cls || ""}${freezeClass}${groupClass} ${fantasyIsIssue(value) ? "formula-issue" : ""}">${esc(fantasyDisplay(value, column.digits ?? 1))}${marker}</td>`;
 }
