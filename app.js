@@ -8672,6 +8672,25 @@ function fantasyProsAdpFor(row, scoringKey) {
     || null;
 }
 
+function fantasyProsPositionKey(position) {
+  if (position === "Kicker") return "K";
+  if (position === "Defense") return "Defense";
+  return String(position || "").toUpperCase();
+}
+
+function fantasyProsAdpPositionRank(row, scoringKey, matchedRow = null) {
+  const adpRow = matchedRow || fantasyProsAdpFor(row, scoringKey);
+  const parsed = String(adpRow?.posRank || "").match(/(\d+)/);
+  if (parsed) return Number(parsed[1]);
+  const position = fantasyProsPositionKey(row.position);
+  const rows = fantasyProsAdpRows(scoringKey)
+    .filter((item) => fantasyProsPositionKey(item.position) === position)
+    .filter((item) => Number.isFinite(Number(item.adp)))
+    .sort((a, b) => Number(a.adp) - Number(b.adp));
+  const index = rows.findIndex((item) => item === adpRow);
+  return index >= 0 ? index + 1 : "";
+}
+
 function seasonDifficultyRankFor(row, position) {
   const label = position === "QB"
     ? "Matchup Rating (Low is good)"
@@ -8857,6 +8876,9 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
     const fullAdp = fantasyProsAdpFor(row, "full");
     const halfAdp = fantasyProsAdpFor(row, "half");
     const standardAdp = fantasyProsAdpFor(row, "standard");
+    const fullAdpPositionRank = fantasyProsAdpPositionRank(row, "full", fullAdp);
+    const halfAdpPositionRank = fantasyProsAdpPositionRank(row, "half", halfAdp);
+    const standardAdpPositionRank = fantasyProsAdpPositionRank(row, "standard", standardAdp);
     const fallbackAdp = Number.isFinite(Number(adpRow.adp)) ? Number(adpRow.adp) : "";
     const adp = Number.isFinite(Number(halfAdp?.adp)) ? Number(halfAdp.adp) : fallbackAdp;
     const rounded = (value) => Number(num(value, 0).toFixed(1));
@@ -8890,15 +8912,18 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
       "FullPPR Total": row.fullPprScore,
       "FullPPR Avg": row.fullPprAvg,
       "FullPPR ADP": Number.isFinite(Number(fullAdp?.adp)) ? Number(fullAdp.adp) : "",
-      "FullPPR ADP Rank": Number.isFinite(Number(fullAdp?.rank)) ? Number(fullAdp.rank) : "",
+      "FullPPR ADP Rank": Number.isFinite(Number(fullAdpPositionRank)) ? Number(fullAdpPositionRank) : "",
+      "FullPPR Overall ADP Rank": Number.isFinite(Number(fullAdp?.rank)) ? Number(fullAdp.rank) : "",
       ".5PPR Total": row.halfPprScore,
       ".5PPR Avg": row.halfPprAvg,
       ".5PPR ADP": Number.isFinite(Number(halfAdp?.adp)) ? Number(halfAdp.adp) : adp,
-      ".5PPR ADP Rank": Number.isFinite(Number(halfAdp?.rank)) ? Number(halfAdp.rank) : "",
+      ".5PPR ADP Rank": Number.isFinite(Number(halfAdpPositionRank)) ? Number(halfAdpPositionRank) : "",
+      ".5PPR Overall ADP Rank": Number.isFinite(Number(halfAdp?.rank)) ? Number(halfAdp.rank) : "",
       "NoPPR Total": row.standardScore,
       "NoPPR Avg": row.standardAvg,
       "NoPPR ADP": Number.isFinite(Number(standardAdp?.adp)) ? Number(standardAdp.adp) : "",
-      "NoPPR ADP Rank": Number.isFinite(Number(standardAdp?.rank)) ? Number(standardAdp.rank) : "",
+      "NoPPR ADP Rank": Number.isFinite(Number(standardAdpPositionRank)) ? Number(standardAdpPositionRank) : "",
+      "NoPPR Overall ADP Rank": Number.isFinite(Number(standardAdp?.rank)) ? Number(standardAdp.rank) : "",
       "ADP": adp,
       "ADP Source": fullAdp || halfAdp || standardAdp ? "FantasyPros real-time ADP" : (adp === "" ? "" : "Workbook fallback"),
       "Source": "Sum of weekly projections",
@@ -9056,18 +9081,18 @@ function fantasyColumnTip(label, key) {
     "extra:FullPPR Total": "FullPPR projected total over scheduled games.",
     "extra:FullPPR Avg": "FullPPR projected points per scheduled game.",
     "extra:FullPPR ADP": "FantasyPros real-time FullPPR average draft position.",
-    "extra:FullPPR ADP Rank": "FantasyPros FullPPR ADP rank.",
-    "extra:FullPPR Value": "FantasyPros FullPPR ADP rank minus projected rank.",
+    "extra:FullPPR ADP Rank": "FantasyPros FullPPR positional ADP rank, like QB1 or WR12.",
+    "extra:FullPPR Value": "Market positional ADP rank minus your projected positional rank.",
     "extra:.5PPR Total": ".5PPR projected total over scheduled games.",
     "extra:.5PPR Avg": ".5PPR projected points per scheduled game.",
     "extra:.5PPR ADP": "FantasyPros real-time .5PPR average draft position.",
-    "extra:.5PPR ADP Rank": "FantasyPros .5PPR ADP rank.",
-    "extra:.5PPR Value": "FantasyPros .5PPR ADP rank minus projected rank.",
+    "extra:.5PPR ADP Rank": "FantasyPros .5PPR positional ADP rank, like QB1 or WR12.",
+    "extra:.5PPR Value": "Market positional ADP rank minus your projected positional rank.",
     "extra:NoPPR Total": "NoPPR projected total over scheduled games.",
     "extra:NoPPR Avg": "NoPPR projected points per scheduled game.",
     "extra:NoPPR ADP": "FantasyPros real-time NoPPR average draft position.",
-    "extra:NoPPR ADP Rank": "FantasyPros NoPPR ADP rank.",
-    "extra:NoPPR Value": "FantasyPros NoPPR ADP rank minus projected rank.",
+    "extra:NoPPR ADP Rank": "FantasyPros NoPPR positional ADP rank, like QB1 or WR12.",
+    "extra:NoPPR Value": "Market positional ADP rank minus your projected positional rank.",
     "extra:Avg Team Context": "Season average of OL, scoring, QB/WR help, defense, or stadium context.",
     "extra:Avg Production": "Average usage/stat inputs: QB logs, snaps, targets, red zone, or kicking volume.",
     "extra:Avg Bonuses": "Average extra edges from yards, TDs, rushing, usage, pressure, or kicking range.",
@@ -9077,7 +9102,7 @@ function fantasyColumnTip(label, key) {
     "extra:Team Total": "Model projected points for this player's team.",
     "extra:Team YPG Rank": "Team offensive yards-per-game rank; lower is better context.",
     "extra:ADP Source": "Where the draft data came from.",
-    "extra:ADP Value": "ADP minus projected rank; higher means better draft value.",
+    "extra:ADP Value": "Positional ADP rank minus your rank; higher means better draft value.",
     "extra:W1": "Week 1 opponent abbreviation and projected score.",
     "extra:W2": "Week 2 opponent abbreviation and projected score.",
     "extra:W3": "Week 3 opponent abbreviation and projected score.",
@@ -9195,13 +9220,13 @@ function fantasyColumns(kind, position, view) {
     ];
     const adpColumns = [
       fantasyColumn("Full ADP", "extra:FullPPR ADP", "num cf", { group: "Draft", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Full ADP Rank", "extra:FullPPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Full Pos Rank", "extra:FullPPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Full Value", "extra:FullPPR Value", "num cf", { group: "Draft", heat: true, sortDir: "desc", boundaryAfter: true }),
       fantasyColumn(".5 ADP", "extra:.5PPR ADP", "num cf", { group: "Draft", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn(".5 ADP Rank", "extra:.5PPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn(".5 Pos Rank", "extra:.5PPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn(".5 Value", "extra:.5PPR Value", "num cf", { group: "Draft", heat: true, sortDir: "desc", boundaryAfter: true }),
       fantasyColumn("No ADP", "extra:NoPPR ADP", "num cf", { group: "Draft", heat: true, reverse: true, sortDir: "asc" }),
-      fantasyColumn("No ADP Rank", "extra:NoPPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("No Pos Rank", "extra:NoPPR ADP Rank", "num cf rank-col", { group: "Draft", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("No Value", "extra:NoPPR Value", "num cf", { group: "Draft", heat: true, sortDir: "desc" }),
     ];
     return [
