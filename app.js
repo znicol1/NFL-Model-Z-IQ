@@ -113,6 +113,15 @@ const defaultWeeklySkillOptions = {
   extraFactors: [],
 };
 
+const weeklyFantasyScoreRanges = {
+  QB: { all: [0.3, 22.9] },
+  RB: { full: [0.4, 20.2], half: [0.3, 18.6], standard: [0.2, 16.9] },
+  WR: { full: [2.2, 20.4], half: [1.7, 16.9], standard: [1.0, 13.8] },
+  TE: { full: [3.8, 15.0], half: [3.0, 12.1], standard: [2.4, 9.8] },
+  Defense: { all: [4.6, 8.8] },
+  Kicker: { all: [5.9, 8.8] },
+};
+
 const defaultWeeklyMatchupWeights = {
   vQB_IDL1: 100, vQB_IDL2: 100, vQB_IDL3: 100, vQB_IDL4: 0, vQB_IDL5: 0,
   vQB_EDGE1: 100, vQB_EDGE2: 100, vQB_EDGE3: 100, vQB_EDGE4: 0, vQB_EDGE5: 0,
@@ -7398,22 +7407,59 @@ function averageFinite(values, fallback = null) {
   return nums.length ? nums.reduce((sum, value) => sum + value, 0) / nums.length : fallback;
 }
 
-function applyFantasyScoreRange(rows, minScore, maxScore) {
-  const rawValues = rows.map((row) => Number(row.score)).filter(Number.isFinite);
+function applyFantasyScoreRangeToKey(rows, key, minScore, maxScore, rawLabel = "") {
+  const rawValues = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  if (!rawValues.length) return rows;
   const low = Math.min(...rawValues);
   const high = Math.max(...rawValues);
   rows.forEach((row) => {
-    const raw = Number(row.score);
+    const raw = Number(row[key]);
     row.extras ||= {};
-    row.extras["Raw Model Score"] = Number.isFinite(raw) ? Number(raw.toFixed(2)) : "";
+    if (rawLabel) row.extras[rawLabel] = Number.isFinite(raw) ? Number(raw.toFixed(2)) : "";
     const pct = Number.isFinite(raw) && high > low ? (raw - low) / (high - low) : 0.5;
     const ranged = minScore + (Math.max(0, Math.min(1, pct)) * (maxScore - minScore));
-    row.score = Number(ranged.toFixed(1));
+    row[key] = Number(ranged.toFixed(1));
+  });
+  return rows;
+}
+
+function applyFantasyScoreRange(rows, minScore, maxScore) {
+  applyFantasyScoreRangeToKey(rows, "score", minScore, maxScore, "Raw Model Score");
+  rows.forEach((row) => {
     row.seasonScore = row.score;
     row.last5Score = row.score;
     row.value = row.score;
   });
   return rows;
+}
+
+function applyWeeklyQbFantasyRange(rows) {
+  const range = weeklyFantasyScoreRanges.QB.all;
+  applyFantasyScoreRangeToKey(rows, "score", range[0], range[1], "Raw Week Score");
+  applyFantasyScoreRangeToKey(rows, "seasonScore", range[0], range[1], "Raw Season Production");
+  applyFantasyScoreRangeToKey(rows, "last5Score", range[0], range[1], "Raw Last 5 Production");
+  rows.forEach((row) => {
+    row.value = Number.isFinite(Number(row.extras?.Salary)) && Number(row.extras.Salary) > 0 ? Number((row.score / Number(row.extras.Salary)).toFixed(3)) : row.score;
+  });
+}
+
+function applyWeeklyPprFantasyRanges(rows, position) {
+  const ranges = weeklyFantasyScoreRanges[position] || weeklyFantasyScoreRanges.RB;
+  applyFantasyScoreRangeToKey(rows, "fullPprScore", ranges.full[0], ranges.full[1], "Raw FullPPR");
+  applyFantasyScoreRangeToKey(rows, "halfPprScore", ranges.half[0], ranges.half[1], "Raw .5PPR");
+  applyFantasyScoreRangeToKey(rows, "standardScore", ranges.standard[0], ranges.standard[1], "Raw NoPPR");
+  applyFantasyScoreRangeToKey(rows, "seasonScore", ranges.full[0], ranges.full[1], "Raw Season Production");
+  applyFantasyScoreRangeToKey(rows, "last5Score", ranges.full[0], ranges.full[1], "Raw Last 5 Production");
+  rows.forEach((row) => {
+    row.score = row.fullPprScore;
+    row.value = row.score;
+    row.extras["Std"] = row.standardScore;
+    row.extras["NoPPR"] = row.standardScore;
+    row.extras["Half PPR"] = row.halfPprScore;
+    row.extras[".5PPR"] = row.halfPprScore;
+    row.extras["Full PPR"] = row.fullPprScore;
+    row.extras["FullPPR"] = row.fullPprScore;
+  });
 }
 
 function floorTo(value, step) {
@@ -7706,6 +7752,7 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
     row.value = Number.isFinite(Number(extras.Salary)) && Number(extras.Salary) > 0 ? Number((row.score / Number(extras.Salary)).toFixed(3)) : row.score;
     return row;
   });
+  applyWeeklyQbFantasyRange(rows);
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -8004,6 +8051,7 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
     row.extras["TDs"] = Number(num(blend.tds, 0).toFixed(2));
     return row;
   });
+  applyWeeklyPprFantasyRanges(rows, "RB");
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -8223,6 +8271,7 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
     row.extras["TDs"] = Number(num(blend.tds, 0).toFixed(2));
     return row;
   });
+  applyWeeklyPprFantasyRanges(rows, position);
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
