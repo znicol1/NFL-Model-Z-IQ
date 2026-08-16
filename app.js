@@ -5,7 +5,7 @@ const navSections = [
   { title: "Season Projector", pages: [["standings", "Season Projector"]] },
   { title: "Fantasy Hub", pages: [["start", "My Fantasy Teams"], ["weeklyFantasy", "Weekly Fantasy Rankings"], ["seasonFantasy", "Season Long Fantasy Rankings"]] },
   { title: "Data", pages: [["weeklyMatchups", "Weekly Matchups"], ["pff", "PFF Update"], ["statRanks", "Stat Ranks"], ["data", "Data Diagnostics"]] },
-  { title: "Interactive", pages: [["gameSim", "Game Simulator"], ["qb", "H2H QB Challenge", "low"]] },
+  { title: "Interactive", pages: [["qb", "H2H QB Challenge", "low"]] },
 ];
 
 const pages = navSections.flatMap((section) => section.pages);
@@ -6734,6 +6734,12 @@ function stopGameSim(id) {
   activeGameSims = activeGameSims.filter((sim) => sim.id !== id);
 }
 
+function stopAllGameSims() {
+  Object.values(gameSimTimers).forEach((timer) => clearInterval(timer));
+  gameSimTimers = {};
+  activeGameSims = [];
+}
+
 function wireGameSimCloseButtons() {
   document.querySelectorAll(".game-sim-close").forEach((button) => {
     button.onclick = () => {
@@ -11274,7 +11280,12 @@ function disableMobileTextAssist(root = document) {
 
 function render() {
   window.nflzSetFantasyPosition = setFantasyRankPosition;
-  const page = pages.find(([id]) => id === state.page);
+  let page = pages.find(([id]) => id === state.page);
+  if (!page) {
+    state.page = "home";
+    page = pages.find(([id]) => id === state.page) || pages[0];
+  }
+  if (state.page !== "gameSim" && (activeGameSims.length || Object.keys(gameSimTimers).length)) stopAllGameSims();
   title.textContent = page[1];
   renderNav();
   const views = {
