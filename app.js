@@ -89,6 +89,7 @@ const defaultWeeklySkillWeights = {
   opponentTd: 0,
   defRating: 100,
   passRush: 100,
+  secondary: 100,
   oppOffense: 100,
   oppQb: 100,
   oppPpg: 100,
@@ -7402,6 +7403,27 @@ function weightedRatingAverage(parts, fallback = "") {
   return Number.isFinite(Number(score)) ? score : fallback;
 }
 
+function teamPassRushRating(team, fallback = 84) {
+  return weightedRatingAverage([
+    [teamDepthRating(team, "EDGE", 1), 1],
+    [teamDepthRating(team, "EDGE", 2), 0.88],
+    [teamDepthRating(team, "EDGE", 3), 0.76],
+    [teamDepthRating(team, "IDL", 1), 1],
+    [teamDepthRating(team, "IDL", 2), 0.88],
+    [teamDepthRating(team, "IDL", 3), 0.76],
+  ], fallback);
+}
+
+function teamSecondaryRating(team, fallback = 84) {
+  return weightedRatingAverage([
+    [teamDepthRating(team, "CB", 1), 1],
+    [teamDepthRating(team, "CB", 2), 1],
+    [teamDepthRating(team, "CB", 3), 0.76],
+    [teamDepthRating(team, "S", 1), 1],
+    [teamDepthRating(team, "S", 2), 1],
+  ], fallback);
+}
+
 function matchupWeight(key) {
   const saved = state.weeklyMatchupWeights || {};
   if (saved[key] !== undefined || defaultWeeklyMatchupWeights[key] !== undefined) {
@@ -8292,8 +8314,9 @@ function weeklySeasonStatWeight(prefix) {
 
 function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
   const week = weekOverride || selectedSiteWeek() || 1;
+  const mode = scheduleActiveMode({ week });
   const teamRows = state.data?.teams || [];
-  const rankedDefense = teamRows.map((team) => ({ team, score: team.defenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
+  const rankedDefense = teamRows.map((team) => ({ team, score: scheduleSideComposite(team, "defense", mode, week) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedOppOff = teamRows.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedOppQb = teamRows.map((team) => ({ team, score: teamPositionScore(team, "QB") })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = (state.data?.teams || []).map((team) => {
@@ -8302,7 +8325,9 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
     const opponentTeam = teamByName(opponent);
     const ranks = teamRankingsByTeam(team.team);
     const opponentRanks = teamRankingsByTeam(opponent);
-    const rushPressure = averageFinite([teamPositionScore(team, "EDGE Def"), teamPositionScore(team, "IDL")], team.defenseAverage);
+    const defensiveRating = num(scheduleSideComposite(team, "defense", mode, week), num(team.defenseAverage, 84));
+    const rushPressure = num(teamPassRushRating(team, defensiveRating), defensiveRating);
+    const secondary = num(teamSecondaryRating(team, defensiveRating), defensiveRating);
     const sacksRank = num(ranks?.sacksRank, 16.5);
     const takeawaysRank = num(ranks?.takeawaysRank, 16.5);
     const oppOffRating = num(opponentTeam?.offenseAverage, 84);
@@ -8313,8 +8338,9 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
     const sacksWeight = weeklySeasonStatWeight("sacks");
     const takeawaysWeight = weeklySeasonStatWeight("takeaways");
     const score = 6
-      + scaleTerm((num(team.defenseAverage, 84) - 84) * 0.16, "defRating")
-      + scaleTerm((num(rushPressure, 84) - 84) * 0.08, "passRush")
+      + scaleTerm((defensiveRating - 84) * 0.16, "defRating")
+      + scaleTerm((rushPressure - 84) * 0.07, "passRush")
+      + scaleTerm((secondary - 84) * 0.06, "secondary")
       + scaleTerm((84 - oppOffRating) * 0.12, "oppOffense")
       + scaleTerm((84 - oppQbRating) * 0.08, "oppQb")
       + (((16.5 - sacksRank) * 0.08) * sacksWeight)
@@ -8326,12 +8352,13 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
       player: team.team,
       team: team.team,
       opponent,
-      rating: team.defenseAverage,
+      rating: defensiveRating,
       extras: {
         ...(workbook.extras || {}),
-        "Defense Rating": Number(num(team.defenseAverage, 84).toFixed(1)),
-        "Pass Rush": Number(num(rushPressure, 84).toFixed(1)),
-        "Defense Rank": rankNumber(rankedDefense, (item) => item.score, { team, score: team.defenseAverage }) || "",
+        "Defense Rating": Number(defensiveRating.toFixed(1)),
+        "Team Pass Rush": Number(rushPressure.toFixed(1)),
+        "Team Secondary": Number(secondary.toFixed(1)),
+        "Defense Rank": rankNumber(rankedDefense, (item) => item.score, { team, score: defensiveRating }) || "",
         "Opponent Off Rating": Number(oppOffRating.toFixed(1)),
         "Opponent Off Rank": rankNumber(rankedOppOff, (item) => item.score, { team: opponentTeam, score: oppOffRating }) || "",
         "Opp QB Rating": Number(oppQbRating.toFixed(1)),
@@ -8345,10 +8372,10 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
       },
     };
     const generatedScore = Number(Math.max(0, score).toFixed(1));
-    row.score = Number.isFinite(Number(workbook.score)) ? Number(workbook.score) : generatedScore;
-    row.seasonScore = Number.isFinite(Number(workbook.seasonScore)) ? Number(workbook.seasonScore) : row.score;
-    row.last5Score = Number.isFinite(Number(workbook.last5Score)) ? Number(workbook.last5Score) : row.score;
-    row.value = Number.isFinite(Number(workbook.value)) ? Number(workbook.value) : row.score;
+    row.score = generatedScore;
+    row.seasonScore = generatedScore;
+    row.last5Score = generatedScore;
+    row.value = generatedScore;
     return row;
   });
   rows.forEach((row) => {
@@ -8409,10 +8436,10 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
       },
     };
     const generatedScore = Number(Math.max(0, score).toFixed(1));
-    row.score = Number.isFinite(Number(workbook.score)) ? Number(workbook.score) : generatedScore;
-    row.seasonScore = Number.isFinite(Number(workbook.seasonScore)) ? Number(workbook.seasonScore) : row.score;
-    row.last5Score = Number.isFinite(Number(workbook.last5Score)) ? Number(workbook.last5Score) : row.score;
-    row.value = Number.isFinite(Number(workbook.value)) ? Number(workbook.value) : row.score;
+    row.score = generatedScore;
+    row.seasonScore = generatedScore;
+    row.last5Score = generatedScore;
+    row.value = generatedScore;
     return row;
   });
   rows.forEach((row) => {
@@ -8520,7 +8547,8 @@ function seasonProductionValueFor(row, position) {
     fantasyDetailValue(row, "Typical Red Zone Opportunities"),
   ], "");
   if (position === "Defense") return averageFinite([
-    fantasyDetailValue(row, "Pass Rush"),
+    fantasyDetailValue(row, "Team Pass Rush"),
+    fantasyDetailValue(row, "Team Secondary"),
     fantasyDetailValue(row, "Sacks Rank"),
     fantasyDetailValue(row, "Takeaways Rank"),
   ], "");
@@ -8928,15 +8956,16 @@ function fantasyColumnTip(label, key) {
     "extra:Team Total": "Model projected points for this player's team.",
     "extra:Rush TDs Allowed Rank": "Opponent rushing TD allowance rank; lower is better.",
     "extra:Pass TDs Allowed Rank": "Opponent passing TD allowance rank; lower is better.",
-    "extra:Defense Rank": "Rank of your team defense rating; lower is better.",
-    "extra:Pass Rush": "EDGE plus IDL pressure rating used for DST sacks.",
+    "extra:Defense Rank": "Rank of schedule defensive rating; lower is better.",
+    "extra:Team Pass Rush": "Weighted EDGE1-3 and IDL1-3 starter pressure.",
+    "extra:Team Secondary": "Weighted CB1-3 plus S1-S2 starter coverage.",
     "extra:Sacks Rank": "TeamRankings sacks-per-game rank; lower is better.",
     "extra:Sacks/G": "Actual sacks per game from TeamRankings scan.",
     "extra:Takeaways Rank": "TeamRankings takeaways-per-game rank; lower is better.",
     "extra:Takeaways/G": "Actual takeaways per game from TeamRankings scan.",
-    "extra:Opp QB Rank": "Opponent QB rating rank; worse opponent QB helps DST.",
-    "extra:Opponent Off Rank": "Opponent offense rank; worse offense helps DST.",
-    "extra:Opp PPG Rank": "Opponent scoring rank; worse scoring offense helps DST.",
+    "extra:Opp QB Rank": "Opponent QB difficulty rank; higher is easier for DST.",
+    "extra:Opponent Off Rank": "Opponent offense difficulty rank; higher is easier for DST.",
+    "extra:Opp PPG Rank": "Opponent scoring difficulty rank; higher is easier for DST.",
     "extra:Madden K Rating": "Kicker rating from Madden; depth/OurLads fallback if missing.",
     "extra:Team Offense Rank": "Rank of team offense rating; better teams create more kicks.",
     "extra:Go For It Penalty": "Legacy kicker context; higher is currently a small boost.",
@@ -9208,9 +9237,10 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Team", "name", "sticky-name", { group: "Team", sortDir: "asc" }),
       fantasyColumn("Opp", "opponent", "", { group: "Team", sortDir: "asc" }),
       fantasyColumn("Week Score", "score", "num cf score-col", { group: "Score", heat: true, sortDir: "desc" }),
-      fantasyColumn("Defense", "rating", "num cf", { group: "Defense", heat: true, digits: 1, sortDir: "desc" }),
+      fantasyColumn("Defensive Rating", "rating", "num cf", { group: "Defense", heat: true, digits: 1, sortDir: "desc" }),
       fantasyColumn("Def Rank", "extra:Defense Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
-      fantasyColumn("Pass Rush", "extra:Pass Rush", "num cf", { group: "Defense", heat: true, sortDir: "desc" }),
+      fantasyColumn("Team Pass Rush", "extra:Team Pass Rush", "num cf", { group: "Defense", heat: true, sortDir: "desc" }),
+      fantasyColumn("Team Secondary", "extra:Team Secondary", "num cf", { group: "Defense", heat: true, sortDir: "desc" }),
       fantasyColumn("Sacks Rank", "extra:Sacks Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Sacks/G", "extra:Sacks/G", "num cf", { group: "Defense", heat: true, sortDir: "desc" }),
       fantasyColumn("Take Rank", "extra:Takeaways Rank", "num cf rank-col", { group: "Defense", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
@@ -9614,11 +9644,12 @@ const weeklySkillSliderTips = {
   gameScript: "Lead helps RB rush; deficit helps catches.",
   teamTotal: "Projected team points.",
   opponentTd: "Opponent touchdown weakness.",
-  defRating: "Your full defense rating.",
-  passRush: "EDGE and IDL pressure rating.",
-  oppOffense: "Opponent offense strength; worse helps DST.",
-  oppQb: "Opponent QB strength; worse helps DST.",
-  oppPpg: "Opponent scoring rank; worse helps DST.",
+  defRating: "Same defensive rating used by Season Schedule.",
+  passRush: "EDGE1/IDL1 most; 2s and 3s slightly less.",
+  secondary: "CB1, CB2, S1, S2 most; CB3 slightly less.",
+  oppOffense: "Opponent offense difficulty effect; stronger opponents lower score.",
+  oppQb: "Opponent QB difficulty effect; stronger QBs lower score.",
+  oppPpg: "Opponent scoring difficulty effect; stronger scoring lowers score.",
   sacks2025: "How much 2025 sacks rank boosts DST.",
   sacks2026: "Ignored until real 2026 sacks rank loads.",
   takeaways2025: "How much 2025 takeaway rank boosts DST.",
@@ -9665,11 +9696,12 @@ function renderWeeklySkillFormulaControls(position, readOnly = false) {
   const isDefense = position === "Defense";
   const isKicker = position === "Kicker";
   const contextSliders = isDefense ? [
-    ["defRating", "Defense"],
-    ["passRush", "Pass Rush"],
-    ["oppOffense", "Opp Offense"],
-    ["oppQb", "Opp QB"],
-    ["oppPpg", "Opp PPG"],
+    ["defRating", "Defensive Rating"],
+    ["passRush", "Team Pass Rush"],
+    ["secondary", "Team Secondary"],
+    ["oppOffense", "Opp Offense Difficulty"],
+    ["oppQb", "Opp QB Difficulty"],
+    ["oppPpg", "Opp PPG Difficulty"],
   ] : isKicker ? [
     ["kickerRating", "K Rating"],
     ["kickerOffense", "Team Offense"],
