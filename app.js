@@ -307,7 +307,7 @@ const state = {
   gameSimGameKey: "",
   gameSimSpeed: "medium",
   standingView: "league",
-  weeklyFantasyPosition: "QB",
+  weeklyFantasyPosition: storage.get("nflz-weekly-fantasy-position", "QB"),
   weeklyFantasyView: "regular",
   weeklyFantasySort: "score",
   weeklyFantasySortDirection: "desc",
@@ -329,7 +329,7 @@ const state = {
   weeklyMatchupWeightView: storage.get("nflz-weekly-matchup-weight-view", "vQB"),
   selectedMatchupDetail: null,
   weeklyFantasyLimit: 150,
-  seasonFantasyPosition: "QB",
+  seasonFantasyPosition: storage.get("nflz-season-fantasy-position", "QB"),
   seasonFantasyView: "regular",
   seasonFantasySort: "rank",
   seasonFantasySortDirection: "asc",
@@ -1051,6 +1051,13 @@ function optionSelect(id, value, options) {
   }).join("")}</select>`;
 }
 
+function fantasyPositionSelect(kind, value, options) {
+  return `<select id="${esc(kind)}-fantasy-position" data-fantasy-position-kind="${esc(kind)}" onchange="window.nflzSetFantasyPosition && window.nflzSetFantasyPosition('${esc(kind)}', this.value)">${options.map((option) => {
+    const item = Array.isArray(option) ? { value: option[0], label: option[1] } : { value: option, label: option };
+    return `<option value="${esc(item.value)}" ${String(item.value) === String(value) ? "selected" : ""}>${esc(item.label)}</option>`;
+  }).join("")}</select>`;
+}
+
 function dateOnly(value) {
   const date = value instanceof Date ? value : new Date(`${value}T12:00:00`);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -1217,6 +1224,7 @@ function setFantasyRankPosition(kind, nextPosition) {
   const normalized = normalizeFantasyPositionLabel(nextPosition);
   if (state[positionKey] === normalized) return;
   state[positionKey] = normalized;
+  storage.set(isWeekly ? "nflz-weekly-fantasy-position" : "nflz-season-fantasy-position", normalized);
   state[viewKey] = "regular";
   state[teamFilterKey] = "All Teams";
   state[depthFilterKey] = "All Depths";
@@ -3752,15 +3760,35 @@ function teamPositionScore(team, scope) {
 
 function teamReceivingGroupScore(team, week = selectedSiteWeek()) {
   if (!team) return "";
-  const wrScore = teamPositionScore(team, "WR");
+  const receivingPieces = [];
+  const wrPlayers = depthOrderedPlayers(state.players.filter((player) => (
+    normalizeTeamName(player.team) === normalizeTeamName(team.team)
+    && groupPosition(player.position) === "WR"
+    && isPlayerAvailable(player, week)
+  )), week);
   const tePlayers = depthOrderedPlayers(state.players.filter((player) => (
     normalizeTeamName(player.team) === normalizeTeamName(team.team)
     && groupPosition(player.position) === "TE"
     && isPlayerAvailable(player, week)
   )), week);
-  const te1Score = num(tePlayers[0]?.rating, teamPositionScore(team, "TE"));
-  if (Number.isFinite(Number(wrScore)) && Number.isFinite(Number(te1Score))) return (Number(wrScore) * 0.8) + (Number(te1Score) * 0.2);
-  return Number.isFinite(Number(wrScore)) ? wrScore : te1Score;
+  [
+    [wrPlayers[0], 1],
+    [wrPlayers[1], 0.8],
+    [wrPlayers[2], 0.6],
+    [wrPlayers[3], 0.4],
+    [tePlayers[0], 0.8],
+    [tePlayers[1], 0.4],
+  ].forEach(([player, weight]) => {
+    if (player && Number.isFinite(Number(player.rating))) receivingPieces.push({ rating: Number(player.rating), weight });
+  });
+  if (receivingPieces.length) {
+    const totalWeight = receivingPieces.reduce((sum, piece) => sum + piece.weight, 0);
+    return receivingPieces.reduce((sum, piece) => sum + (piece.rating * piece.weight), 0) / totalWeight;
+  }
+  const wrScore = teamPositionScore(team, "WR");
+  const teScore = teamPositionScore(team, "TE");
+  if (Number.isFinite(Number(wrScore)) && Number.isFinite(Number(teScore))) return (Number(wrScore) * 0.8) + (Number(teScore) * 0.2);
+  return Number.isFinite(Number(wrScore)) ? wrScore : teScore;
 }
 
 function quickTeamRankRows(scope, limit) {
@@ -7120,7 +7148,7 @@ const weeklyQbSliderTips = {
   depth: "Depth chart and availability influence.",
   oline: "Offensive line support influence.",
   ppg: "Model projected team scoring influence.",
-  wr: "WR1-4 plus TE1 receiving support influence.",
+  wr: "Weighted WR1-4 plus TE1/TE2 receiving support.",
   passYards: "Passing yard production influence.",
   passTds: "Passing touchdown production influence.",
   rushAttempts: "QB rushing attempt production influence.",
@@ -8671,7 +8699,7 @@ function fantasyColumnTip(label, key) {
     "extra:Player Rating Rank": "Rank of this QB rating among all QBs in this view.",
     "extra:OL Rank": "Rank of this QB team's O-line rating against the league.",
     "extra:PPG Rank": "Rank of this QB team's scoring offense from TeamRankings/offense rating.",
-    "extra:Receiving Group Rank": "Rank of WR1-4 plus TE1 receiving support; lower is better.",
+    "extra:Receiving Group Rank": "Rank of weighted WR1-4 plus TE1/TE2 receiving support; lower is better.",
     "extra:WR Group Rank": "Legacy alias for receiving group rank.",
     "extra:Games Played": "Footballguys games with non-zero QB stat lines.",
     "extra:Typical Pass Yards": "Average pass yards from Footballguys, skipping games not played.",
@@ -9938,7 +9966,7 @@ function renderFantasyRanks(kind) {
           ${!isWeekly ? `<button id="scan-fantasypros-adp" class="mini-action primary" ${state.fantasyProsAdpScanStatus === "checking" ? "disabled" : ""}>Scan ADP</button>` : ""}
           ${isWeekly ? `<button id="weekly-compare-only" class="mini-action ${state.weeklyFantasyCompareOnly ? "primary" : ""}" ${state.weeklyFantasyCompareKeys.length ? "" : "disabled"}>${state.weeklyFantasyCompareOnly ? "Show All" : `Selected Only (${state.weeklyFantasyCompareKeys.length})`}</button>` : ""}
           ${isWeekly ? `<button id="weekly-compare-clear" class="mini-action" ${state.weeklyFantasyCompareKeys.length ? "" : "disabled"}>Clear Compare</button>` : ""}
-          ${optionSelect(`${kind}-fantasy-position`, state[positionKey], positions)}
+          ${fantasyPositionSelect(kind, state[positionKey], positions)}
           ${optionSelect(`${kind}-fantasy-team`, state[teamFilterKey], teamOptions)}
           ${optionSelect(`${kind}-fantasy-depth`, state[depthFilterKey], depthOptions)}
           ${isWeekly && !isWeeklyQb ? optionSelect(`${kind}-fantasy-view`, state[viewKey], [["regular", "Regular"], ["last5", "Last 5"]]) : ""}
@@ -11153,6 +11181,7 @@ function disableMobileTextAssist(root = document) {
 
 function render() {
   scheduleProjectionCache = new Map();
+  window.nflzSetFantasyPosition = setFantasyRankPosition;
   const page = pages.find(([id]) => id === state.page);
   title.textContent = page[1];
   renderNav();
