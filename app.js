@@ -1056,7 +1056,8 @@ function optionSelect(id, value, options) {
 }
 
 function fantasyPositionSelect(kind, value, options) {
-  return `<select id="${esc(kind)}-fantasy-position" data-fantasy-position-kind="${esc(kind)}" onchange="window.nflzSetFantasyPosition && window.nflzSetFantasyPosition('${esc(kind)}', this.value)">${options.map((option) => {
+  const action = `window.nflzSetFantasyPosition && window.nflzSetFantasyPosition('${esc(kind)}', this.value)`;
+  return `<select id="${esc(kind)}-fantasy-position" data-fantasy-position-kind="${esc(kind)}" oninput="${action}" onchange="${action}" onblur="${action}">${options.map((option) => {
     const item = Array.isArray(option) ? { value: option[0], label: option[1] } : { value: option, label: option };
     return `<option value="${esc(item.value)}" ${String(item.value) === String(value) ? "selected" : ""}>${esc(item.label)}</option>`;
   }).join("")}</select>`;
@@ -1219,6 +1220,7 @@ function wireSelect(id, key) {
 
 function setFantasyRankPosition(kind, nextPosition) {
   const isWeekly = kind === "weekly";
+  if (!isWeekly && kind !== "season") return;
   const positionKey = isWeekly ? "weeklyFantasyPosition" : "seasonFantasyPosition";
   const viewKey = isWeekly ? "weeklyFantasyView" : "seasonFantasyView";
   const sortKey = isWeekly ? "weeklyFantasySort" : "seasonFantasySort";
@@ -1226,6 +1228,8 @@ function setFantasyRankPosition(kind, nextPosition) {
   const depthFilterKey = isWeekly ? "weeklyFantasyDepthFilter" : "seasonFantasyDepthFilter";
   const teamFilterKey = isWeekly ? "weeklyFantasyTeamFilter" : "seasonFantasyTeamFilter";
   const normalized = normalizeFantasyPositionLabel(nextPosition);
+  const validPositions = fantasyRankPositions(kind);
+  if (!validPositions.includes(normalized)) return;
   if (state[positionKey] === normalized) return;
   state[positionKey] = normalized;
   storage.set(isWeekly ? "nflz-weekly-fantasy-position" : "nflz-season-fantasy-position", normalized);
@@ -11246,6 +11250,16 @@ search.addEventListener("input", (event) => {
   clearTimeout(globalSearchTimer);
   globalSearchTimer = setTimeout(render, 90);
 });
+
+function handleFantasyPositionEvent(event) {
+  const selectEl = event.target.closest?.("[data-fantasy-position-kind]");
+  if (!selectEl) return;
+  event.stopPropagation();
+  setFantasyRankPosition(selectEl.dataset.fantasyPositionKind, selectEl.value);
+}
+
+document.addEventListener?.("input", handleFantasyPositionEvent, true);
+document.addEventListener?.("change", handleFantasyPositionEvent, true);
 
 document.addEventListener?.("click", (event) => {
   const depthActionButton = event.target.closest?.(".depth-apply-one, .depth-use-match, .depth-add-missing, .depth-remove-candidate, .depth-ignore-one, .depth-alter-name");
