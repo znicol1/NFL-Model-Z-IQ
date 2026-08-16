@@ -7106,19 +7106,23 @@ function renderWeeklyQbFormulaControls(readOnly = false) {
         </div>
       </div>
       ${open ? `
-      <div class="formula-slider-grid">
-        ${weeklyQbSlider("statRanks", "StatRanks", 0, 100, readOnly)}
-        ${weeklyQbSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
-        ${weeklyQbSlider("production2025", "2025 Production", 0, 100, readOnly)}
-        ${weeklyQbSlider("production2026", "2026 Production", 0, 100, readOnly)}
+      <div class="formula-slider-grid formula-factor-row">
         ${weeklyQbSlider("talent", "Talent", 0, 200, readOnly)}
         ${weeklyQbSlider("matchup", "Matchup", 0, 200, readOnly)}
+        ${weeklyQbSlider("ppg", "Z's Projected PPG", 0, 200, readOnly)}
         ${weeklyQbSlider("depth", "Depth", 0, 200, readOnly)}
         ${weeklyQbSlider("oline", "O-Line", 0, 200, readOnly)}
-        ${weeklyQbSlider("ppg", "PPG", 0, 200, readOnly)}
         ${weeklyQbSlider("wr", "WR Group", 0, 200, readOnly)}
+      </div>
+      <div class="formula-slider-grid primary-source-grid">
+        ${weeklyQbSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
+        ${weeklyQbSlider("production2026", "2026 Production", 0, 100, readOnly)}
+        ${weeklyQbSlider("production2025", "2025 Production", 0, 100, readOnly)}
+        ${weeklyQbSlider("statRanks", "Stat Ranks", 0, 100, readOnly)}
+      </div>
+      <div class="formula-slider-grid formula-production-row">
         ${weeklyQbSlider("passYards", "Pass Yards", 0, 200, readOnly)}
-        ${weeklyQbSlider("passTds", "Pass TDs", 0, 200, readOnly)}
+        ${weeklyQbSlider("passTds", "Pass TD's", 0, 200, readOnly)}
         ${weeklyQbSlider("rushAttempts", "Rush Attempts", 0, 200, readOnly)}
         ${weeklyQbSlider("rushTds", "Rush TDs", 0, 200, readOnly)}
       </div>
@@ -9317,13 +9321,15 @@ function renderWeeklySkillFormulaControls(position, readOnly = false) {
   if (!["RB", "WR", "TE"].includes(position)) return "";
   const open = Boolean(state.weeklySkillControlsOpen);
   const extraFactors = state.weeklySkillOptions.extraFactors || [];
-  const baseSliders = [
+  const contextSliders = [
     ["depth", "Depth"],
     ["matchup", "Opponent"],
     ["talent", "Talent"],
+    ["ppg", "Z's Projected PPG"],
     ["oline", "O-Line"],
-    ["ppg", "PPG"],
     ...(position === "RB" ? [] : [["qb", "QB Context"]]),
+  ];
+  const productionSliders = [
     ["usage", "Usage"],
     ["redZone", "Red Zone"],
   ];
@@ -9340,16 +9346,19 @@ function renderWeeklySkillFormulaControls(position, readOnly = false) {
         </div>
       </div>
       ${open ? `
+      <div class="formula-slider-grid skill-formula-grid formula-factor-row">
+        ${contextSliders.map(([key, label]) => weeklySkillSlider(key, label, 0, 200, readOnly)).join("")}
+        ${extraFactors.map((key) => weeklySkillSlider(key, weeklySkillFactorOptions.find(([id]) => id === key)?.[1] || key, 0, 200, readOnly)).join("")}
+      </div>
       <div class="formula-slider-grid skill-formula-grid primary-source-grid">
-        ${weeklySkillSlider("statRanks", "StatRanks", 0, 100, readOnly)}
         ${weeklySkillSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
-        ${weeklySkillSlider("production2025", "2025 Production", 0, 100, readOnly)}
         ${weeklySkillSlider("production2026", "2026 Production", 0, 100, readOnly)}
+        ${weeklySkillSlider("production2025", "2025 Production", 0, 100, readOnly)}
+        ${weeklySkillSlider("statRanks", "Stat Ranks", 0, 100, readOnly)}
       </div>
       <p class="formula-help">Hover a slider for its meaning. Add optional factors only when you want them active.</p>
-      <div class="formula-slider-grid skill-formula-grid">
-        ${baseSliders.map(([key, label]) => weeklySkillSlider(key, label, 0, 200, readOnly)).join("")}
-        ${extraFactors.map((key) => weeklySkillSlider(key, weeklySkillFactorOptions.find(([id]) => id === key)?.[1] || key, 0, 200, readOnly)).join("")}
+      <div class="formula-slider-grid skill-formula-grid formula-production-row">
+        ${productionSliders.map(([key, label]) => weeklySkillSlider(key, label, 0, 200, readOnly)).join("")}
       </div>
       ${readOnly ? "" : `
       <div class="factor-add-row">
@@ -9809,7 +9818,17 @@ function renderFantasyRanks(kind) {
   const weekLabel = isWeekly ? esc(siteWeekLabel()) : "";
   const formulaNote = item.scoreFormulaSample ? item.scoreFormulaSample : "No score formula was stored in the exported sample for this sheet.";
   setTimeout(() => {
-    wireSelect(`${kind}-fantasy-position`, positionKey);
+    document.querySelector(`#${kind}-fantasy-position`)?.addEventListener("change", (event) => {
+      const nextPosition = normalizeFantasyPositionLabel(event.target.value);
+      state[positionKey] = nextPosition;
+      state[viewKey] = "regular";
+      state[teamFilterKey] = "All Teams";
+      state[depthFilterKey] = "All Depths";
+      state[sortKey] = isWeekly ? "score" : "rank";
+      state[directionKey] = isWeekly ? "desc" : "asc";
+      if (isWeekly) state.weeklyFantasyCompareOnly = false;
+      render();
+    });
     wireSelect(`${kind}-fantasy-view`, viewKey);
     wireSelect(`${kind}-fantasy-sort`, sortKey);
     wireSelect(`${kind}-fantasy-limit`, limitKey);
