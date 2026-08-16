@@ -51,6 +51,8 @@ const defaultWeeklyQbOptions = {
 
 const defaultWeeklyQbWeights = {
   statRanks: 100,
+  statRanks2025: 100,
+  statRanks2026: 100,
   last5: 68,
   production2025: 100,
   production2026: 100,
@@ -68,6 +70,8 @@ const defaultWeeklyQbWeights = {
 
 const defaultWeeklySkillWeights = {
   statRanks: 100,
+  statRanks2025: 100,
+  statRanks2026: 100,
   last5: 68,
   production2025: 100,
   production2026: 100,
@@ -7140,6 +7144,8 @@ function weeklyQbToggleButton(key, label) {
 
 const weeklyQbSliderTips = {
   statRanks: "How much scanned team stat ranks influence context.",
+  statRanks2025: "How much 2025 TeamRankings data affects context.",
+  statRanks2026: "Ignored until real 2026 TeamRankings data loads.",
   last5: "How much recent production blends over season production.",
   production2025: "How much 2025 production feeds production sliders.",
   production2026: "Ignored until real 2026 game logs are loaded.",
@@ -7196,7 +7202,8 @@ function renderWeeklyQbFormulaControls(readOnly = false) {
         ${weeklyQbSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
         ${weeklyQbSlider("production2026", "2026 Production", 0, 100, readOnly)}
         ${weeklyQbSlider("production2025", "2025 Production", 0, 100, readOnly)}
-        ${weeklyQbSlider("statRanks", "Stat Ranks", 0, 100, readOnly)}
+        ${weeklyQbSlider("statRanks2026", "2026 Stat Ranks", 0, 100, readOnly)}
+        ${weeklyQbSlider("statRanks2025", "2025 Stat Ranks", 0, 100, readOnly)}
       </div>
       <div class="formula-slider-grid formula-production-row">
         ${weeklyQbSlider("passYards", "Pass Yards", 0, 200, readOnly)}
@@ -7409,15 +7416,23 @@ function weeklyQbScore(row) {
 }
 
 function weeklyQbStatRankWeight() {
-  const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
   const options = { ...defaultWeeklyQbOptions, ...state.weeklyQbOptions };
-  const stored = state.weeklyQbWeights?.statRanks;
-  return Math.max(0, Math.min(1, num(stored, options.useStatRanks ? weights.statRanks : 0) / 100));
+  const weights = state.weeklyQbWeights || {};
+  const fallback2025 = options.useStatRanks ? 100 : 0;
+  const weight2025 = weights.statRanks2025 ?? weights.statRanks ?? fallback2025;
+  const weight2026 = hasActual2026StatRanks() ? num(weights.statRanks2026, 100) : 0;
+  return Math.max(0, Math.min(1, Math.max(num(weight2025, fallback2025), weight2026) / 100));
 }
 
 function hasActual2026Production() {
   const logs = window.FOOTBALLGUYS_GAME_LOGS;
   return Number(logs?.year) >= 2026 && Array.isArray(logs?.players) && logs.players.some((player) => Number(player?.gamesPlayed) > 0);
+}
+
+function hasActual2026StatRanks() {
+  const scan = window.TEAM_RANKINGS_SCAN;
+  const season = Number(scan?.season || scan?.year || "");
+  return season >= 2026 && Array.isArray(scan?.teams) && scan.teams.length >= 32;
 }
 
 function weeklyQbProductionWeight() {
@@ -7640,10 +7655,12 @@ function weeklySkillOptions() {
 }
 
 function weeklySkillStatRankWeight() {
-  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
   const options = weeklySkillOptions();
-  const stored = state.weeklySkillWeights?.statRanks;
-  return Math.max(0, Math.min(1, num(stored, options.useStatRanks ? weights.statRanks : 0) / 100));
+  const weights = state.weeklySkillWeights || {};
+  const fallback2025 = options.useStatRanks ? 100 : 0;
+  const weight2025 = weights.statRanks2025 ?? weights.statRanks ?? fallback2025;
+  const weight2026 = hasActual2026StatRanks() ? num(weights.statRanks2026, 100) : 0;
+  return Math.max(0, Math.min(1, Math.max(num(weight2025, fallback2025), weight2026) / 100));
 }
 
 function weeklySkillProductionWeight() {
@@ -9361,6 +9378,8 @@ function wireWeeklyQbFormulaControls() {
 
 const weeklySkillSliderTips = {
   statRanks: "How much scanned team stat ranks influence context.",
+  statRanks2025: "How much 2025 TeamRankings data affects context.",
+  statRanks2026: "Ignored until real 2026 TeamRankings data loads.",
   last5: "How much recent production blends over season production.",
   production2025: "How much 2025 production feeds usage stats.",
   production2026: "Ignored until real 2026 game logs are loaded.",
@@ -9440,7 +9459,8 @@ function renderWeeklySkillFormulaControls(position, readOnly = false) {
         ${weeklySkillSlider("last5", "Last 5 Blend", 0, 100, readOnly)}
         ${weeklySkillSlider("production2026", "2026 Production", 0, 100, readOnly)}
         ${weeklySkillSlider("production2025", "2025 Production", 0, 100, readOnly)}
-        ${weeklySkillSlider("statRanks", "Stat Ranks", 0, 100, readOnly)}
+        ${weeklySkillSlider("statRanks2026", "2026 Stat Ranks", 0, 100, readOnly)}
+        ${weeklySkillSlider("statRanks2025", "2025 Stat Ranks", 0, 100, readOnly)}
       </div>
       <p class="formula-help">Hover a slider for its meaning. Add optional factors only when you want them active.</p>
       <div class="formula-slider-grid skill-formula-grid formula-production-row">

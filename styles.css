@@ -4831,7 +4831,7 @@ select,
 
 .primary-source-grid {
   margin: 8px 0;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .formula-control-head,
