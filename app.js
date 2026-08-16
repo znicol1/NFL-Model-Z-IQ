@@ -415,6 +415,20 @@ const addedPlayers = storage.get("nflz-added-players", []);
 let globalSearchTimer = null;
 let quickPlayerSearchTimer = null;
 let scheduleProjectionCache = new Map();
+let fantasyRowsCache = new Map();
+let dataRevision = 0;
+
+function invalidateProjectionCaches() {
+  scheduleProjectionCache.clear();
+  fantasyRowsCache.clear();
+  dataRevision += 1;
+}
+
+function setFantasyRowsCache(key, rows) {
+  if (fantasyRowsCache.size > 120) fantasyRowsCache.clear();
+  fantasyRowsCache.set(key, rows);
+  return rows;
+}
 
 function sameJson(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
@@ -668,6 +682,7 @@ function applyOverrides(players) {
 
 function saveAddedPlayers() {
   storage.set("nflz-added-players", addedPlayers);
+  invalidateProjectionCaches();
 }
 
 function persistPlayer(player, patch, options = {}) {
@@ -685,6 +700,7 @@ function persistPlayer(player, patch, options = {}) {
     storage.set("nflz-player-overrides", overrides);
     state.players = applyOverrides(state.data.players);
     pffPlayerMatchIndexCache = null;
+    invalidateProjectionCaches();
   }
 }
 
@@ -3649,6 +3665,7 @@ function wireScheduleControls() {
     storage.set("nflz-preseason-depth-multipliers", state.preseasonDepthMultipliers);
     storage.set("nflz-regular-depth-multipliers", state.regularDepthMultipliers);
     storage.set("nflz-home-field-advantages", state.homeFieldAdvantages);
+    invalidateProjectionCaches();
     render();
   });
   document.querySelectorAll("[data-schedule-weight]").forEach((input) => {
@@ -3659,6 +3676,7 @@ function wireScheduleControls() {
     input.addEventListener("change", () => {
       state.schedulePositionWeights[input.dataset.scheduleWeight] = Number(input.value);
       storage.set("nflz-schedule-position-weights", state.schedulePositionWeights);
+      invalidateProjectionCaches();
       render();
     });
   });
@@ -3677,6 +3695,7 @@ function wireScheduleControls() {
       next[group][Number(indexText)] = Number(input.value);
       state[stateKey] = next;
       storage.set(storageKey, state[stateKey]);
+      invalidateProjectionCaches();
       render();
     });
   });
@@ -3684,6 +3703,7 @@ function wireScheduleControls() {
     input.addEventListener("change", () => {
       state.homeFieldAdvantages[input.dataset.hfaTeam] = Number(input.value);
       storage.set("nflz-home-field-advantages", state.homeFieldAdvantages);
+      invalidateProjectionCaches();
       render();
     });
   });
@@ -6801,6 +6821,7 @@ async function scanTeamRankings() {
     const response = await fetch(apiUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
     window.TEAM_RANKINGS_SCAN = await response.json();
+    invalidateProjectionCaches();
     state.teamRankingsScanStatus = "review";
     state.teamRankingsScanMessage = `Updated ${window.TEAM_RANKINGS_SCAN.teams?.length || 0} teams from TeamRankings.`;
   } catch (error) {
@@ -6832,6 +6853,7 @@ async function scanSnapsStats() {
     const response = await fetch(apiUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
     window.FOOTBALLGUYS_GAME_LOGS = await response.json();
+    invalidateProjectionCaches();
     state.snapsStatsScanStatus = "review";
     state.snapsStatsScanMessage = `Updated ${window.FOOTBALLGUYS_GAME_LOGS.players?.length || 0} QB game-log rows from Footballguys.`;
   } catch (error) {
@@ -6860,6 +6882,7 @@ async function scanFantasyProsAdp() {
     const response = await fetch(apiUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
     window.FANTASYPROS_ADP = await response.json();
+    fantasyRowsCache.clear();
     const total = Object.values(window.FANTASYPROS_ADP.players || {}).reduce((sum, rows) => sum + (rows?.length || 0), 0);
     state.fantasyProsAdpScanStatus = "review";
     state.fantasyProsAdpScanMessage = `Updated ${total} FantasyPros ADP rows across FullPPR, .5PPR, and NoPPR.`;
@@ -8272,12 +8295,29 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
 }
 
 function weeklyFantasyPlayerPool(position, workbookRows, weekOverride = null) {
-  if (position === "QB") return buildWeeklyQbRows(workbookRows, weekOverride);
-  if (["RB", "WR", "TE"].includes(position)) return buildWeeklySkillRows(position, workbookRows, weekOverride);
-  if (position === "Defense") return buildWeeklyDefenseRows(workbookRows, weekOverride);
-  if (position === "Kicker") return buildWeeklyKickerRows(workbookRows, weekOverride);
-  const workbookByName = new Map(workbookRows.map((row) => [fantasyMergeKey(row.player), row]));
-  return state.players
+  const week = weekOverride || selectedSiteWeek();
+  const cacheKey = [
+    "weekly",
+    normalizeFantasyPositionLabel(position),
+    week,
+    dataRevision,
+    state.players.length,
+    JSON.stringify(state.weeklyQbWeights),
+    JSON.stringify(state.weeklyQbOptions),
+    JSON.stringify(state.weeklySkillWeights),
+    JSON.stringify(state.weeklySkillOptions),
+    hasActual2026Production() ? "prod26" : "prod25",
+    hasActual2026StatRanks() ? "stat26" : "stat25",
+  ].join("|");
+  if (fantasyRowsCache.has(cacheKey)) return fantasyRowsCache.get(cacheKey);
+  let rows;
+  if (position === "QB") rows = buildWeeklyQbRows(workbookRows, weekOverride);
+  else if (["RB", "WR", "TE"].includes(position)) rows = buildWeeklySkillRows(position, workbookRows, weekOverride);
+  else if (position === "Defense") rows = buildWeeklyDefenseRows(workbookRows, weekOverride);
+  else if (position === "Kicker") rows = buildWeeklyKickerRows(workbookRows, weekOverride);
+  else {
+    const workbookByName = new Map(workbookRows.map((row) => [fantasyMergeKey(row.player), row]));
+    rows = state.players
     .filter((player) => groupPosition(player.position) === position || player.position === position)
     .map((player) => {
       const workbook = workbookByName.get(fantasyMergeKey(player.player)) || {};
@@ -8292,6 +8332,8 @@ function weeklyFantasyPlayerPool(position, workbookRows, weekOverride = null) {
         _playerKey: sourceKey(player),
       };
     });
+  }
+  return setFantasyRowsCache(cacheKey, rows);
 }
 
 function fantasyAdpTeamMatches(adpRow, teamName) {
@@ -8569,7 +8611,23 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
 }
 
 function fantasyBoardRows(kind, position, workbookRows) {
-  return kind === "weekly" ? weeklyFantasyPlayerPool(position, workbookRows) : buildSeasonFantasyRows(position, workbookRows);
+  const normalized = normalizeFantasyPositionLabel(position);
+  if (kind === "weekly") return weeklyFantasyPlayerPool(normalized, workbookRows);
+  const cacheKey = [
+    "season",
+    normalized,
+    dataRevision,
+    state.players.length,
+    JSON.stringify(state.weeklyQbWeights),
+    JSON.stringify(state.weeklyQbOptions),
+    JSON.stringify(state.weeklySkillWeights),
+    JSON.stringify(state.weeklySkillOptions),
+    hasActual2026Production() ? "prod26" : "prod25",
+    hasActual2026StatRanks() ? "stat26" : "stat25",
+  ].join("|");
+  if (fantasyRowsCache.has(cacheKey)) return fantasyRowsCache.get(cacheKey);
+  const rows = buildSeasonFantasyRows(normalized, workbookRows);
+  return setFantasyRowsCache(cacheKey, rows);
 }
 
 function fantasySortValue(row, key) {
@@ -9340,6 +9398,7 @@ function wireWeeklyQbFormulaControls() {
       }
       state.weeklyQbDefaultMessage = "";
       storage.set("nflz-weekly-qb-options", state.weeklyQbOptions);
+      fantasyRowsCache.clear();
       render();
     });
   });
@@ -9355,6 +9414,7 @@ function wireWeeklyQbFormulaControls() {
       state.weeklyQbWeights[input.dataset.qbWeight] = Number(input.value);
       state.weeklyQbDefaultMessage = "";
       storage.set("nflz-weekly-qb-weights", state.weeklyQbWeights);
+      fantasyRowsCache.clear();
       render();
     });
   });
@@ -9368,6 +9428,7 @@ function wireWeeklyQbFormulaControls() {
     state.weeklyQbDefaultMessage = "Default saved";
     storage.set("nflz-weekly-qb-options", state.weeklyQbOptions);
     storage.set("nflz-weekly-qb-weights", state.weeklyQbWeights);
+    fantasyRowsCache.clear();
     render();
   });
   document.querySelector("#weekly-qb-reset-formula")?.addEventListener("click", () => {
@@ -9376,6 +9437,7 @@ function wireWeeklyQbFormulaControls() {
     state.weeklyQbDefaultMessage = "Reset to default";
     storage.set("nflz-weekly-qb-options", state.weeklyQbOptions);
     storage.set("nflz-weekly-qb-weights", state.weeklyQbWeights);
+    fantasyRowsCache.clear();
     render();
   });
 }
@@ -9498,6 +9560,7 @@ function wireWeeklySkillFormulaControls() {
       }
       state.weeklySkillDefaultMessage = "";
       storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+      fantasyRowsCache.clear();
       render();
     });
   });
@@ -9513,6 +9576,7 @@ function wireWeeklySkillFormulaControls() {
       state.weeklySkillWeights[input.dataset.skillWeight] = Number(input.value);
       state.weeklySkillDefaultMessage = "";
       storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+      fantasyRowsCache.clear();
       render();
     });
   });
@@ -9526,6 +9590,7 @@ function wireWeeklySkillFormulaControls() {
     state.weeklySkillDefaultMessage = "Default saved";
     storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
     storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+    fantasyRowsCache.clear();
     render();
   });
   document.querySelector("#weekly-skill-reset-formula")?.addEventListener("click", () => {
@@ -9534,6 +9599,7 @@ function wireWeeklySkillFormulaControls() {
     state.weeklySkillDefaultMessage = "Reset to default";
     storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
     storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
+    fantasyRowsCache.clear();
     render();
   });
   document.querySelector("#weekly-skill-add-factor")?.addEventListener("click", () => {
@@ -9545,6 +9611,7 @@ function wireWeeklySkillFormulaControls() {
     state.weeklySkillWeights[key] = state.weeklySkillWeights[key] ?? 100;
     storage.set("nflz-weekly-skill-options", state.weeklySkillOptions);
     storage.set("nflz-weekly-skill-weights", state.weeklySkillWeights);
+    fantasyRowsCache.clear();
     render();
   });
 }
@@ -9805,12 +9872,14 @@ function renderWeeklyMatchups() {
       });
       input.addEventListener("change", () => {
         storage.set("nflz-weekly-matchup-weights", state.weeklyMatchupWeights);
+        fantasyRowsCache.clear();
         render();
       });
     });
     document.querySelector("#matchup-reset")?.addEventListener("click", () => {
       state.weeklyMatchupWeights = { ...defaultWeeklyMatchupWeights };
       storage.set("nflz-weekly-matchup-weights", state.weeklyMatchupWeights);
+      fantasyRowsCache.clear();
       render();
     });
     wireFantasyScroll();
@@ -11204,7 +11273,6 @@ function disableMobileTextAssist(root = document) {
 }
 
 function render() {
-  scheduleProjectionCache = new Map();
   window.nflzSetFantasyPosition = setFantasyRankPosition;
   const page = pages.find(([id]) => id === state.page);
   title.textContent = page[1];
@@ -11254,7 +11322,6 @@ search.addEventListener("input", (event) => {
 function handleFantasyPositionEvent(event) {
   const selectEl = event.target.closest?.("[data-fantasy-position-kind]");
   if (!selectEl) return;
-  event.stopPropagation();
   setFantasyRankPosition(selectEl.dataset.fantasyPositionKind, selectEl.value);
 }
 
