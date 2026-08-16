@@ -115,9 +115,9 @@ const defaultWeeklySkillOptions = {
 
 const weeklyFantasyScoreRanges = {
   QB: { all: [0.3, 22.9] },
-  RB: { full: [0.4, 20.2], half: [0.3, 18.6], standard: [0.2, 16.9] },
-  WR: { full: [2.2, 20.4], half: [1.7, 16.9], standard: [1.0, 13.8] },
-  TE: { full: [3.8, 15.0], half: [3.0, 12.1], standard: [2.4, 9.8] },
+  RB: { full: [0.4, 20.2], half: [0.3, 18.6], standard: [0.3, 17.0] },
+  WR: { full: [2.2, 20.4], half: [1.7, 16.9], standard: [1.3, 13.4] },
+  TE: { full: [3.8, 15.0], half: [3.0, 12.1], standard: [2.2, 9.1] },
   Defense: { all: [4.6, 8.8] },
   Kicker: { all: [5.9, 8.8] },
 };
