@@ -10389,10 +10389,13 @@ function renderFantasyRanks(kind) {
   const isWeeklyQb = isWeekly && state[positionKey] === "QB";
   const item = fantasyRankItem(kind, state[positionKey]);
   const usesPpr = ["RB", "WR", "TE"].includes(state[positionKey]);
+  const activeView = isWeeklyQb ? "regular" : isWeekly ? state[viewKey] : "regular";
+  const columns = fantasyColumns(kind, state[positionKey], activeView);
   const sortOptions = isWeekly
     ? [["score", usesPpr ? "FullPPR" : "Week Score"], ...(usesPpr ? [["halfPprScore", ".5PPR"], ["standardScore", "NoPPR"]] : []), ["scoreRank", "Week Rank"], ["seasonScore", "Season Production"], ["seasonRank", "Season Rank"], ["last5Score", "Last 5 Production"], ["last5Rank", "Last 5 Rank"], ["rating", "Player Rating"], ["depth", "Depth"]]
     : [["rank", "Rank"], ["score", usesPpr ? "Full Total" : "Total"], ["avgScore", "Avg/G"], ...(usesPpr ? [["fullPprScore", "Full Total"], ["fullPprAvg", "Full/G"], ["halfPprScore", ".5 Total"], ["halfPprAvg", ".5/G"], ["standardScore", "No Total"], ["standardAvg", "No/G"]] : []), ["extra:Season Difficulty", "Avg vPOS"], ["value", usesPpr ? "ADP Value" : "Value"], ["adp", "ADP"], ["rating", "Player Rating"], ["depth", "Depth"]];
-  if (!sortOptions.some(([value]) => value === state[sortKey])) {
+  const sortableKeys = new Set([...sortOptions.map(([value]) => value), ...columns.filter((column) => !column.noSort).map((column) => column.key)]);
+  if (!sortableKeys.has(state[sortKey])) {
     state[sortKey] = isWeekly ? "score" : "rank";
     state[directionKey] = isWeekly ? "desc" : "asc";
   }
@@ -10407,8 +10410,6 @@ function renderFantasyRanks(kind) {
   const filteredByControls = fantasyApplyFilters(comparedRows, state[positionKey], state[teamFilterKey], state[depthFilterKey]);
   const filtered = filteredByControls.filter((row) => !state.query || [row.player, row.team, row.opponent, row.position, Object.values(row.extras || {}).join(" ")].join(" ").toLowerCase().includes(state.query));
   const rows = fantasySortedRows(filtered, state[sortKey], state[directionKey]).slice(0, Number(state[limitKey]));
-  const activeView = isWeeklyQb ? "regular" : isWeekly ? state[viewKey] : "regular";
-  const columns = fantasyColumns(kind, state[positionKey], activeView);
   state._activeFantasyRows = filtered;
   const weekLabel = isWeekly ? esc(siteWeekLabel()) : "";
   const formulaNote = item.scoreFormulaSample ? item.scoreFormulaSample : "No score formula was stored in the exported sample for this sheet.";
