@@ -10756,6 +10756,47 @@ const fantasyTeamPositions = ["QB", "RB", "WR", "TE", "DST", "K"];
 const fantasyTeamDepthTags = ["Starter", "Flex", "Bench", "IR", "Prospect"];
 const fantasyTeamColors = ["#e8f3ff", "#edf8ee", "#fff4df", "#f2edff", "#ffecef", "#eef3f8"];
 
+function fantasyTeamPositionRank(position) {
+  const index = fantasyTeamPositions.indexOf(position);
+  if (index >= 0) return index;
+  if (position === "FLEX") return fantasyTeamPositions.indexOf("TE") + 0.5;
+  if (position === "Any") return 99;
+  return 100;
+}
+
+function fantasySlotDepth(slot, fallback = 999) {
+  const match = String(slot || "").match(/(\d+)/);
+  return match ? Number(match[1]) : fallback;
+}
+
+function fantasyPositionFromSlot(slot) {
+  const prefix = String(slot || "").trim().toUpperCase().replace(/\d+.*/, "");
+  return fantasyTeamPositions.includes(prefix) ? prefix : "";
+}
+
+function nextFantasySlot(rows, position) {
+  const depths = rows.filter((row) => row.position === position)
+    .map((row) => fantasySlotDepth(row.slot, 0))
+    .filter((value) => Number.isFinite(value));
+  return `${position}${Math.max(0, ...depths) + 1}`;
+}
+
+function fantasyTeamRowSort(a, b) {
+  return fantasyTeamPositionRank(a.position) - fantasyTeamPositionRank(b.position)
+    || fantasySlotDepth(a.slot) - fantasySlotDepth(b.slot)
+    || String(a.slot || "").localeCompare(String(b.slot || ""), undefined, { numeric: true })
+    || num(a.order, 9999) - num(b.order, 9999)
+    || String(a.playerName || "").localeCompare(String(b.playerName || ""));
+}
+
+function normalizeFantasyTeamRows(league) {
+  if (!league) return;
+  league.teamRows = (league.teamRows || []).sort(fantasyTeamRowSort);
+  league.teamRows.forEach((row, index) => { row.order = index; });
+  league.lineupRows = (league.lineupRows || []).sort((a, b) => num(a.order, 9999) - num(b.order, 9999));
+  league.lineupRows.forEach((row, index) => { row.order = index; });
+}
+
 function fantasyLeagueDefaultRows() {
   const counts = { QB: 2, RB: 4, WR: 4, TE: 2, DST: 2, K: 2 };
   return fantasyTeamPositions.flatMap((position) => Array.from({ length: counts[position] }, (_, index) => ({
@@ -10807,6 +10848,7 @@ function ensureFantasyTeams() {
     league.activeView ||= "team";
     league.teamRows ||= fantasyLeagueDefaultRows();
     league.lineupRows ||= fantasyLineupDefaultRows();
+    normalizeFantasyTeamRows(league);
   });
   return savedFantasyTeams.leagues;
 }
@@ -10969,13 +11011,14 @@ function fantasyCreateCounterpartRow(league, view, row, player) {
   const rows = fantasyCounterpartRows(league, view);
   const playerPos = fantasyPositionForPlayer(player);
   if (view === "lineup") {
-    const count = league.teamRows.filter((item) => item.position === playerPos).length + 1;
-    const next = { id: uid("fantasy-row"), position: playerPos, slot: `${playerPos}${count}`, tag: row.tag || "Bench", playerKey: "", playerName: "" };
+    const next = { id: uid("fantasy-row"), position: playerPos, slot: nextFantasySlot(league.teamRows, playerPos), tag: row.tag || "Bench", playerKey: "", playerName: "" };
     rows.push(next);
+    normalizeFantasyTeamRows(league);
     return next;
   }
   const next = { id: uid("lineup-row"), position: playerPos, slot: "Bench", tag: "Bench", playerKey: "", playerName: "", order: rows.length };
   rows.push(next);
+  normalizeFantasyTeamRows(league);
   return next;
 }
 
@@ -10988,6 +11031,7 @@ function syncFantasyRowToOtherView(league, view, row) {
   counterpart.playerKey = row.playerKey;
   counterpart.playerName = row.playerName || player.player;
   if (row.tag && counterpart.tag !== "IR") counterpart.tag = row.tag;
+  normalizeFantasyTeamRows(league);
 }
 
 function fantasyPositionSpans(rows) {
@@ -11057,7 +11101,7 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
 function renderFantasyLeagueCard(league) {
   const view = league.activeView || "team";
   const rows = view === "lineup" ? league.lineupRows : league.teamRows;
-  const grouped = view === "team" ? [...rows].sort((a, b) => fantasyTeamPositions.indexOf(a.position) - fantasyTeamPositions.indexOf(b.position) || String(a.slot).localeCompare(String(b.slot))) : rows;
+  const grouped = view === "team" ? [...rows].sort(fantasyTeamRowSort) : rows;
   const spans = fantasyPositionSpans(grouped);
   return `
     <article class="my-fantasy-card" style="--league-bg:${esc(league.color || "#e8f3ff")}">
@@ -11125,6 +11169,10 @@ function wireMyFantasyTeams() {
       const row = rows?.find((item) => item.id === input.dataset.rowId);
       if (!row) return;
       row[input.dataset.fantasyField] = input.value;
+      if (input.dataset.view === "team" && input.dataset.fantasyField === "slot") {
+        const slotPosition = fantasyPositionFromSlot(input.value);
+        if (slotPosition) row.position = slotPosition;
+      }
       if (input.dataset.fantasyField === "playerName") {
         const player = findPlayerByName(input.value);
         row.playerKey = player ? sourceKey(player) : "";
@@ -11132,6 +11180,7 @@ function wireMyFantasyTeams() {
         if (row.position === "Any" && player) row.position = fantasyPositionForPlayer(player);
       }
       syncFantasyRowToOtherView(league, input.dataset.view, row);
+      normalizeFantasyTeamRows(league);
       saveFantasyTeams();
       render();
     });
@@ -11142,14 +11191,19 @@ function wireMyFantasyTeams() {
     const position = document.querySelector(`.fantasy-add-position[data-league-id="${CSS.escape(league.id)}"][data-view="${CSS.escape(view)}"]`)?.value || "RB";
     const rows = view === "lineup" ? league.lineupRows : league.teamRows;
     const basePosition = position === "Bench" || position === "IR" ? "Any" : position;
-    const row = { id: uid(view === "lineup" ? "lineup-row" : "fantasy-row"), position: basePosition, slot: position, tag: position === "IR" ? "IR" : position === "FLEX" ? "Flex" : position === "Bench" ? "Bench" : "Starter", playerKey: "", playerName: "", order: rows.length };
+    const teamPosition = basePosition === "Any" || basePosition === "FLEX" ? "RB" : basePosition;
+    const rowSlot = view === "team" && fantasyTeamPositions.includes(basePosition)
+      ? nextFantasySlot(rows, basePosition)
+      : position === "IR" ? "IR" : position === "FLEX" ? "FLEX" : position === "Bench" ? "Bench" : "Bench";
+    const row = { id: uid(view === "lineup" ? "lineup-row" : "fantasy-row"), position: basePosition, slot: rowSlot, tag: position === "IR" ? "IR" : position === "FLEX" ? "Flex" : position === "Bench" ? "Bench" : "Starter", playerKey: "", playerName: "", order: rows.length };
     rows.push(row);
     const otherRows = fantasyCounterpartRows(league, view);
     const other = view === "lineup"
-      ? { id: uid("fantasy-row"), position: basePosition === "Any" ? "RB" : basePosition === "FLEX" ? "RB" : basePosition, slot: basePosition === "Any" || basePosition === "FLEX" ? "Bench" : `${basePosition}${otherRows.filter((item) => item.position === basePosition).length + 1}`, tag: row.tag, playerKey: "", playerName: "", linkedRowId: row.id }
+      ? { id: uid("fantasy-row"), position: teamPosition, slot: nextFantasySlot(otherRows, teamPosition), tag: row.tag, playerKey: "", playerName: "", linkedRowId: row.id }
       : { id: uid("lineup-row"), position: basePosition, slot: position === "IR" ? "IR" : "Bench", tag: position === "IR" ? "IR" : "Bench", playerKey: "", playerName: "", order: otherRows.length, linkedRowId: row.id };
     row.linkedRowId = other.id;
     otherRows.push(other);
+    normalizeFantasyTeamRows(league);
     saveFantasyTeams();
     render();
   }));
