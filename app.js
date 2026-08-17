@@ -10783,6 +10783,52 @@ function renderStatRanks() {
 const fantasyTeamPositions = ["QB", "RB", "WR", "TE", "DST", "K"];
 const fantasyTeamDepthTags = ["Starter", "Flex", "Bench", "IR", "Prospect"];
 const fantasyTeamColors = ["#e8f3ff", "#edf8ee", "#fff4df", "#f2edff", "#ffecef", "#eef3f8"];
+const fantasyScoringOptions = [["full", "Full PPR"], ["half", ".5 PPR"], ["standard", "No PPR"]];
+const fantasyTeamFactorGroups = {
+  QB: ["OL Rank", "PPG Rank", "Receiving Group Rank"],
+  RB: ["OL Rank", "Team YPG Rank", "PPG Rank", "Game Script", "Team Total"],
+  "WR/TE": ["QB Rank", "CB Matchup Rating", "CB Matchup Player", "PPG Rank", "Team YPG Rank", "Game Script", "Team Total"],
+  DST: ["Defense Rank", "Sacks Rank", "Takeaways Rank", "Opp PPG Rank"],
+  K: ["Team Offense Rank", "Team Total Rank", "4th Down Difficulty", "Kicker Stadium Tier"],
+};
+const fantasyTeamFactorLabels = {
+  "OL Rank": "OL",
+  "PPG Rank": "PPG",
+  "Receiving Group Rank": "Rec",
+  "Team YPG Rank": "YPG",
+  "Game Script": "Script",
+  "Team Total": "Total",
+  "QB Rank": "QB",
+  "CB Matchup Rating": "CB Rt",
+  "CB Matchup Player": "CB",
+  "Defense Rank": "Def",
+  "Sacks Rank": "Sacks",
+  "Takeaways Rank": "Take",
+  "Opp PPG Rank": "Opp PPG",
+  "Team Offense Rank": "Off",
+  "Team Total Rank": "Total Rk",
+  "4th Down Difficulty": "4th",
+  "Kicker Stadium Tier": "Stadium",
+};
+const fantasyTeamFactorTips = {
+  "OL Rank": "Offensive line rank used in the weekly score.",
+  "PPG Rank": "Z's projected team scoring rank.",
+  "Receiving Group Rank": "Weighted WR/TE support around the QB.",
+  "Team YPG Rank": "Team yardage environment rank.",
+  "Game Script": "Projected lead helps RB rush, deficit helps pass volume.",
+  "Team Total": "Projected team points for this matchup.",
+  "QB Rank": "Team QB strength feeding receivers.",
+  "CB Matchup Rating": "Projected CB matchup rating by WR depth.",
+  "CB Matchup Player": "Projected CB matchup by WR depth.",
+  "Defense Rank": "Team defensive rating rank.",
+  "Sacks Rank": "Sacks per game rank from TeamRankings.",
+  "Takeaways Rank": "Takeaways per game rank from TeamRankings.",
+  "Opp PPG Rank": "Opponent scoring difficulty for DST.",
+  "Team Offense Rank": "Team offense context for kickers.",
+  "Team Total Rank": "Projected team-total rank for kickers.",
+  "4th Down Difficulty": "More 4th-down aggression hurts kickers.",
+  "Kicker Stadium Tier": "Weekly stadium kicking environment.",
+};
 
 function fantasyTeamPositionRank(position) {
   const index = fantasyTeamPositions.indexOf(position);
@@ -10855,6 +10901,8 @@ function defaultFantasyTeams() {
     name: "Fantasy Team 1",
     site: "Site",
     league: "League Name",
+    scoring: "full",
+    hiddenFactors: [],
     color: fantasyTeamColors[0],
     activeView: "team",
     teamRows: fantasyLeagueDefaultRows(),
@@ -10872,6 +10920,8 @@ function ensureFantasyTeams() {
     league.name ||= `Fantasy Team ${index + 1}`;
     league.site ||= "Site";
     league.league ||= "League Name";
+    league.scoring ||= "full";
+    league.hiddenFactors ||= [];
     league.color ||= fantasyTeamColors[index % fantasyTeamColors.length];
     league.activeView ||= "team";
     league.teamRows ||= fantasyLeagueDefaultRows();
@@ -10887,6 +10937,10 @@ function saveFantasyTeams() {
 
 function fantasyTeamWeek() {
   return state.myFantasyWeek === "auto" ? selectedSiteWeek() : state.myFantasyWeek;
+}
+
+function fantasyTeamScoring(league) {
+  return fantasyScoringOptions.some(([value]) => value === league?.scoring) ? league.scoring : "full";
 }
 
 function fantasyRowDisplayPosition(row, player = null) {
@@ -10921,14 +10975,39 @@ function fantasyPlayersForSlot(position) {
   return state.players.filter((player) => normalizeFantasyPositionLabel(groupPosition(player.position) || player.position) === wanted);
 }
 
+function findFantasyDefenseTeam(name, fallbackTeam = "") {
+  const raw = String(name || fallbackTeam || "").replace(/\bD\/?ST\b|\bDST\b|\bDefense\b/gi, "").trim();
+  if (!raw) return null;
+  const teams = state.data?.teams || [];
+  return teamByName(raw)
+    || teams.find((team) => normalizeTeamName(team.teamAbbrev) === normalizeTeamName(raw))
+    || teams.find((team) => fantasyMergeKey(team.team).includes(fantasyMergeKey(raw)) || fantasyMergeKey(raw).includes(fantasyMergeKey(team.team)))
+    || null;
+}
+
+function findFantasyPlayerForRowName(name, row = {}) {
+  if (!name) return null;
+  const key = fantasyMergeKey(name);
+  const wanted = normalizeFantasyPositionLabel(row.position === "FLEX" ? "Any" : row.position);
+  const matches = state.players.filter((player) => fantasyMergeKey(player.player) === key || String(player.player).toLowerCase() === String(name).toLowerCase());
+  const compatible = matches.filter((player) => wanted === "Any" || fantasyCompatibleRowForPlayer(row, player));
+  const pool = compatible.length ? compatible : matches;
+  if (row.team) {
+    const teamMatch = pool.find((player) => normalizeTeamName(player.team) === normalizeTeamName(row.team));
+    if (teamMatch) return teamMatch;
+  }
+  return pool.sort((a, b) => num(b.rating, 0) - num(a.rating, 0))[0] || findPlayerByName(name);
+}
+
 function findFantasyTeamPlayer(row) {
-  if (row.playerKey) return findPlayer(row.playerKey);
   if (!row.playerName) return null;
   if (row.position === "DST") {
-    const team = teamByName(row.playerName.replace(/\s+DST$/i, "")) || teamByName(row.team);
+    const team = findFantasyDefenseTeam(row.playerName, row.team);
     return team ? { player: `${team.teamAbbrev || teamAbbrevFor(team.team)} DST`, team: team.team, position: "Defense", teamAbbrev: team.teamAbbrev || teamAbbrevFor(team.team), rating: team.defenseAverage, depth: 1, _fantasyDefense: true } : null;
   }
-  return findPlayerByName(row.playerName);
+  const keyed = row.playerKey ? findPlayer(row.playerKey) : null;
+  if (keyed && (!row.playerName || fantasyMergeKey(keyed.player) === fantasyMergeKey(row.playerName))) return keyed;
+  return findFantasyPlayerForRowName(row.playerName, row);
 }
 
 function fantasyWeeklyRowsFor(position) {
@@ -10945,9 +11024,26 @@ function fantasyProjectionForPlayer(player, position) {
 }
 
 function fantasyPrimaryScoreRank(row, position) {
+  return fantasyScoreRankForScoring(row, position, "full");
+}
+
+function fantasyScoreForScoring(row, position, scoring = "full") {
   if (!row) return "";
   const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
-  if (["RB", "WR", "TE"].includes(normalized)) return fantasyDetailValue(row, "FullPPR Rank") || row.scoreRank || "";
+  if (!["RB", "WR", "TE"].includes(normalized)) return row.score || "";
+  if (scoring === "half") return row.halfPprScore || fantasyDetailValue(row, ".5PPR") || row.score || "";
+  if (scoring === "standard") return row.standardScore || fantasyDetailValue(row, "NoPPR") || row.score || "";
+  return row.fullPprScore || fantasyDetailValue(row, "FullPPR") || row.score || "";
+}
+
+function fantasyScoreRankForScoring(row, position, scoring = "full") {
+  if (!row) return "";
+  const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
+  if (["RB", "WR", "TE"].includes(normalized)) {
+    if (scoring === "half") return fantasyDetailValue(row, ".5PPR Rank") || fantasyDetailValue(row, "Half PPR Rank") || row.scoreRank || "";
+    if (scoring === "standard") return fantasyDetailValue(row, "NoPPR Rank") || fantasyDetailValue(row, "Std Rank") || row.scoreRank || "";
+    return fantasyDetailValue(row, "FullPPR Rank") || fantasyDetailValue(row, "Full PPR Rank") || row.scoreRank || "";
+  }
   return row.scoreRank || row.rank || "";
 }
 
@@ -10971,6 +11067,8 @@ function fantasySourceValues(position, key) {
   const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
   return fantasyWeeklyRowsFor(normalized).map((item) => {
     if (key === "primaryScoreRank") return fantasyPrimaryScoreRank(item, normalized);
+    if (String(key || "").startsWith("scoreRank:")) return fantasyScoreRankForScoring(item, normalized, key.slice(10));
+    if (String(key || "").startsWith("score:")) return fantasyScoreForScoring(item, normalized, key.slice(6));
     if (key === "scoreRank") return item.scoreRank;
     if (key === "score") return item.score;
     if (key === "usage") return fantasyUsageRank(item);
@@ -11025,6 +11123,50 @@ function fantasyContextChips(row, position) {
   }).join("");
 }
 
+function fantasyTeamAllFactors() {
+  return unique(Object.values(fantasyTeamFactorGroups).flat());
+}
+
+function fantasyTeamVisibleFactors(league) {
+  const hidden = new Set(league?.hiddenFactors || []);
+  return fantasyTeamAllFactors().filter((factor) => !hidden.has(factor));
+}
+
+function fantasyTeamFactorGroupForPosition(position) {
+  if (position === "QB") return "QB";
+  if (position === "RB") return "RB";
+  if (position === "WR" || position === "TE") return "WR/TE";
+  if (position === "DST") return "DST";
+  if (position === "K") return "K";
+  return "";
+}
+
+function fantasyTeamFactorApplies(position, factor) {
+  const group = fantasyTeamFactorGroupForPosition(position);
+  return Boolean(group && fantasyTeamFactorGroups[group]?.includes(factor));
+}
+
+function fantasyTeamFactorValue(row, position, factor) {
+  if (!row || !fantasyTeamFactorApplies(position, factor)) return "";
+  return fantasyDetailValue(row, factor);
+}
+
+function fantasyTeamFactorReverse(factor) {
+  return /rank/i.test(factor) || ["4th Down Difficulty", "CB Matchup Rating"].includes(factor);
+}
+
+function fantasyTeamFactorHeader(league, factor) {
+  const label = fantasyTeamFactorLabels[factor] || factor;
+  return `<th class="my-fantasy-factor-head" title="${esc(fantasyTeamFactorTips[factor] || factor)}"><button type="button" data-fantasy-hide-factor="${esc(factor)}" data-league-id="${esc(league.id)}" title="Hide ${esc(label)}">x</button><span>${esc(label)}</span></th>`;
+}
+
+function fantasyTeamFactorCell(row, position, factor) {
+  const value = fantasyTeamFactorValue(row, position, factor);
+  const style = Number.isFinite(Number(value)) ? fantasySourceStyle(position, `extra:${factor}`, value, fantasyTeamFactorReverse(factor)) : "";
+  const digits = Number.isFinite(Number(value)) && Math.abs(Number(value)) < 10 ? 1 : 0;
+  return `<td class="num my-fantasy-factor-cell" ${style}>${esc(fantasyDisplay(value, digits))}</td>`;
+}
+
 function fantasyRowDatalistId(leagueId, view, rowId) {
   return `fantasy-list-${leagueId}-${view}-${rowId}`.replace(/[^a-zA-Z0-9_-]/g, "");
 }
@@ -11052,6 +11194,10 @@ function fantasyFindCounterpartRow(league, view, row, player) {
     const byPlayer = rows.find((item) => item.playerKey === row.playerKey);
     if (byPlayer) return byPlayer;
   }
+  if (player?._fantasyDefense) {
+    const byDefense = rows.find((item) => item.position === "DST" && normalizeTeamName(item.team) === normalizeTeamName(player.team));
+    if (byDefense) return byDefense;
+  }
   return rows.find((item) => !item.playerKey && !item.playerName && fantasyCompatibleRowForPlayer(item, player)) || null;
 }
 
@@ -11072,12 +11218,13 @@ function fantasyCreateCounterpartRow(league, view, row, player) {
 
 function syncFantasyRowToOtherView(league, view, row) {
   const player = findFantasyTeamPlayer(row);
-  if (!league || !row || !player || !row.playerKey) return;
+  if (!league || !row || !player) return;
   const counterpart = fantasyFindCounterpartRow(league, view, row, player) || fantasyCreateCounterpartRow(league, view, row, player);
   row.linkedRowId = counterpart.id;
   counterpart.linkedRowId = row.id;
-  counterpart.playerKey = row.playerKey;
+  counterpart.playerKey = row.playerKey || "";
   counterpart.playerName = row.playerName || player.player;
+  counterpart.team = player.team || row.team || "";
   if (row.tag && counterpart.tag !== "IR") counterpart.tag = row.tag;
   normalizeFantasyTeamRows(league);
 }
@@ -11101,11 +11248,13 @@ function fantasyPositionSpans(rows) {
   return spans;
 }
 
-function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefined) {
+function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefined, factors = []) {
   const player = findFantasyTeamPlayer(row);
   const position = fantasyRowDisplayPosition(row, player);
   const projection = fantasyProjectionForPlayer(player, position);
-  const primaryRank = fantasyPrimaryScoreRank(projection, position);
+  const scoring = fantasyTeamScoring(league);
+  const primaryRank = fantasyScoreRankForScoring(projection, position, scoring);
+  const primaryScore = fantasyScoreForScoring(projection, position, scoring);
   const opponent = projection?.opponent ? teamAbbrevFor(projection.opponent, projection.opponent) : "";
   const team = player?.team ? teamAbbrevFor(player.team, player.teamAbbrev || player.team) : "";
   const vposLabel = position === "QB" ? "Matchup Rating (Low is good)" : position === "RB" ? "Opp vRB Rank" : position === "WR" ? "Opp vWR Rank" : position === "TE" ? "Opp vTE Rank" : position === "DST" ? "Opponent Off Rank" : "Team Offense Rank";
@@ -11113,8 +11262,8 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
   const datalistId = fantasyRowDatalistId(league.id, view, row.id);
   const options = fantasyPlayersForSlot(row.position).slice(0, 700);
   const rowClass = row.tag === "Flex" ? "flex" : String(row.tag || "").toLowerCase();
-  const scoreStyle = projection ? fantasySourceStyle(position, "score", projection.score, false) : "";
-  const rankStyle = projection ? fantasySourceStyle(position, "primaryScoreRank", primaryRank, true) : "";
+  const scoreStyle = projection ? fantasySourceStyle(position, `score:${scoring}`, primaryScore, false) : "";
+  const rankStyle = projection ? fantasySourceStyle(position, `scoreRank:${scoring}`, primaryRank, true) : "";
   const vposStyle = projection ? fantasySourceStyle(position, `extra:${vposLabel}`, vpos, true) : "";
   const usage = fantasyUsageRank(projection);
   const usageStyle = projection ? fantasySourceStyle(position, "usage", usage, true) : "";
@@ -11140,8 +11289,8 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
       <td class="num" ${rankStyle}>${esc(fantasyDisplay(primaryRank, 0))}</td>
       <td class="num" ${vposStyle}>${esc(fantasyDisplay(vpos, 0))}</td>
       <td class="num" ${usageStyle}>${esc(fantasyDisplay(usage, 0))}</td>
-      <td class="num score-pill" ${scoreStyle}>${esc(fantasyDisplay(projection?.score, 1))}</td>
-      <td><div class="fantasy-extra-chips compact">${fantasyContextChips(projection, position)}</div></td>
+      <td class="num score-pill" ${scoreStyle}>${esc(fantasyDisplay(primaryScore, 1))}</td>
+      ${factors.map((factor) => fantasyTeamFactorCell(projection, position, factor)).join("")}
       <td class="my-fantasy-delete-cell"><button class="mini-action danger my-fantasy-delete" data-fantasy-delete-row="${esc(row.id)}" data-league-id="${esc(league.id)}" data-view="${esc(view)}" title="Remove row">x</button></td>
     </tr>
   `;
@@ -11152,6 +11301,9 @@ function renderFantasyLeagueCard(league) {
   const rows = view === "lineup" ? league.lineupRows : league.teamRows;
   const grouped = view === "team" ? [...rows].sort(fantasyTeamRowSort) : rows;
   const spans = fantasyPositionSpans(grouped);
+  const visibleFactors = fantasyTeamVisibleFactors(league);
+  const hiddenFactors = fantasyTeamAllFactors().filter((factor) => (league.hiddenFactors || []).includes(factor));
+  const scoringLabel = fantasyScoringOptions.find(([value]) => value === fantasyTeamScoring(league))?.[1] || "Full PPR";
   return `
     <article class="my-fantasy-card" style="--league-bg:${esc(league.color || "#e8f3ff")}">
       <div class="depth-team-head my-fantasy-head">
@@ -11159,6 +11311,7 @@ function renderFantasyLeagueCard(league) {
         <div class="league-meta">
           <input data-fantasy-league-field="league" data-league-id="${esc(league.id)}" value="${esc(league.league)}" />
           <input data-fantasy-league-field="site" data-league-id="${esc(league.id)}" value="${esc(league.site)}" />
+          ${optionSelect(`scoring-${league.id}`, fantasyTeamScoring(league), fantasyScoringOptions).replace("<select", `<select data-fantasy-league-field="scoring" data-league-id="${esc(league.id)}" title="Fantasy scoring format for this team"`)}
           <input type="color" data-fantasy-league-field="color" data-league-id="${esc(league.id)}" value="${esc(league.color || "#e8f3ff")}" />
         </div>
       </div>
@@ -11167,11 +11320,12 @@ function renderFantasyLeagueCard(league) {
         <button class="${view === "lineup" ? "active" : ""}" data-fantasy-view="lineup" data-league-id="${esc(league.id)}">Lineup View</button>
         ${optionSelect(`add-position-${league.id}`, "RB", [["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["DST", "DST"], ["K", "K"], ["Bench", "Bench"], ["IR", "IR"], ...(view === "lineup" ? [["FLEX", "FLEX"]] : [])]).replace("<select", `<select class="fantasy-add-position" data-league-id="${esc(league.id)}" data-view="${esc(view)}"`)}
         <button class="mini-action" data-fantasy-add-row="${esc(league.id)}" data-view="${esc(view)}">Add Row</button>
+        ${hiddenFactors.length ? `${optionSelect(`factor-${league.id}`, hiddenFactors[0], hiddenFactors.map((factor) => [factor, fantasyTeamFactorLabels[factor] || factor])).replace("<select", `<select class="fantasy-add-factor" data-league-id="${esc(league.id)}"`)}<button type="button" class="mini-action" data-fantasy-add-factor="${esc(league.id)}">Add Factor</button>` : `<span class="depth-check-note">All factors shown</span>`}
       </div>
       <div class="table-scroll my-fantasy-scroll">
         <table class="my-fantasy-table">
-          <thead><tr><th>Pos</th><th>Slot</th><th>Tag</th><th>Player</th><th>Team</th><th>Opp</th><th>Score Rank</th><th>vPOS</th><th>Usage Rank</th><th>Week Score</th><th>Team Context</th><th></th></tr></thead>
-          <tbody>${grouped.map((row, index) => fantasyTeamRow(league, view, row, index, grouped, spans.get(row.id))).join("")}</tbody>
+          <thead><tr><th>Pos</th><th>Slot</th><th>Tag</th><th>Player</th><th>Team</th><th>Opp</th><th>${esc(scoringLabel)} Rank</th><th>vPOS</th><th>Usage Rank</th><th>${esc(scoringLabel)}</th>${visibleFactors.map((factor) => fantasyTeamFactorHeader(league, factor)).join("")}<th></th></tr></thead>
+          <tbody>${grouped.map((row, index) => fantasyTeamRow(league, view, row, index, grouped, spans.get(row.id), visibleFactors)).join("")}</tbody>
         </table>
       </div>
     </article>
@@ -11211,6 +11365,21 @@ function wireMyFantasyTeams() {
     saveFantasyTeams();
     render();
   }));
+  document.querySelectorAll("[data-fantasy-hide-factor]").forEach((button) => button.addEventListener("click", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === button.dataset.leagueId);
+    if (!league) return;
+    league.hiddenFactors = unique([...(league.hiddenFactors || []), button.dataset.fantasyHideFactor].filter(Boolean));
+    saveFantasyTeams();
+    render();
+  }));
+  document.querySelectorAll("[data-fantasy-add-factor]").forEach((button) => button.addEventListener("click", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === button.dataset.fantasyAddFactor);
+    const factor = document.querySelector(`.fantasy-add-factor[data-league-id="${CSS.escape(button.dataset.fantasyAddFactor)}"]`)?.value;
+    if (!league || !factor) return;
+    league.hiddenFactors = (league.hiddenFactors || []).filter((item) => item !== factor);
+    saveFantasyTeams();
+    render();
+  }));
   document.querySelectorAll("[data-fantasy-field]").forEach((input) => {
     input.addEventListener("change", () => {
       const league = ensureFantasyTeams().find((item) => item.id === input.dataset.leagueId);
@@ -11223,10 +11392,18 @@ function wireMyFantasyTeams() {
         if (slotPosition) row.position = slotPosition;
       }
       if (input.dataset.fantasyField === "playerName") {
-        const player = findPlayerByName(input.value);
-        row.playerKey = player ? sourceKey(player) : "";
-        row.playerName = player?.player || input.value;
-        if (row.position === "Any" && player) row.position = fantasyPositionForPlayer(player);
+        if (row.position === "DST") {
+          const team = findFantasyDefenseTeam(input.value, row.team);
+          row.playerKey = "";
+          row.team = team?.team || "";
+          row.playerName = team ? `${team.teamAbbrev || teamAbbrevFor(team.team)} DST` : input.value;
+        } else {
+          const player = findFantasyPlayerForRowName(input.value, row);
+          row.playerKey = player ? sourceKey(player) : "";
+          row.playerName = player?.player || input.value;
+          row.team = player?.team || row.team || "";
+          if (row.position === "Any" && player) row.position = fantasyPositionForPlayer(player);
+        }
       }
       syncFantasyRowToOtherView(league, input.dataset.view, row);
       normalizeFantasyTeamRows(league);

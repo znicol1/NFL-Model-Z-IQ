@@ -4509,10 +4509,17 @@ select,
   gap: 6px;
 }
 
-.league-meta input:not([type="color"]) {
+.league-meta input:not([type="color"]),
+.league-meta select {
   width: 128px;
   padding: 5px 7px;
   font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.76);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #061632;
+  font-family: inherit;
+  font-weight: 900;
 }
 
 .league-meta input[type="color"] {
@@ -4582,6 +4589,39 @@ select,
   font-size: 10px;
   text-align: center;
   text-transform: uppercase;
+}
+
+.my-fantasy-factor-head {
+  min-width: 58px;
+}
+
+.my-fantasy-factor-head button {
+  display: block;
+  width: 18px;
+  height: 16px;
+  margin: 0 auto 2px;
+  border: 1px solid #bfd0e8;
+  border-radius: 999px;
+  background: #fff;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.my-fantasy-factor-head button:hover {
+  border-color: #cf173d;
+  color: #cf173d;
+}
+
+.my-fantasy-factor-head span {
+  display: block;
+  white-space: nowrap;
+}
+
+.my-fantasy-factor-cell {
+  min-width: 54px;
 }
 
 .my-fantasy-table td {
