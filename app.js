@@ -1740,6 +1740,10 @@ function isPlayerAvailable(player, week = selectedSiteWeek()) {
   return !playerUnavailableLabel(player, week);
 }
 
+function isFantasyRowAvailable(row) {
+  return isPlayerAvailable({ injury: row?.injury, week: row?.injuryWeek }, row?.fantasyWeek || selectedSiteWeek());
+}
+
 function injuryStatusNeedsReturnReview(player) {
   const status = injuryStatusText(player);
   if (!/ir\s+thru|out\s+thru|\*?likely\*?\s+out\s+thru/i.test(status)) return false;
@@ -7708,8 +7712,7 @@ function weeklyQbScoreBreakdown(row, mode = "blend") {
   const usePTD = wLast5 * lfivePTD + (1 - wLast5) * seaPTD;
   const useRA = wLast5 * lfiveRA + (1 - wLast5) * seaRA;
   const useRTD = wLast5 * lfiveRTD + (1 - wLast5) * seaRTD;
-  const injuryText = String(row.injury || "");
-  const injured = /inj|ir|out/i.test(injuryText);
+  const injured = !isFantasyRowAvailable(row);
   const playOK = depthNum === 100 || injured || matchRank === 100 ? 0 : 1;
   const depthF = scaleFactor(depthFactor, weights.depth);
   const jF = scaleFactor(Math.max(0.8, Math.min(1.2, 0.9 + 0.4 * (rateP - 75) / 25)), weights.talent);
@@ -7808,6 +7811,8 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
       rating: player.rating,
       depth: player.depth,
       injury: player.injury,
+      injuryWeek: player.week,
+      fantasyWeek: week,
       adp: workbookRow?.adp ?? null,
       extras,
       _playerKey: sourceKey(player),
@@ -7997,7 +8002,7 @@ function weeklyRbScoreBreakdown(row, mode = "blend") {
   const depthN = Number.isFinite(Number(depthRaw)) ? Number(depthRaw) : 100;
   const dBkt = Math.max(1, Math.min(4, depthN || 3));
   const depthStep = dBkt - 1;
-  const injFlag = /inj|ir|out/i.test(String(row.injury || ""));
+  const injFlag = !isFantasyRowAvailable(row);
   const oppRank = num(row.extras["Opp vRB Rank"], 16.5);
   const olRank = num(row.extras["OL Rank"], 16.5);
   const rating = num(row.rating, 75);
@@ -8091,6 +8096,8 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
       rating: num(player.rating, 68),
       depth: player.depth,
       injury: player.injury,
+      injuryWeek: player.week,
+      fantasyWeek: week,
       _playerKey: sourceKey(player),
       extras,
     };
@@ -8176,7 +8183,7 @@ function weeklyWrScoreBreakdown(row, mode = "blend") {
   const scaleTerm = (value, key) => value * (num(weights[key], 100) / 100);
   const depthN = Number.isFinite(Number(row.depth)) ? Number(row.depth) : 100;
   const dBkt = Math.max(1, Math.min(4, depthN || 3));
-  const injFlag = /inj|ir|out/i.test(String(row.injury || ""));
+  const injFlag = !isFantasyRowAvailable(row);
   const oppWr = num(row.extras["Opp vWR Rank"], 16.5);
   const matchVal = num(row.extras["CB Matchup Rating"], num(row.extras["Opp vWR Rating"], 84));
   const wrRate = num(row.rating, 75);
@@ -8220,7 +8227,7 @@ function weeklyTeScoreBreakdown(row, mode = "blend") {
   const scaleTerm = (value, key) => value * (num(weights[key], 100) / 100);
   const depthN = Number.isFinite(Number(row.depth)) ? Number(row.depth) : 100;
   const dBkt = Math.max(1, Math.min(4, depthN || 3));
-  const injFlag = /inj|ir|out/i.test(String(row.injury || ""));
+  const injFlag = !isFantasyRowAvailable(row);
   const qbRat = num(row.extras["QB Rating"], 75);
   const qbRank = num(row.extras["QB Rank"], 16.5);
   const oppTE = num(row.extras["Opp vTE Rank"], 16.5);
@@ -8309,6 +8316,8 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
       rating: num(player.rating, 68),
       depth: player.depth,
       injury: player.injury,
+      injuryWeek: player.week,
+      fantasyWeek: week,
       _playerKey: sourceKey(player),
       extras,
     };
