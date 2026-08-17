@@ -7542,11 +7542,16 @@ function teamRankingsByTeam(teamName) {
   return (window.TEAM_RANKINGS_SCAN?.teams || []).find((team) => normalizeTeamName(team.team) === normalized) || null;
 }
 
-function teamDepthRating(team, group, depth = 1, fallback = "") {
+function teamDepthRating(team, group, depth = 1, fallback = "", week = selectedSiteWeek()) {
   const teamName = typeof team === "string" ? team : team?.team;
-  const player = schedulePlayersFor(teamName, group)[depth - 1];
+  const player = schedulePlayersFor(teamName, group, week)[depth - 1];
   const value = player?.rating;
   return Number.isFinite(Number(value)) ? Number(value) : fallback;
+}
+
+function teamDepthPlayer(team, group, depth = 1, week = selectedSiteWeek()) {
+  const teamName = typeof team === "string" ? team : team?.team;
+  return schedulePlayersFor(teamName, group, week)[depth - 1] || null;
 }
 
 function weightedRatingAverage(parts, fallback = "") {
@@ -7613,11 +7618,18 @@ function teDefenseRatingForTeam(team) {
   ], teamPositionScore(team, "Defense") || 84);
 }
 
-function receiverMatchupRating(player, opponentTeam) {
+function receiverMatchupRating(player, opponentTeam, week = selectedSiteWeek()) {
   const group = groupPosition(player.position);
   if (group !== "WR" || !opponentTeam) return "";
   const depth = Math.max(1, Math.min(3, num(player.depth, 3)));
-  return teamDepthRating(opponentTeam, "CB", depth, wrDefenseRatingForTeam(opponentTeam));
+  return teamDepthRating(opponentTeam, "CB", depth, wrDefenseRatingForTeam(opponentTeam), week);
+}
+
+function receiverMatchupPlayer(player, opponentTeam, week = selectedSiteWeek()) {
+  const group = groupPosition(player?.position);
+  if (group !== "WR" || !opponentTeam) return null;
+  const depth = Math.max(1, Math.min(3, num(player.depth, 3)));
+  return teamDepthPlayer(opponentTeam, "CB", depth, week);
 }
 
 function weeklyQbStatPack(player, workbookRow) {
@@ -8137,6 +8149,7 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
     row.extras[".5PPR Rank"] = row.extras["Half PPR Rank"];
     row.extras["Full PPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
     row.extras["FullPPR Rank"] = row.extras["Full PPR Rank"];
+    row.extras["Usage Rank"] = rankNumber(rows, weeklySkillUsageValue, row);
   });
   return rows;
 }
@@ -8281,6 +8294,7 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
     const qbRating = teamPositionScore(team, "QB");
     const olRating = teamPositionScore(team, "OL");
     const matchupRating = position === "WR" ? wrDefenseRatingForTeam(opponentTeam) : teDefenseRatingForTeam(opponentTeam);
+    const cbMatchPlayer = position === "WR" ? receiverMatchupPlayer(player, opponentTeam, week) : null;
     const matchupRows = position === "WR" ? rankedTeamsByVwr : rankedTeamsByVte;
     const matchupRankLabel = position === "WR" ? "Opp vWR Rank" : "Opp vTE Rank";
     const matchupRatingLabel = position === "WR" ? "Opp vWR Rating" : "Opp vTE Rating";
@@ -8288,7 +8302,8 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
       ...(workbook.extras || {}),
       [matchupRatingLabel]: Number.isFinite(Number(matchupRating)) ? Number(Number(matchupRating).toFixed(1)) : "",
       [matchupRankLabel]: rankNumber(matchupRows, (item) => item.score, { team: opponentTeam, score: matchupRating }, false) || 16.5,
-      "CB Matchup Rating": position === "WR" ? Number(num(receiverMatchupRating(player, opponentTeam), matchupRating).toFixed(1)) : "",
+      "CB Matchup Player": cbMatchPlayer?.player || "",
+      "CB Matchup Rating": position === "WR" ? Number(num(receiverMatchupRating(player, opponentTeam, week), matchupRating).toFixed(1)) : "",
       "QB Rating": Number.isFinite(Number(qbRating)) ? Number(Number(qbRating).toFixed(1)) : "",
       "QB Rank": rankNumber(rankedTeamsByQb, (item) => item.score, { team, score: qbRating }) || 16.5,
       "OL Rating": Number.isFinite(Number(olRating)) ? Number(Number(olRating).toFixed(1)) : "",
@@ -8359,6 +8374,7 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
     row.extras[".5PPR Rank"] = row.extras["Half PPR Rank"];
     row.extras["Full PPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
     row.extras["FullPPR Rank"] = row.extras["Full PPR Rank"];
+    row.extras["Usage Rank"] = rankNumber(rows, weeklySkillUsageValue, row);
   });
   return rows;
 }
@@ -9433,6 +9449,8 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Stat vQB Rank", "extra:Stat vQB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["QB"], sortDir: "asc" }),
       fantasyColumn("vRB Rank", "extra:Opp vRB Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB"], sortDir: "asc" }),
       fantasyColumn("vWR Rank", "extra:Opp vWR Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("CB Match", "extra:CB Matchup Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("CB Name", "extra:CB Matchup Player", "", { group: "Matchup", positions: ["WR"], sortDir: "asc", tip: "Projected CB by WR depth: WR1 vs CB1, WR2 vs CB2, WR3+ vs CB3." }),
       fantasyColumn("vTE Rank", "extra:Opp vTE Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
       fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, positions: ["QB"], sortDir: "desc" }),
       fantasyColumn("Snap %", "extra:!!LAST 5!!\nTypical Snap %", "num cf", { group: "Production", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
@@ -9550,6 +9568,7 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn(posLabel, `extra:${matchupRating}`, "num cf", { group: "Matchup", heat: true, reverse: true, sortDir: "asc" }),
       fantasyColumn(`${posLabel} Rank`, `extra:${matchupRank}`, "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("CB Match", "extra:CB Matchup Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["WR"], sortDir: "asc" }),
+      fantasyColumn("CB Name", "extra:CB Matchup Player", "", { group: "Matchup", positions: ["WR"], sortDir: "asc", tip: "Projected CB by WR depth: WR1 vs CB1, WR2 vs CB2, WR3+ vs CB3." }),
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
@@ -10873,6 +10892,7 @@ function fantasyTeamWeek() {
 function fantasyRowDisplayPosition(row, player = null) {
   if (!row) return "";
   if (row.position === "Any" && player) return fantasyPositionForPlayer(player);
+  if (row.position === "FLEX" && player) return fantasyPositionForPlayer(player);
   if (row.position === "FLEX") return "FLEX";
   return row.position || "";
 }
@@ -10924,11 +10944,25 @@ function fantasyProjectionForPlayer(player, position) {
   return rows.find((row) => row._playerKey === sourceKey(player) || fantasyMergeKey(row.player) === fantasyMergeKey(player.player)) || null;
 }
 
+function fantasyPrimaryScoreRank(row, position) {
+  if (!row) return "";
+  const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
+  if (["RB", "WR", "TE"].includes(normalized)) return fantasyDetailValue(row, "FullPPR Rank") || row.scoreRank || "";
+  return row.scoreRank || row.rank || "";
+}
+
+function weeklySkillUsageValue(row) {
+  const snap = num(fantasyDetailValue(row, "Typical Snap %"), 0);
+  const targets = num(fantasyDetailValue(row, "Typical Targets"), 0);
+  const rz = num(fantasyDetailValue(row, "Typical Red Zone Opportunities"), 0);
+  return snap + (targets * 8) + (rz * 20);
+}
+
 function fantasyUsageRank(row) {
   if (!row) return "";
   return fantasyDetailValue(row, "Total Bonuses RANK")
     || fantasyDetailValue(row, "!!LAST 5!!\nTotal Bonuses RANK")
-    || fantasyDetailValue(row, "FullPPR Rank")
+    || fantasyDetailValue(row, "Usage Rank")
     || row.scoreRank
     || "";
 }
@@ -10936,6 +10970,7 @@ function fantasyUsageRank(row) {
 function fantasySourceValues(position, key) {
   const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
   return fantasyWeeklyRowsFor(normalized).map((item) => {
+    if (key === "primaryScoreRank") return fantasyPrimaryScoreRank(item, normalized);
     if (key === "scoreRank") return item.scoreRank;
     if (key === "score") return item.score;
     if (key === "usage") return fantasyUsageRank(item);
@@ -10960,7 +10995,9 @@ function fantasyContextChips(row, position) {
         ? ["Defense Rank", "Sacks Rank", "Takeaways Rank", "Opp PPG Rank"]
         : position === "K"
           ? ["Team Offense Rank", "Team Total Rank", "4th Down Difficulty", "Kicker Stadium Tier"]
-          : ["QB Rank", "PPG Rank", "YPG Rank", "Game Script", "Team Total"];
+          : position === "WR"
+            ? ["QB Rank", "CB Matchup Rating", "CB Matchup Player", "PPG Rank", "YPG Rank", "Game Script", "Team Total"]
+            : ["QB Rank", "PPG Rank", "YPG Rank", "Game Script", "Team Total"];
   return labels.map((label) => {
     const fixed = label === "YPG Rank" ? "Team YPG Rank" : label;
     const value = fantasyDetailValue(row, fixed);
@@ -10973,6 +11010,8 @@ function fantasyContextChips(row, position) {
       "WR Group Rank": "WRs",
       "YPG Rank": "YPG",
       "QB Rank": "QB",
+      "CB Matchup Rating": "CB",
+      "CB Matchup Player": "CB",
       "Defense Rank": "DEF",
       "Sacks Rank": "Sacks",
       "Takeaways Rank": "Take",
@@ -11066,6 +11105,7 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
   const player = findFantasyTeamPlayer(row);
   const position = fantasyRowDisplayPosition(row, player);
   const projection = fantasyProjectionForPlayer(player, position);
+  const primaryRank = fantasyPrimaryScoreRank(projection, position);
   const opponent = projection?.opponent ? teamAbbrevFor(projection.opponent, projection.opponent) : "";
   const team = player?.team ? teamAbbrevFor(player.team, player.teamAbbrev || player.team) : "";
   const vposLabel = position === "QB" ? "Matchup Rating (Low is good)" : position === "RB" ? "Opp vRB Rank" : position === "WR" ? "Opp vWR Rank" : position === "TE" ? "Opp vTE Rank" : position === "DST" ? "Opponent Off Rank" : "Team Offense Rank";
@@ -11074,7 +11114,7 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
   const options = fantasyPlayersForSlot(row.position).slice(0, 700);
   const rowClass = row.tag === "Flex" ? "flex" : String(row.tag || "").toLowerCase();
   const scoreStyle = projection ? fantasySourceStyle(position, "score", projection.score, false) : "";
-  const rankStyle = projection ? fantasySourceStyle(position, "scoreRank", projection.scoreRank, true) : "";
+  const rankStyle = projection ? fantasySourceStyle(position, "primaryScoreRank", primaryRank, true) : "";
   const vposStyle = projection ? fantasySourceStyle(position, `extra:${vposLabel}`, vpos, true) : "";
   const usage = fantasyUsageRank(projection);
   const usageStyle = projection ? fantasySourceStyle(position, "usage", usage, true) : "";
@@ -11097,7 +11137,7 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
       </td>
       <td>${esc(team || "-")}</td>
       <td>${esc(opponent || "-")}</td>
-      <td class="num" ${rankStyle}>${esc(fantasyDisplay(projection?.scoreRank, 0))}</td>
+      <td class="num" ${rankStyle}>${esc(fantasyDisplay(primaryRank, 0))}</td>
       <td class="num" ${vposStyle}>${esc(fantasyDisplay(vpos, 0))}</td>
       <td class="num" ${usageStyle}>${esc(fantasyDisplay(usage, 0))}</td>
       <td class="num score-pill" ${scoreStyle}>${esc(fantasyDisplay(projection?.score, 1))}</td>
