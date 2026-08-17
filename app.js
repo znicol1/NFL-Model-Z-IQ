@@ -8796,7 +8796,8 @@ function seasonScheduleChip(row, week, allRows = []) {
   const score = fantasyDetailValue(row, `W${week} Score`);
   const vpos = fantasyDetailValue(row, `W${week} vPOS`);
   if (!opp && !Number.isFinite(Number(score))) return "";
-  const vposStyle = Number.isFinite(Number(vpos)) ? cfStyle(vpos, 1, 32, true) : "";
+  const lowerIsEasier = row.position !== "Defense";
+  const vposStyle = Number.isFinite(Number(vpos)) ? cfStyle(vpos, 1, 32, lowerIsEasier) : "";
   const team = teamByName(opp);
   const detail = [
     row.player || row.team || "",
