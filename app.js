@@ -1307,6 +1307,16 @@ function renderNav() {
 function wireSelect(id, key) {
   document.querySelector(`#${id}`)?.addEventListener("change", (event) => {
     state[key] = event.target.value;
+    if (key === "weeklyFantasySort" || key === "seasonFantasySort") {
+      const kind = key === "weeklyFantasySort" ? "weekly" : "season";
+      const directionKey = kind === "weekly" ? "weeklyFantasySortDirection" : "seasonFantasySortDirection";
+      const positionKey = kind === "weekly" ? "weeklyFantasyPosition" : "seasonFantasyPosition";
+      const viewKey = kind === "weekly" ? "weeklyFantasyView" : "seasonFantasyView";
+      const normalizedPosition = normalizeFantasyPositionLabel(state[positionKey]);
+      const view = kind === "weekly" && normalizedPosition !== "QB" ? state[viewKey] : "regular";
+      const column = fantasyColumns(kind, normalizedPosition, view).find((item) => item.key === event.target.value);
+      state[directionKey] = column?.sortDir || (column?.reverse ? "asc" : "desc");
+    }
     render();
   });
 }
@@ -8770,6 +8780,19 @@ function seasonTeamContextValueFor(row, position) {
   return fantasyDetailValue(row, "Team Offense Rank");
 }
 
+function fantasyTeamContextLabels(position) {
+  if (position === "QB") return ["OL Rank", "PPG Rank", "Receiving Group Rank"];
+  if (position === "RB") return ["OL Rank", "Team YPG Rank", "PPG Rank", "Game Script", "Team Total"];
+  if (["WR", "TE"].includes(position)) return ["QB Rank", "Team YPG Rank", "PPG Rank", "Game Script", "Team Total"];
+  if (position === "Defense") return ["Defense Rank", "Team Pass Rush", "Team Secondary", "Opp QB Rank", "Opp PPG Rank"];
+  if (position === "Kicker") return ["Team Offense Rank", "Team Total Rank", "4th Down Difficulty", "Kicker Stadium Tier"];
+  return [];
+}
+
+function fantasyTeamContextAvgLabel(label) {
+  return `Avg ${label}`;
+}
+
 function fantasyFavoriteKey(row) {
   return [row.position || "", fantasyMergeKey(row.player || row.team), normalizeTeamName(row.team || row.player || "")].join("|");
 }
@@ -8842,6 +8865,7 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
         productionValues: [],
         bonusValues: [],
         contextValues: [],
+        contextParts: {},
         extras: { ...(row.extras || {}) },
       };
       const score = num(row.score, 0);
@@ -8865,6 +8889,12 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
       if (Number.isFinite(Number(productionValue))) current.productionValues.push(Number(productionValue));
       if (Number.isFinite(Number(bonusValue))) current.bonusValues.push(Number(bonusValue));
       if (Number.isFinite(Number(contextValue))) current.contextValues.push(Number(contextValue));
+      fantasyTeamContextLabels(position).forEach((label) => {
+        const value = fantasyDetailValue(row, label);
+        if (!Number.isFinite(Number(value))) return;
+        if (!current.contextParts[label]) current.contextParts[label] = [];
+        current.contextParts[label].push(Number(value));
+      });
       current.extras[`W${week}`] = row.opponent ? `${teamAbbrevFor(row.opponent)} ${fantasyDisplay(score, 1)}` : "";
       current.extras[`W${week} Opp`] = row.opponent ? teamAbbrevFor(row.opponent, row.opponent) : "";
       current.extras[`W${week} Score`] = Number.isFinite(Number(score)) ? Number(Number(score).toFixed(1)) : "";
@@ -8899,9 +8929,14 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
     const avgProduction = averageFinite(row.productionValues, "");
     const avgBonuses = averageFinite(row.bonusValues, "");
     const avgContext = averageFinite(row.contextValues, "");
+    const avgContextParts = Object.fromEntries(Object.entries(row.contextParts || {}).map(([label, values]) => {
+      const value = averageFinite(values, "");
+      return [fantasyTeamContextAvgLabel(label), Number.isFinite(Number(value)) ? Number(Number(value).toFixed(1)) : ""];
+    }));
     row.extras = {
       ...(adpRow.extras || {}),
       ...(row.extras || {}),
+      ...avgContextParts,
       "Weeks Counted": row.weeksPlayed,
       "Season Difficulty": Number.isFinite(Number(seasonDifficulty)) ? Number(Number(seasonDifficulty).toFixed(1)) : "",
       "Easy Weeks": row.easyWeeks,
@@ -8937,6 +8972,13 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
     row.extras["FullPPR Rank"] = rankNumber(rows, (item) => item.fullPprScore, row);
     row.extras[".5PPR Rank"] = rankNumber(rows, (item) => item.halfPprScore, row);
     row.extras["NoPPR Rank"] = rankNumber(rows, (item) => item.standardScore, row);
+    row.extras["Avg Team Context Rank"] = rankNumber(rows, (item) => fantasyDetailValue(item, "Avg Team Context"), row, false);
+    fantasyTeamContextLabels(position).forEach((label) => {
+      const avgLabel = fantasyTeamContextAvgLabel(label);
+      const rankLabel = `${avgLabel} Rank`;
+      const highIsGood = ["Game Script", "Team Total", "Team Pass Rush", "Team Secondary", "Kicker Stadium Tier"].includes(label);
+      row.extras[rankLabel] = rankNumber(rows, (item) => fantasyDetailValue(item, avgLabel), row, highIsGood);
+    });
     row.extras["FullPPR Value"] = Number.isFinite(Number(row.extras["FullPPR ADP Rank"])) ? Number((row.extras["FullPPR ADP Rank"] - row.extras["FullPPR Rank"]).toFixed(1)) : "";
     row.extras[".5PPR Value"] = Number.isFinite(Number(row.extras[".5PPR ADP Rank"])) ? Number((row.extras[".5PPR ADP Rank"] - row.extras[".5PPR Rank"]).toFixed(1)) : "";
     row.extras["NoPPR Value"] = Number.isFinite(Number(row.extras["NoPPR ADP Rank"])) ? Number((row.extras["NoPPR ADP Rank"] - row.extras["NoPPR Rank"]).toFixed(1)) : "";
@@ -9094,7 +9136,40 @@ function fantasyColumnTip(label, key) {
     "extra:NoPPR ADP": "FantasyPros real-time NoPPR average draft position.",
     "extra:NoPPR ADP Rank": "FantasyPros NoPPR positional ADP rank, like QB1 or WR12.",
     "extra:NoPPR Value": "Market positional ADP rank minus your projected positional rank.",
-    "extra:Avg Team Context": "Season average of OL, scoring, QB/WR help, defense, or stadium context.",
+    "extra:Avg Team Context": "Season average of the position-specific team context pieces.",
+    "extra:Avg Team Context Rank": "Rank of season team context among this position.",
+    "extra:Avg OL Rank": "Season average offensive-line rank used in context.",
+    "extra:Avg OL Rank Rank": "Rank of season average OL context among this position.",
+    "extra:Avg PPG Rank": "Season average scoring-offense rank used in context.",
+    "extra:Avg PPG Rank Rank": "Rank of season average PPG context among this position.",
+    "extra:Avg Receiving Group Rank": "Season average receiving-support rank used in QB context.",
+    "extra:Avg Receiving Group Rank Rank": "Rank of season receiving-support context among this position.",
+    "extra:Avg Team YPG Rank": "Season average team yardage rank used in context.",
+    "extra:Avg Team YPG Rank Rank": "Rank of season YPG context among this position.",
+    "extra:Avg QB Rank": "Season average QB-support rank used for pass catchers.",
+    "extra:Avg QB Rank Rank": "Rank of season QB context among this position.",
+    "extra:Avg Game Script": "Season average projected margin; positive usually helps RBs.",
+    "extra:Avg Game Script Rank": "Rank of season game-script context among this position.",
+    "extra:Avg Team Total": "Season average projected team points.",
+    "extra:Avg Team Total Rank": "Rank of projected team-total context among this position.",
+    "extra:Avg Defense Rank": "Season average defensive rating rank used in DST context.",
+    "extra:Avg Defense Rank Rank": "Rank of season defensive-rating context among DSTs.",
+    "extra:Avg Team Pass Rush": "Season average weighted pass-rush strength.",
+    "extra:Avg Team Pass Rush Rank": "Rank of season pass-rush context among DSTs.",
+    "extra:Avg Team Secondary": "Season average weighted secondary strength.",
+    "extra:Avg Team Secondary Rank": "Rank of season secondary context among DSTs.",
+    "extra:Avg Opp QB Rank": "Season average opponent QB difficulty rank for DST.",
+    "extra:Avg Opp QB Rank Rank": "Rank of season opponent-QB context among DSTs.",
+    "extra:Avg Opp PPG Rank": "Season average opponent scoring difficulty rank for DST.",
+    "extra:Avg Opp PPG Rank Rank": "Rank of season opponent-PPG context among DSTs.",
+    "extra:Avg Team Offense Rank": "Season average team offense rank used for kickers.",
+    "extra:Avg Team Offense Rank Rank": "Rank of season kicker offense context.",
+    "extra:Avg Team Total Rank": "Season average projected team-total rank used for kickers.",
+    "extra:Avg Team Total Rank Rank": "Rank of season kicker team-total context.",
+    "extra:Avg 4th Down Difficulty": "Season average 4th-down aggression penalty for kickers.",
+    "extra:Avg 4th Down Difficulty Rank": "Rank of season 4th-down difficulty among kickers.",
+    "extra:Avg Kicker Stadium Tier": "Season average game-venue kicking rating.",
+    "extra:Avg Kicker Stadium Tier Rank": "Rank of season stadium context among kickers.",
     "extra:Avg Production": "Average usage/stat inputs: QB logs, snaps, targets, red zone, or kicking volume.",
     "extra:Avg Bonuses": "Average extra edges from yards, TDs, rushing, usage, pressure, or kicking range.",
     "extra:Team Context": "Team support: OL, scoring, game script, QB/WR help, or defense/stadium context.",
@@ -9184,6 +9259,64 @@ function fantasyColumn(label, key, cls = "", opts = {}) {
   return { label, key, cls, tip: opts.tip || fantasyColumnTip(label, key), group: opts.group || "", sortDir: opts.sortDir || "", ...opts };
 }
 
+function seasonContextColumns(position) {
+  const valueColumn = (label, key, opts = {}) => fantasyColumn(label, `extra:${key}`, "num cf", {
+    group: "Team Context",
+    heat: true,
+    sortDir: opts.sortDir || "desc",
+    reverse: Boolean(opts.reverse),
+    digits: opts.digits ?? 1,
+  });
+  const rankColumn = (label, key, opts = {}) => fantasyColumn(label, `extra:${key} Rank`, "num cf rank-col", {
+    group: "Team Context",
+    heat: true,
+    digits: 0,
+    reverse: opts.reverse ?? true,
+    sortDir: opts.sortDir || "asc",
+  });
+  const cols = [
+    valueColumn("Team Ctx", "Avg Team Context", { reverse: true }),
+    rankColumn("Ctx Rank", "Avg Team Context"),
+  ];
+  const addRankContext = (label, key) => {
+    cols.push(valueColumn(label, key, { reverse: true }));
+    cols.push(rankColumn(`${label} Rank`, key));
+  };
+  const addHighContext = (label, key) => {
+    cols.push(valueColumn(label, key));
+    cols.push(rankColumn(`${label} Rank`, key));
+  };
+  if (position === "QB") {
+    addRankContext("OL", "Avg OL Rank");
+    addRankContext("PPG", "Avg PPG Rank");
+    addRankContext("Rec", "Avg Receiving Group Rank");
+  } else if (position === "RB") {
+    addRankContext("OL", "Avg OL Rank");
+    addRankContext("YPG", "Avg Team YPG Rank");
+    addRankContext("PPG", "Avg PPG Rank");
+    addHighContext("Script", "Avg Game Script");
+    addHighContext("Total", "Avg Team Total");
+  } else if (["WR", "TE"].includes(position)) {
+    addRankContext("QB", "Avg QB Rank");
+    addRankContext("YPG", "Avg Team YPG Rank");
+    addRankContext("PPG", "Avg PPG Rank");
+    addHighContext("Script", "Avg Game Script");
+    addHighContext("Total", "Avg Team Total");
+  } else if (position === "Defense") {
+    addRankContext("Def", "Avg Defense Rank");
+    addHighContext("Rush", "Avg Team Pass Rush");
+    addHighContext("Sec", "Avg Team Secondary");
+    addHighContext("Opp QB", "Avg Opp QB Rank");
+    addHighContext("Opp PPG", "Avg Opp PPG Rank");
+  } else if (position === "Kicker") {
+    addRankContext("Off", "Avg Team Offense Rank");
+    addRankContext("Total", "Avg Team Total Rank");
+    addRankContext("4th", "Avg 4th Down Difficulty");
+    addHighContext("Stadium", "Avg Kicker Stadium Tier");
+  }
+  return cols;
+}
+
 function fantasyCompareKey(row) {
   return row._playerKey || `${row.position || ""}|${row.team || ""}|${row.player || row.team || ""}`;
 }
@@ -9240,7 +9373,7 @@ function fantasyColumns(kind, position, view) {
       ...adpColumns,
       fantasyColumn("Rating", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc", positions: position === "Defense" ? [] : undefined }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: position === "Defense" ? [] : undefined }),
-      fantasyColumn("Team Context", "extra:Avg Team Context", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
+      ...seasonContextColumns(position),
       fantasyColumn("Avg Production", "extra:Avg Production", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Avg Bonus", "extra:Avg Bonuses", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
       fantasyColumn("Weeks", "extra:Weeks Counted", "num rank-col", { group: "Schedule", digits: 0, sortDir: "desc" }),
@@ -10392,9 +10525,10 @@ function renderFantasyRanks(kind) {
   const usesPpr = ["RB", "WR", "TE"].includes(state[positionKey]);
   const activeView = isWeeklyQb ? "regular" : isWeekly ? state[viewKey] : "regular";
   const columns = fantasyColumns(kind, state[positionKey], activeView);
+  const weekScoreSortOptions = isWeekly ? [] : Array.from({ length: 17 }, (_, index) => [`extra:W${index + 1} Score`, `Week ${index + 1} Pts`]);
   const sortOptions = isWeekly
     ? [["score", usesPpr ? "FullPPR" : "Week Score"], ...(usesPpr ? [["halfPprScore", ".5PPR"], ["standardScore", "NoPPR"]] : []), ["scoreRank", "Week Rank"], ["seasonScore", "Season Production"], ["seasonRank", "Season Rank"], ["last5Score", "Last 5 Production"], ["last5Rank", "Last 5 Rank"], ["rating", "Player Rating"], ["depth", "Depth"]]
-    : [["rank", "Rank"], ["score", usesPpr ? "Full Total" : "Total"], ["avgScore", "Avg/G"], ...(usesPpr ? [["fullPprScore", "Full Total"], ["fullPprAvg", "Full/G"], ["halfPprScore", ".5 Total"], ["halfPprAvg", ".5/G"], ["standardScore", "No Total"], ["standardAvg", "No/G"]] : []), ["extra:Season Difficulty", "Avg vPOS"], ["value", usesPpr ? "ADP Value" : "Value"], ["adp", "ADP"], ["rating", "Player Rating"], ["depth", "Depth"]];
+    : [["rank", "Rank"], ["score", usesPpr ? "Full Total" : "Total"], ["avgScore", "Avg/G"], ...(usesPpr ? [["fullPprScore", "Full Total"], ["fullPprAvg", "Full/G"], ["halfPprScore", ".5 Total"], ["halfPprAvg", ".5/G"], ["standardScore", "No Total"], ["standardAvg", "No/G"]] : []), ["extra:Season Difficulty", "Avg vPOS"], ["value", usesPpr ? "ADP Value" : "Value"], ["adp", "ADP"], ["rating", "Player Rating"], ["depth", "Depth"], ...weekScoreSortOptions];
   const sortableKeys = new Set([...sortOptions.map(([value]) => value), ...columns.filter((column) => !column.noSort).map((column) => column.key)]);
   if (!sortableKeys.has(state[sortKey])) {
     state[sortKey] = isWeekly ? "score" : "rank";
