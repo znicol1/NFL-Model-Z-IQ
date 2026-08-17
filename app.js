@@ -11091,7 +11091,7 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
         <div class="fantasy-player-input-wrap">
           ${player ? playerAvatar(player) : playerAvatar({ player: "?" })}
           <input list="${datalistId}" data-fantasy-field="playerName" data-league-id="${esc(league.id)}" data-view="${esc(view)}" data-row-id="${esc(row.id)}" value="${esc(row.playerName || player?.player || "")}" placeholder="Type player name" />
-          ${player ? `<button class="fantasy-player-card-open player-open" data-player-key="${esc(sourceKey(player))}" title="Open player card">Card</button>` : ""}
+          ${player && !player._fantasyDefense ? `<button type="button" class="fantasy-player-card-open player-open" data-player-key="${esc(sourceKey(player))}" title="Open player card">Card</button>` : ""}
           <datalist id="${datalistId}">${options.map((item) => `<option value="${esc(item.player)}">${esc(`${item.player} - ${teamAbbrevFor(item.team, item.teamAbbrev || item.team)} ${fantasyPositionForPlayer(item)}`)}</option>`).join("")}</datalist>
         </div>
       </td>
@@ -11225,10 +11225,15 @@ function wireMyFantasyTeams() {
     saveFantasyTeams();
     render();
   }));
-  document.querySelectorAll(".my-fantasy-panel .player-open").forEach((button) => button.addEventListener("click", () => {
-    state.selectedPlayerKey = button.dataset.playerKey;
+  document.querySelectorAll(".my-fantasy-panel .player-open").forEach((button) => button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const player = findPlayer(button.dataset.playerKey);
+    if (!player) return;
+    state.selectedPlayerKey = sourceKey(player);
     render();
   }));
+  wirePlayerModalControls();
 }
 
 function renderStartSit() {
@@ -11255,6 +11260,7 @@ function renderStartSit() {
         </div>
       </div>
       <div class="my-fantasy-grid">${visible.map(renderFantasyLeagueCard).join("")}</div>
+      ${renderPlayerModal()}
     </section>
   `;
 }
