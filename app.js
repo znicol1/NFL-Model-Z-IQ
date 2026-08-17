@@ -8818,7 +8818,7 @@ function seasonScheduleChip(row, week, allRows = []) {
   const opp = fantasyDetailValue(row, `W${week} Opp`);
   const score = fantasyDetailValue(row, `W${week} Score`);
   const vpos = fantasyDetailValue(row, `W${week} vPOS`);
-  if (!opp && !Number.isFinite(Number(score))) return "";
+  if (!opp && !Number.isFinite(Number(score))) return `<span class="season-week-chip bye"><span class="season-week-number">W${week}</span><b>BYE</b><em>-</em></span>`;
   const lowerIsEasier = row.position !== "Defense";
   const vposStyle = Number.isFinite(Number(vpos)) ? cfStyle(vpos, 1, 32, lowerIsEasier) : "";
   const team = teamByName(opp);
@@ -8830,6 +8830,14 @@ function seasonScheduleChip(row, week, allRows = []) {
     Number.isFinite(Number(score)) ? `Score ${fantasyDisplay(score, 1)}` : "",
   ].filter(Boolean).join(" | ");
   return `<button class="season-week-chip" data-fantasy-schedule-detail="${esc(fantasyCompareKey(row))}" data-week="${week}" ${vposStyle} title="${esc(detail)}"><span class="season-week-number">W${week}</span><b>${teamLogo(team?.team || opp, team?.teamAbbrev || opp)}<span>${esc(teamAbbrevFor(opp, opp) || `W${week}`)}</span></b><em>${esc(fantasyDisplay(score, 1))}</em></button>`;
+}
+
+function seasonWeekColumn(week) {
+  return fantasyColumn(`W${week}`, `seasonWeek:${week}`, "season-week-cell", {
+    group: "Schedule",
+    sortDir: "desc",
+    tip: `Week ${week} projected fantasy points. Bye weeks sort last.`,
+  });
 }
 
 function seasonFantasyAdpRow(position, playerName, teamName, seasonRows = []) {
@@ -9015,6 +9023,11 @@ function fantasySortValue(row, key) {
   if (key === "fantasyStar") return state.fantasyFavorites.includes(fantasyFavoriteKey(row)) ? 1 : 0;
   if (String(key || "").startsWith("extra:")) return fantasyDetailValue(row, String(key).slice(6));
   if (key === "rank") return num(row.rank, 9999);
+  if (String(key || "").startsWith("seasonWeek:")) {
+    const week = String(key).slice(11);
+    const score = fantasyDetailValue(row, `W${week} Score`);
+    return Number.isFinite(Number(score)) ? Number(score) : -9999;
+  }
   if (key === "scoreRank") return num(row.scoreRank, 9999);
   if (key === "seasonRank") return num(row.seasonRank, 9999);
   if (key === "last5Rank") return num(row.last5Rank, 9999);
@@ -9377,7 +9390,7 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Avg Production", "extra:Avg Production", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Avg Bonus", "extra:Avg Bonuses", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
       fantasyColumn("Weeks", "extra:Weeks Counted", "num rank-col", { group: "Schedule", digits: 0, sortDir: "desc" }),
-      fantasyColumn("Schedule", "seasonSchedule", "season-schedule-cell", { group: "Schedule", noSort: true }),
+      ...Array.from({ length: 17 }, (_, index) => seasonWeekColumn(index + 1)),
     ].filter((col) => !col.positions || col.positions.includes(position));
   }
   if (view === "last5") {
@@ -9633,6 +9646,9 @@ function fantasyValue(row, key, position) {
   if (key === "seasonSchedule") {
     return `<div class="season-week-chip-grid">${Array.from({ length: 17 }, (_, index) => seasonScheduleChip(row, index + 1, state._activeFantasyRows || [])).join("")}</div>`;
   }
+  if (String(key || "").startsWith("seasonWeek:")) {
+    return seasonScheduleChip(row, Number(String(key).slice(11)), state._activeFantasyRows || []);
+  }
   if (key === "compactDetails") return `<div class="fantasy-extra-chips compact">${fantasyExtras(row)}</div>`;
   if (key.startsWith("extra:")) return fantasyDetailValue(row, key.slice(6));
   return row[key];
@@ -9682,6 +9698,7 @@ function fantasyPlainValue(row, column, position) {
   if (column.key === "team") return row.team || "";
   if (column.key === "opponent") return row.opponent || "";
   if (column.key === "seasonSchedule") return Array.from({ length: 17 }, (_, index) => fantasyDetailValue(row, `W${index + 1}`)).join(" ");
+  if (String(column.key || "").startsWith("seasonWeek:")) return fantasyDetailValue(row, `W${String(column.key).slice(11)} Score`);
   if (column.key.startsWith("extra:")) return fantasyDetailValue(row, column.key.slice(6));
   return row[column.key];
 }
@@ -9721,6 +9738,7 @@ function fantasyColumnWidth(column, rows, position) {
   );
   if (column.key === "name") return 178;
   if (column.key === "seasonSchedule") return 960;
+  if (String(column.key || "").startsWith("seasonWeek:")) return 72;
   if (column.key === "compareSelect" || column.key === "fantasyStar") return 36;
   if (column.key === "team" || column.key === "opponent") return Math.max(142, Math.min(190, Math.round(longest * 5.8) + 32));
   if (column.cls?.includes("rank-col")) return 42;
@@ -9784,7 +9802,7 @@ function fantasyTd(row, column, allRows, position, index = -1, groupStart = fals
   const marker = fantasyClayMarker(row, column.key);
   const freezeClass = `${index === 0 ? " frozen-compare" : ""}${index === 1 ? " frozen-rank" : ""}${index === 2 && column.key === "name" ? " frozen-name" : ""}`;
   const groupClass = ` ${fantasyGroupClass(column.group)}${groupStart ? " group-start" : ""}${column.boundaryAfter ? " pair-end" : ""}`;
-  if (column.key === "compareSelect" || column.key === "fantasyStar" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "seasonSchedule" || column.key === "compactDetails") {
+  if (column.key === "compareSelect" || column.key === "fantasyStar" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "seasonSchedule" || String(column.key || "").startsWith("seasonWeek:") || column.key === "compactDetails") {
     return `<td class="${column.cls || ""}${freezeClass}${groupClass}">${value || "-"}</td>`;
   }
   const values = heatValues.get(column.key) || allRows.map((item) => fantasyValue(item, column.key, position));

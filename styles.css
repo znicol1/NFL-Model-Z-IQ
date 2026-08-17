@@ -4338,9 +4338,31 @@ select,
   cursor: pointer;
 }
 
+.season-week-cell {
+  padding: 3px;
+}
+
+.season-week-chip.bye {
+  background: #eef2f7;
+  border-color: #d6deea;
+  color: #7a8596;
+  cursor: default;
+  opacity: 0.72;
+}
+
+.season-week-chip.bye b,
+.season-week-chip.bye em {
+  color: #7a8596;
+}
+
 .season-week-chip:hover {
   border-color: #1378d1;
   box-shadow: 0 5px 12px rgba(19, 120, 209, 0.13);
+}
+
+.season-week-chip.bye:hover {
+  border-color: #d6deea;
+  box-shadow: none;
 }
 
 .season-week-number {
