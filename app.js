@@ -1,6 +1,6 @@
 const navSections = [
   { title: "", pages: [["home", "Quick Actions"]] },
-  { title: "Player Database", pages: [["live", "Live Rankings"], ["depth", "Depth Charts"], ["top30", "Top 30s by Position"]] },
+  { title: "Player Database", pages: [["live", "Live Rankings"], ["depth", "Depth Charts"], ["injuries", "Injury Report"], ["top30", "Top 30s by Position"]] },
   { title: "Picks Center", pages: [["schedule", "Season Schedule"], ["picks", "Picks Tracker"]] },
   { title: "Season Projector", pages: [["standings", "Season Projector"]] },
   { title: "Fantasy Hub", pages: [["start", "My Fantasy Teams"], ["weeklyFantasy", "Weekly Fantasy Rankings"], ["seasonFantasy", "Season Long Fantasy Rankings"]] },
@@ -24,6 +24,10 @@ const storage = {
 };
 
 const BACKUP_VERSION = "nfl-iq-backup-v1";
+const NO_PICK_VALUE = "__NO_PICK_INCONCLUSIVE__";
+const NO_PICK_LABEL = "No Pick (Inconclusive)";
+const AUTH_MODE_KEY = "nflz-auth-mode";
+const ADMIN_PASSWORD = "Flagg,cooper32";
 const backupKeys = {
   overrides: "nflz-player-overrides",
   challenges: "nflz-challenges",
@@ -41,7 +45,13 @@ const backupKeys = {
   maddenMatchOverrides: "nflz-madden-match-overrides",
   maddenRecentAdjustments: "nflz-madden-recent-adjustments",
   ratingHistoryStartAt: "nflz-rating-history-start-at",
+  draftKingsOddsBackup: "nflz-draftkings-odds-last-good",
 };
+
+if (!window.DRAFTKINGS_ODDS?.games?.length) {
+  const cachedDraftKingsOdds = storage.get(backupKeys.draftKingsOddsBackup, null);
+  if (cachedDraftKingsOdds?.games?.length) window.DRAFTKINGS_ODDS = cachedDraftKingsOdds;
+}
 
 const defaultWeeklyQbOptions = {
   useStatRanks: true,
@@ -62,6 +72,7 @@ const defaultWeeklyQbWeights = {
   oline: 100,
   ppg: 100,
   wr: 100,
+  positionalGap: 30,
   passYards: 100,
   passTds: 100,
   rushAttempts: 100,
@@ -82,6 +93,7 @@ const defaultWeeklySkillWeights = {
   ppg: 100,
   qb: 100,
   cbMatch: 100,
+  positionalGap: 30,
   usage: 100,
   redZone: 100,
   gameScript: 0,
@@ -186,7 +198,7 @@ const defaultPreseasonDepthMultipliers = {
   RB: [100, 120, 120, 120],
   WR: [100, 110, 120, 120, 120],
   TE: [100, 110, 110, 110],
-  OL: [100, 100, 100],
+  OL: [100, 85, 100, 85, 100, 85, 100, 85, 100, 85],
   IDL: [100, 110, 110, 110, 110],
   EDGE: [100, 110, 110, 110, 110],
   LB: [100, 110, 110, 110, 110],
@@ -199,7 +211,7 @@ const defaultRegularDepthMultipliers = {
   RB: [100, 50],
   WR: [100, 75, 50, 25],
   TE: [100, 0],
-  OL: [100],
+  OL: [100, 100, 100, 100, 100],
   IDL: [100, 67, 33],
   EDGE: [100, 67, 33],
   LB: [100, 67, 33],
@@ -326,16 +338,21 @@ const spreadWinChanceTable = [
 const scheduleScoreTuning = {
   offenseBase: 26.2,
   defenseAllowedBase: 17.2,
-  offenseScale: 1.75,
-  defenseScale: 1.25,
+  offenseScale: 2.25,
+  defenseScale: 1.75,
   preseasonTotalScale: 0.84,
   preseasonTotalMin: 32,
   preseasonTotalMax: 40.5,
+  weekOneSpreadScale: 0.9,
+  midSeasonSpreadScale: 0.98,
+  lateSeasonSpreadScale: 1.1,
 };
 
 const state = {
   page: "home",
   query: "",
+  authMode: storage.get(AUTH_MODE_KEY, ""),
+  authError: "",
   data: null,
   players: [],
   liveView: "starters",
@@ -353,8 +370,15 @@ const state = {
   depthCheckNotice: "",
   depthCheck: { status: "idle", results: [], error: "", source: "" },
   depthLockEditor: null,
+  depthPositionEditor: "",
+  injuryCheckOpen: storage.get("nflz-injury-check-open", false),
   injuryCheck: { status: "idle", results: [], error: "", source: "" },
   injuryCheckActivity: "All Categories",
+  injuryReportActivity: "All Statuses",
+  currentWeekOutActivity: "All Designations",
+  currentWeekOutSort: { key: "designation", direction: "asc" },
+  injuryDueActivity: "All Categories",
+  injuryDueEditorKey: "",
   selectedPlayerKey: null,
   topPosition: "All Positions",
   topLimit: 30,
@@ -364,6 +388,8 @@ const state = {
   scheduleVisibleLimit: 80,
   scheduleSimMode: storage.get("nflz-schedule-sim-mode", "auto"),
   scheduleControlsOpen: storage.get("nflz-schedule-controls-open", false),
+  scheduleRulesOpen: storage.get("nflz-schedule-rules-open", false),
+  schedulePropWatchOpen: storage.get("nflz-schedule-prop-watch-open", {}),
   schedulePositionWeights: { ...defaultSchedulePositionWeights, ...storage.get("nflz-schedule-position-weights", {}) },
   preseasonDepthMultipliers: { ...defaultPreseasonDepthMultipliers, ...storage.get("nflz-preseason-depth-multipliers", {}) },
   regularDepthMultipliers: { ...defaultRegularDepthMultipliers, ...storage.get("nflz-regular-depth-multipliers", {}) },
@@ -372,6 +398,7 @@ const state = {
   selectedScheduleKey: "",
   selectedPlayoffGame: null,
   selectedTeamBreakdown: "",
+  selectedDefenseTeamCard: "",
   gameSimWeek: "auto",
   gameSimGameKey: "",
   gameSimSpeed: "medium",
@@ -391,6 +418,8 @@ const state = {
   weeklySkillWeights: { ...weeklySkillDefaultWeights(), ...storage.get("nflz-weekly-skill-weights", {}) },
   weeklySkillOptions: { ...weeklySkillDefaultOptions(), ...storage.get("nflz-weekly-skill-options", {}) },
   weeklySkillControlsOpen: storage.get("nflz-weekly-skill-controls-open", true),
+  weeklyFantasyControlsHidden: storage.get("nflz-weekly-fantasy-controls-hidden", true),
+  weeklyPropWatchOpen: storage.get("nflz-weekly-prop-watch-open", false),
   weeklySkillDefaultMessage: "",
   weeklyMatchupWeights: { ...defaultWeeklyMatchupWeights, ...storage.get("nflz-weekly-matchup-weights", {}) },
   weeklyMatchupSort: "team",
@@ -398,13 +427,22 @@ const state = {
   weeklyMatchupWeightView: storage.get("nflz-weekly-matchup-weight-view", "vQB"),
   selectedMatchupDetail: null,
   weeklyFantasyLimit: 150,
-  seasonFantasyPosition: storage.get("nflz-season-fantasy-position", "QB"),
+  seasonFantasyPosition: (() => {
+    const saved = storage.get("nflz-season-fantasy-position", "QB");
+    return saved === "All Players" ? "QB" : saved;
+  })(),
   seasonFantasyView: "regular",
   seasonFantasySort: "rank",
   seasonFantasySortDirection: "asc",
   seasonFantasyLimit: 150,
   seasonFantasyDepthFilter: "All Depths",
   seasonFantasyTeamFilter: "All Teams",
+  seasonFantasyControlsHidden: storage.get("nflz-season-fantasy-controls-hidden", true),
+  seasonFantasySearch: "",
+  draftAssistantMode: storage.get("nflz-draft-assistant-mode", false),
+  draftAssistantLeagueId: storage.get("nflz-draft-assistant-league-id", ""),
+  draftAssistantShowDrafted: storage.get("nflz-draft-assistant-show-drafted", false),
+  draftAssistantPicks: storage.get("nflz-draft-assistant-picks", {}),
   fantasyFavorites: storage.get("nflz-fantasy-favorites", []),
   fantasyScheduleDetail: null,
   fantasyProsAdpScanStatus: "idle",
@@ -417,6 +455,7 @@ const state = {
   snapsStatsQuery: "",
   draftKingsScanStatus: "idle",
   draftKingsScanMessage: "",
+  schedulePickFillMessage: "",
   scoreScanStatus: "idle",
   scoreScanMessage: "",
   pffPastePosition: "EDGE",
@@ -432,6 +471,7 @@ const state = {
   fantasyLeague: 0,
   myFantasyWeek: storage.get("nflz-my-fantasy-week", "auto"),
   myFantasyLeagueView: storage.get("nflz-my-fantasy-league-view", "all"),
+  myFantasyColumns: Math.max(1, Math.min(3, Number(storage.get("nflz-my-fantasy-columns", 3)) || 3)),
   qbPosition: "QB",
   qbDepth: 1,
   qbUser: "",
@@ -439,6 +479,7 @@ const state = {
   comparePosition: "QB",
   quickPlayerQuery: "",
   quickPlayerKey: "",
+  quickPlayerSnapshot: null,
   quickMoveTeam: "Free Agent",
   quickRankScope: "QB",
   quickRankLimit: 20,
@@ -446,6 +487,8 @@ const state = {
   quickTeamRankLimit: 20,
   quickDepthTeam: "Arizona Cardinals",
   quickDepthScope: "Starters",
+  bulkChangeText: "",
+  bulkChangeRows: [],
   quickGameWeek: "All Weeks",
   quickGameKey: "",
   quickWinner: "",
@@ -516,6 +559,179 @@ function migrateScheduleDefaults() {
     state.regularDepthMultipliers = JSON.parse(JSON.stringify(defaultRegularDepthMultipliers));
     storage.set(depthKey, state.regularDepthMultipliers);
   }
+}
+
+function applyRequestedRatingFixes(data) {
+  const migrationKey = "nflz-rating-fixes-20260827-te-cleanup";
+  if (storage.get(migrationKey, false)) return 0;
+  const targets = [
+    ["George Pickens", 93],
+    ["Nico Collins", 94],
+    ["Tee Higgins", 92],
+    ["Stefon Diggs", 90],
+    ["Michael Pittman", 87],
+    ["Tucker Kraft", 91],
+    ["Dalton Schultz", 85],
+    ["AJ Barner", 80],
+    ["A.J. Barner", 80],
+    ["Pat Freiermuth", 83],
+    ["Darnell Washington", 79],
+    ["Dawson Knox", 81],
+    ["Charlie Kolar", 80],
+    ["Jackson Hawes", 79],
+    ["Josh Oliver", 78],
+    ["Colby Parkinson", 80],
+  ];
+  let changed = 0;
+  targets.forEach(([name, rating]) => {
+    const wanted = normalizeName(initialsExpandedName(name));
+    const player = (data?.players || []).find((item) => normalizeName(initialsExpandedName(item.player)) === wanted);
+    if (!player) return;
+    const key = playerKey(player);
+    const before = { ...player, ...(overrides[key] || {}) };
+    const oldRating = num(before.rating);
+    const patch = normalizeStarProgress({ ...before, rating, newRating: rating });
+    overrides[key] = { ...(overrides[key] || {}), rating: patch.rating, newRating: patch.newRating, stars: patch.stars, newStars: patch.newStars };
+    if (Number.isFinite(oldRating) && oldRating !== rating) {
+      recordRatingHistory(key, before, oldRating, rating, "Manual adjustment", "Requested rating cleanup");
+      changed += 1;
+    }
+  });
+  storage.set("nflz-player-overrides", overrides);
+  storage.set(migrationKey, true);
+  return changed;
+}
+
+function applyDefensiveMaddenMismatchFixes() {
+  const migrationKey = "nflz-defensive-madden-mismatch-fixes-20260826";
+  if (storage.get(migrationKey, false)) return 0;
+  if (!state.players?.length || !maddenRows.length) return 0;
+  let changed = 0;
+  buildMaddenMatches().forEach((row) => {
+    if (!row.match) return;
+    const posGroup = groupPosition(row.match.position || row.madden.pos || "");
+    if (!["IDL", "EDGE", "LB", "CB", "S"].includes(posGroup)) return;
+    const current = num(row.match.rating);
+    const madden = num(row.madden.ovr);
+    if (current < 90 || madden >= 80) return;
+    const suggested = maddenSuggestedRating(row, maddenRowPff(row));
+    if (!Number.isFinite(Number(suggested)) || suggested >= current) return;
+    persistPlayer(row.match, {
+      rating: suggested,
+      newRating: suggested,
+      ratingChangeType: "Manual adjustment",
+      ratingChangeNote: `Defensive Madden/PFF mismatch cleanup; Madden ${madden}`,
+    }, { deferRefresh: true });
+    changed += 1;
+  });
+  if (changed) {
+    storage.set("nflz-player-overrides", overrides);
+    state.players = applyOverrides(state.data.players);
+    pffPlayerMatchIndexCache = null;
+    invalidateProjectionCaches();
+  }
+  storage.set(migrationKey, true);
+  return changed;
+}
+
+const defensiveRatingQuotaTargets = {
+  IDL: { elite: 10, plus: 65 },
+  EDGE: { elite: 10, plus: 65 },
+  LB: { elite: 10, plus: 65 },
+  CB: { elite: 12, plus: 75 },
+  S: { elite: 8, plus: 45 },
+};
+
+function defensiveExternalRatingTarget(row, pff) {
+  const mine = num(row.match.rating);
+  const madden = num(row.madden.ovr, mine);
+  const pffPct = pffRankPercentile(pff);
+  const hasPff = pffPct !== null;
+  const snapPct = Number.isFinite(Number(pff?.snapPercentile)) ? Math.max(0.15, Math.min(1, Number(pff.snapPercentile) / 100)) : 0.45;
+  const pffRating = hasPff ? 68 + (pffPct * 32) : madden;
+  const defenseGroup = groupPosition(row.match.position || row.madden.pos || "");
+  const maddenWeight = hasPff ? 0.74 : 0.86;
+  const pffWeight = hasPff ? 0.12 + (0.08 * snapPct) : 0;
+  const currentWeight = Math.max(defenseGroup === "S" ? 0.06 : 0.04, 1 - maddenWeight - pffWeight);
+  let target = Math.round((madden * maddenWeight) + (pffRating * pffWeight) + (mine * currentWeight));
+  if (hasPff && pffPct >= 0.85 && snapPct >= 0.55) {
+    target = Math.max(target, Math.min(mine, madden + (defenseGroup === "S" ? 3 : 4)));
+  }
+  if (hasPff && pffPct <= 0.25 && snapPct >= 0.35) {
+    target = Math.min(target, Math.round((target + (madden * 2)) / 3));
+  }
+  return Math.max(68, Math.min(110, target));
+}
+
+function defensiveQuotaScore(row, pff) {
+  const mine = num(row.match.rating);
+  const madden = num(row.madden.ovr, mine);
+  const pffPct = pffRankPercentile(pff);
+  const snapPct = Number.isFinite(Number(pff?.snapPercentile)) ? Math.max(0.15, Math.min(1, Number(pff.snapPercentile) / 100)) : 0.45;
+  const pffRating = pffPct === null ? madden : 68 + (pffPct * 32);
+  const pffTrust = pffPct === null ? 0 : 0.18 + (0.12 * snapPct);
+  return (madden * 0.78) + (pffRating * pffTrust) + (mine * (0.22 - Math.min(0.18, pffTrust)));
+}
+
+function applyDefensiveQuotaNormalization() {
+  const migrationKey = "nflz-defensive-quota-normalization-20260827-v2";
+  if (storage.get(migrationKey, false)) return 0;
+  if (!state.players?.length || !maddenRows.length) return 0;
+  const seen = new Set();
+  const grouped = buildMaddenMatches().reduce((map, row) => {
+    if (!row.match || !row.key || seen.has(row.key)) return map;
+    const posGroup = groupPosition(row.match.position || row.madden.pos || "");
+    if (!defensiveRatingQuotaTargets[posGroup]) return map;
+    const current = num(row.match.rating);
+    const madden = num(row.madden.ovr);
+    if (!Number.isFinite(current) || !Number.isFinite(madden) || current < 80) return map;
+    seen.add(row.key);
+    const pff = maddenRowPff(row);
+    if (!map.has(posGroup)) map.set(posGroup, []);
+    map.get(posGroup).push({
+      row,
+      pff,
+      score: defensiveQuotaScore(row, pff),
+      target: defensiveExternalRatingTarget(row, pff),
+    });
+    return map;
+  }, new Map());
+  let changed = 0;
+  grouped.forEach((rows, posGroup) => {
+    const quotas = defensiveRatingQuotaTargets[posGroup];
+    rows.sort((a, b) => b.score - a.score || num(b.row.madden.ovr) - num(a.row.madden.ovr) || num(b.row.match.rating) - num(a.row.match.rating));
+    rows.forEach((item, index) => {
+      const current = num(item.row.match.rating);
+      const rank = index + 1;
+      const quotaCap = rank <= quotas.elite ? 110 : rank <= quotas.plus ? 89 : 78;
+      const madden = num(item.row.madden.ovr);
+      const pffPct = pffRankPercentile(item.pff);
+      const snapPct = Number.isFinite(Number(item.pff?.snapPercentile)) ? Number(item.pff.snapPercentile) : 0;
+      let next = Math.min(current, item.target, quotaCap);
+      if (current >= 90 && rank > quotas.elite) next = Math.min(next, 89);
+      if (current >= 80 && rank > quotas.plus) next = Math.min(next, 78);
+      if (current >= 90 && madden < 80) next = Math.min(next, maddenSuggestedRating(item.row, item.pff), madden + 3);
+      if (current >= 90 && madden < 85 && !(pffPct >= 0.9 && snapPct >= 60)) next = Math.min(next, madden + 4);
+      if (current >= 80 && madden < 75 && !(pffPct >= 0.75 && snapPct >= 45)) next = Math.min(next, madden + 5);
+      next = Math.max(68, Math.round(next));
+      if (!Number.isFinite(next) || next >= current) return;
+      persistPlayer(item.row.match, {
+        rating: next,
+        newRating: next,
+        ratingChangeType: "Manual adjustment",
+        ratingChangeNote: `Defensive quota normalization; ${posGroup} external rank ${rank}, Madden ${madden}`,
+      }, { deferRefresh: true });
+      changed += 1;
+    });
+  });
+  if (changed) {
+    storage.set("nflz-player-overrides", overrides);
+    state.players = applyOverrides(state.data.players);
+    pffPlayerMatchIndexCache = null;
+    invalidateProjectionCaches();
+  }
+  storage.set(migrationKey, true);
+  return changed;
 }
 
 migrateScheduleDefaults();
@@ -612,6 +828,7 @@ const fmt = (value, digits = 1) => {
 
 const num = (value, fallback = 0) => (Number.isFinite(Number(value)) ? Number(value) : fallback);
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+const cssEscape = (value) => (window.CSS?.escape ? CSS.escape(String(value ?? "")) : String(value ?? "").replace(/["\\]/g, "\\$&"));
 const excelDate = (value) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return shortDate(value);
   if (!Number.isFinite(Number(value))) return value || "";
@@ -730,12 +947,46 @@ function sourceKey(player) {
   return player?._sourceKey || playerKey(player);
 }
 
+function dedupePlayersByIdentity(players) {
+  const seen = new Map();
+  players.forEach((player, index) => {
+    const identity = [
+      normalizeName(initialsExpandedName(baseReviewPlayerName(player.player))),
+      normalizeTeamName(player.team),
+      modelPosition(player) || groupPosition(player.position) || player.position,
+    ].join("|");
+    const current = seen.get(identity);
+    const score = [
+      Number(overrides[sourceKey(player)]?.deleted) ? -1000 : 0,
+      num(player.rating, 0),
+      -index / 10000,
+    ].reduce((sum, value) => sum + value, 0);
+    if (!current || score > current.score) seen.set(identity, { player, score });
+  });
+  return [...seen.values()].map((item) => item.player);
+}
+
 function applyOverrides(players) {
-  const merged = [...(players || []), ...addedPlayers].filter((p) => !overrides[playerKey(p)]?.deleted).filter(isIncludedPlayer).map((p) => {
-    const key = playerKey(p);
-    const patch = overrides[key] || {};
+  const allPlayers = [...(players || []), ...addedPlayers];
+  const keyCounts = allPlayers.reduce((map, player) => {
+    const key = playerKey(player);
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {});
+  const keySeen = {};
+  const merged = allPlayers.map((p) => {
+    const baseKey = playerKey(p);
+    keySeen[baseKey] = (keySeen[baseKey] || 0) + 1;
+    const key = keyCounts[baseKey] > 1 ? `${baseKey}__dup${keySeen[baseKey]}` : baseKey;
+    return { p, baseKey, key };
+  }).filter(({ baseKey, key }) => !overrides[key]?.deleted && !(keyCounts[baseKey] === 1 && overrides[baseKey]?.deleted)).map(({ p, baseKey, key }) => {
+    const patch = overrides[key] || overrides[baseKey] || {};
     const normalizedPosition = modelPosition({ ...p, ...patch });
-    const base = { ...p, rawPosition: p.rawPosition || p.position, position: normalizedPosition, _sourceKey: key, ...patch };
+    const base = { ...p, rawPosition: p.rawPosition || p.position, position: normalizedPosition, _sourceKey: key, _baseKey: baseKey, ...patch };
+    if (isFreeAgentTeam(base.team)) {
+      base.team = "Free Agent";
+      base.teamAbbrev = "FA";
+    }
     const cleaned = cleanPlayerName(baseReviewPlayerName(base.player)).replace(/\b(wr|cb)$/i, "").trim();
     if (cleaned === "travis hunter" && ["WR", "CB"].includes(normalizedPosition)) {
       base.player = `Travis Hunter (${normalizedPosition})`;
@@ -746,7 +997,7 @@ function applyOverrides(players) {
     }
     return normalizeStarProgress(base);
   });
-  return assignDepthSlots(merged);
+  return assignDepthSlots(dedupePlayersByIdentity(merged));
 }
 
 function saveAddedPlayers() {
@@ -757,6 +1008,10 @@ function saveAddedPlayers() {
 function persistPlayer(player, patch, options = {}) {
   const key = sourceKey(player);
   const { ratingChangeType, ratingChangeNote, ...cleanPatch } = patch || {};
+  if (Object.prototype.hasOwnProperty.call(cleanPatch, "team") && isFreeAgentTeam(cleanPatch.team)) {
+    cleanPatch.team = "Free Agent";
+    cleanPatch.teamAbbrev = "FA";
+  }
   const before = { ...player, ...(overrides[key] || {}) };
   const normalized = normalizeStarProgress({ ...before, ...cleanPatch });
   const oldRating = num(before.rating);
@@ -795,7 +1050,7 @@ function resetPlayerName(player) {
 
 function deletePlayer(player) {
   const key = sourceKey(player);
-  const addedIndex = addedPlayers.findIndex((entry) => playerKey(entry) === key || sourceKey(entry) === key);
+  const addedIndex = addedPlayers.findIndex((entry) => sourceKey(entry) === key || (player._sourceKey ? sourceKey(entry) === player._sourceKey : false));
   if (addedIndex >= 0) {
     addedPlayers.splice(addedIndex, 1);
     saveAddedPlayers();
@@ -845,7 +1100,7 @@ function assignDepthSlots(players = []) {
   });
   groups.forEach((group) => {
     const occupied = new Set();
-    const sortByRating = (a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
+    const sortByRating = (a, b) => num(b.rating) - num(a.rating) || num(b.depthTie, 0) - num(a.depthTie, 0) || String(a.player).localeCompare(b.player);
     const locked = group.filter((player) => playerDepthLock(player)).sort((a, b) => playerDepthLock(a) - playerDepthLock(b) || sortByRating(a, b));
     const unlocked = group.filter((player) => !playerDepthLock(player)).sort(sortByRating);
     locked.forEach((player) => {
@@ -868,7 +1123,7 @@ function depthOrderedPlayers(players = [], week = depthViewWeek()) {
   const group = [...players].filter(Boolean);
   const occupied = new Set();
   const placed = [];
-  const sortByRating = (a, b) => num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
+  const sortByRating = (a, b) => num(b.rating) - num(a.rating) || num(b.depthTie, 0) - num(a.depthTie, 0) || String(a.player).localeCompare(b.player);
   const locked = group.filter((player) => playerDepthLock(player, week)).sort((a, b) => playerDepthLock(a, week) - playerDepthLock(b, week) || sortByRating(a, b));
   const unlocked = group.filter((player) => !playerDepthLock(player, week)).sort(sortByRating);
   locked.forEach((player) => {
@@ -896,6 +1151,27 @@ function depthOrderedByPosition(players = [], week = depthViewWeek()) {
   return [...groups.entries()]
     .sort(([a], [b]) => depthPositionRank(a) - depthPositionRank(b) || a.localeCompare(b))
     .flatMap(([, group]) => depthOrderedPlayers(group, week));
+}
+
+function depthStarterLimit(position) {
+  const pos = String(position || "").toUpperCase();
+  return {
+    QB: 1, RB: 2, WR: 4, TE: 1, LT: 1, LG: 1, C: 1, RG: 1, RT: 1,
+    IDL: 3, EDGE: 3, LB: 3, CB: 3, S: 2,
+  }[pos] || 0;
+}
+
+function isDepthStarter(player, week = depthViewWeek()) {
+  const limit = depthStarterLimit(player?.position);
+  if (!limit || !isPlayerAvailable(player, week)) return false;
+  return num(player?.depth, 999) > 0 && num(player?.depth, 999) <= limit;
+}
+
+function editablePositionSelect(id, value, className = "player-position-select", key = "") {
+  const positions = ["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"];
+  const data = key ? ` data-player-key="${esc(key)}"` : "";
+  const idAttr = id ? ` id="${esc(String(id).replace(/[^a-z0-9_-]+/gi, "-"))}"` : "";
+  return `<select${idAttr} class="${esc(className)}"${data}>${positions.map((item) => `<option value="${esc(item)}" ${String(value || "") === item ? "selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
 }
 
 function saveDepthLockOverride(player, patch) {
@@ -936,6 +1212,14 @@ function unlockPlayerDepth(player, scope = "all", week = depthViewWeek()) {
   storage.set("nflz-player-overrides", overrides);
   state.players = applyOverrides(state.data.players);
   pffPlayerMatchIndexCache = null;
+  return true;
+}
+
+function adjustDepthTie(player, direction = "up") {
+  if (!player) return false;
+  const current = num(player.depthTie, 0);
+  const delta = direction === "down" ? -1 : 1;
+  saveDepthLockOverride(player, { depthTie: Math.max(-99, Math.min(99, current + delta)) });
   return true;
 }
 
@@ -1640,9 +1924,21 @@ function teamCellByName(name) {
   return teamCell(team);
 }
 
+function teamCellByNameCompact(name) {
+  const team = teamByName(name) || { team: name, teamAbbrev: teamAbbrevFor(name, name) };
+  const abbrev = teamAbbrevFor(team.team || name, team.teamAbbrev || name);
+  return `<span class="team-cell compact-team-cell">${teamLogo(team.team, abbrev)}<span>${esc(abbrev)}</span></span>`;
+}
+
 function teamCellFull(name) {
   const team = teamByName(name) || { team: name, teamAbbrev: name };
   return `<span class="team-cell team-cell-full">${teamLogo(team.team, team.teamAbbrev)}<span>${esc(team.team || name || "-")}</span></span>`;
+}
+
+function teamLogoOnly(name, className = "team-logo") {
+  const team = teamByName(name) || { team: name, teamAbbrev: teamAbbrevFor(name, name) };
+  const html = teamLogo(team.team, team.teamAbbrev);
+  return html ? html.replace('class="team-logo"', `class="${esc(className)}" title="${esc(team.team || name || "")}"`) : `<span title="${esc(name || "")}">-</span>`;
 }
 
 function teamStatRanksByName(name) {
@@ -1701,8 +1997,12 @@ function pffPositionSlug(pos) {
 }
 
 function depthBadge(value) {
-  if (String(value || "").toUpperCase() === "INJ" || String(value || "").toUpperCase() === "SUS") {
+  if (["INJ", "SUS", "PS"].includes(String(value || "").toUpperCase())) {
     const label = String(value).toUpperCase();
+    if (label === "INJ") {
+      return `<span class="depth-badge unavailable inj" title="Injured" aria-label="Injured"><img src="assets/bandaid.png" alt="" /></span>`;
+    }
+    if (label === "PS") return `<span class="depth-badge unavailable ps" title="Practice Squad">PS</span>`;
     return `<span class="depth-badge unavailable ${label.toLowerCase()}">${label}</span>`;
   }
   const n = num(value, 0);
@@ -1725,6 +2025,13 @@ function injuryStatusText(player) {
 function playerUnavailableLabel(player, week = selectedSiteWeek()) {
   const status = injuryStatusText(player);
   if (!status || /^healthy$/i.test(status)) return "";
+  if (/^(practice\s+squad|ps)$/i.test(status)) return "PS";
+  if (/^(probable|questionable)\s+for\s+week/i.test(status)) {
+    const current = injuryWeekSortValue(week);
+    const target = injuryWeekSortValue(player?.week);
+    if (Number.isFinite(current) && Number.isFinite(target) && current < target) return "INJ";
+    return "";
+  }
   const label = /suspended/i.test(status) ? "SUS" : "INJ";
   if (/out\s+for\s+season/i.test(status)) return label;
   if (/ir\s+thru|out\s+thru|\*?likely\*?\s+out\s+thru|suspended\s+thru/i.test(status)) {
@@ -1746,7 +2053,7 @@ function isFantasyRowAvailable(row) {
 
 function injuryStatusNeedsReturnReview(player) {
   const status = injuryStatusText(player);
-  if (!/ir\s+thru|out\s+thru|\*?likely\*?\s+out\s+thru/i.test(status)) return false;
+  if (!/ir\s+thru|out\s+thru|\*?likely\*?\s+out\s+thru|probable\s+for\s+week|questionable\s+for\s+week/i.test(status)) return false;
   const current = injuryWeekSortValue(selectedSiteWeek());
   const returnThrough = injuryWeekSortValue(player?.week);
   return Number.isFinite(current) && Number.isFinite(returnThrough) && current > returnThrough;
@@ -1767,7 +2074,7 @@ function starsMeter(player) {
 }
 
 function nudgeControls(player) {
-  const key = esc(playerKey(player));
+  const key = esc(sourceKey(player));
   return `<span class="nudge-controls"><button class="icon thumb up" title="Nudge up" data-dir="up" data-player-key="${key}">+1</button><button class="icon thumb down" title="Nudge down" data-dir="down" data-player-key="${key}">-1</button><button class="icon undo" title="Undo last nudge" data-player-key="${key}">Undo</button></span>`;
 }
 
@@ -1938,17 +2245,27 @@ function depthMissingCandidatesByLastName() {
 
 function sanitizeDepthCheckItem(rawItem) {
   if (!rawItem) return rawItem;
+  const candidates = (rawItem.candidates || []).map((candidate) => ({
+    ...candidate,
+    player: stripDepthPositionNoiseName(candidate.player || rawItem.player),
+  }));
+  const isPracticeSquad = candidates.some((candidate) => /practice\s+squad/i.test(String(candidate.section || "")));
+  const kind = rawItem.kind === "move" && isPracticeSquad ? "practice-squad" : rawItem.kind;
   return {
     ...rawItem,
+    kind,
+    suggestedStatus: kind === "practice-squad" ? "Practice Squad" : rawItem.suggestedStatus,
+    suggestedWeek: kind === "practice-squad" ? "" : rawItem.suggestedWeek,
     player: stripDepthPositionNoiseName(rawItem.player),
-    candidates: (rawItem.candidates || []).map((candidate) => ({
-      ...candidate,
-      player: stripDepthPositionNoiseName(candidate.player || rawItem.player),
-    })),
+    candidates,
   };
 }
 
 let playerAvatarIndex = null;
+const playerAvatarFallbacks = {
+  "stefon diggs": "https://www.maddenratings.com/wp-content/uploads/stefon-diggs-2454-madden-photo.png",
+  "stefondiggs": "https://www.maddenratings.com/wp-content/uploads/stefon-diggs-2454-madden-photo.png",
+};
 
 function buildPlayerAvatarIndex() {
   const byName = new Map();
@@ -1978,6 +2295,8 @@ function playerAvatarUrl(player) {
     || playerAvatarIndex.byCompactTeam.get(`${compact}__${team}`)
     || playerAvatarIndex.byName.get(name)
     || playerAvatarIndex.byCompact.get(compact)
+    || playerAvatarFallbacks[name]
+    || playerAvatarFallbacks[compact]
     || "";
 }
 
@@ -1995,7 +2314,7 @@ function playerNameButton(player, className = "link player-open") {
 
 function ourladsPlayerName(raw) {
   let value = String(raw || "").replace(/\s+/g, " ").trim();
-  value = value.replace(/\s+(?:\d{2}\/\d|[A-Z]{1,2}\/[A-Za-z]+|[A-Z]{1,3}\d{2}\*?|[A-Z]{1,3})$/i, "").trim();
+  value = value.replace(/\s+(?:\d{2}\/\d|[A-Z]{1,2}\/[A-Za-z]+|[A-Z]{1,3}\d{2}\*?|[A-Z]{1,4}\^?)$/i, "").trim();
   if (!value.includes(",")) return "";
   const stripPositionEdges = (part) => {
     const pieces = String(part || "").split(/\s+/).filter(Boolean);
@@ -2017,37 +2336,83 @@ function parseOurladsDepthChart(text) {
   } catch {}
   const lines = readable.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const players = new Map();
+  const positions = new Map();
+  const sections = new Map();
   let currentTeam = "";
+  let currentPosition = "";
+  let currentSection = "";
   lines.forEach((line) => {
     const updatedTeam = teamNames.find((team) => line.includes(team) && /Updated:/i.test(line));
     if (updatedTeam) {
       currentTeam = normalizeTeamName(updatedTeam);
       return;
     }
-    const sectionTeam = line.match(/^(?:Offense|Defense|Special Teams|Reserves)\s+-\s+(.+)$/i);
-    if (sectionTeam) currentTeam = normalizeTeamName(sectionTeam[1]);
+    const sectionTeam = line.match(/^(?:Offense|Defense|Special Teams|Reserves|Practice Squad)\s+-\s+(.+)$/i);
+    if (sectionTeam) {
+      currentTeam = normalizeTeamName(sectionTeam[1]);
+      currentSection = line.match(/^(Offense|Defense|Special Teams|Reserves|Practice Squad)\s+-/i)?.[1] || "";
+    }
     if (!currentTeam) return;
     line.split(/\t|\s{2,}|\|/).forEach((cell) => {
+      const cellTokens = String(cell || "").trim().split(/\s+/).map((part) => part.replace(/[^A-Za-z]/g, "").toUpperCase()).filter(Boolean);
+      const directPosition = cellTokens.find((token) => ourladsPositionTokens.has(token));
+      if (directPosition && cellTokens.length === 1) currentPosition = fallbackModelPosition(directPosition) || modelPosition({ position: directPosition }) || directPosition;
       const parsed = ourladsPlayerName(cell);
       if (!parsed) return;
+      const inferredPosition = fallbackModelPosition(directPosition) || modelPosition({ position: directPosition }) || currentPosition;
       const key = cleanPlayerName(parsed);
       if (!key) return;
       if (!players.has(key)) players.set(key, new Set());
       players.get(key).add(currentTeam);
+      const sectionKey = `${key}__${currentTeam}`;
+      if (!sections.has(sectionKey)) sections.set(sectionKey, new Set());
+      if (currentSection) sections.get(sectionKey).add(currentSection);
+      if (inferredPosition) {
+        const posKey = `${key}__${currentTeam}`;
+        if (!positions.has(posKey)) positions.set(posKey, new Set());
+        positions.get(posKey).add(inferredPosition);
+      }
     });
   });
+  players.positions = positions;
+  players.sections = sections;
   return players;
 }
 
 function buildDepthCheckResults(ourladsPlayers) {
   return state.players.map((player) => {
-    const teams = [...(ourladsPlayers.get(cleanPlayerName(player.player)) || [])];
+    const clean = cleanPlayerName(player.player);
+    const teams = [...(ourladsPlayers.get(clean) || [])].map(normalizeTeamName);
     if (!teams.length) return { kind: "free-agent", playerKey: sourceKey(player), player: player.player, fromTeam: player.team, toTeam: "Free Agent", confidence: "not found" };
     if (teams.length > 1) return { kind: "duplicate", playerKey: sourceKey(player), player: player.player, fromTeam: player.team, toTeam: teams.join(", "), confidence: "duplicate name" };
     const toTeam = teams[0];
-    if (toTeam === player.team) return null;
+    const ourladsSections = [...(ourladsPlayers.sections?.get(`${clean}__${toTeam}`) || [])];
+    const isReserve = ourladsSections.some((section) => /reserves?/i.test(section));
+    const isPracticeSquad = ourladsSections.some((section) => /practice\s+squad/i.test(section));
+    if (isReserve) {
+      return { kind: "reserve-ir", playerKey: sourceKey(player), player: player.player, fromTeam: player.team, toTeam, confidence: "OurLads Reserves -> IR", suggestedStatus: "IR Thru Week ___", suggestedWeek: defaultInjuryWeekForStatus("IR Thru Week ___") };
+    }
+    if (isPracticeSquad && (normalizeTeamName(toTeam) !== normalizeTeamName(player.team) || !/^practice\s+squad$/i.test(injuryStatusText(player)))) {
+      return { kind: "practice-squad", playerKey: sourceKey(player), player: player.player, fromTeam: player.team, toTeam, confidence: "OurLads Practice Squad -> PS", suggestedStatus: "Practice Squad", suggestedWeek: "" };
+    }
+    const ourladsPositions = [...(ourladsPlayers.positions?.get(`${clean}__${toTeam}`) || [])].map((pos) => modelPosition({ position: pos }) || fallbackModelPosition(pos) || pos);
+    const currentPosition = String(player.position || "").toUpperCase();
+    const olPositions = new Set(["LT", "LG", "C", "RG", "RT"]);
+    const toPosition = ourladsPositions.find((pos) => olPositions.has(pos));
+    if (normalizeTeamName(toTeam) === normalizeTeamName(player.team) && toPosition && olPositions.has(currentPosition) && toPosition !== currentPosition) {
+      return { kind: "position-change", playerKey: sourceKey(player), player: player.player, fromTeam: player.team, toTeam, fromPosition: currentPosition, toPosition, confidence: "OurLads OL position changed" };
+    }
+    if (normalizeTeamName(toTeam) === normalizeTeamName(player.team)) return null;
     return { kind: "move", playerKey: sourceKey(player), player: player.player, fromTeam: player.team, toTeam, confidence: "name match" };
   }).filter(Boolean);
+}
+
+function depthCheckIsReserveIr(item) {
+  return item?.kind === "reserve-ir" || (item?.kind === "missing-player" && /^ir\s+thru/i.test(String(item.suggestedStatus || "")));
+}
+
+function depthCheckIsPracticeSquad(item) {
+  return item?.kind === "practice-squad" || (item?.kind === "missing-player" && /^practice\s+squad$/i.test(String(item.suggestedStatus || "")));
 }
 
 function repairStaleOurLadsFreeAgentOverrides(data) {
@@ -2203,9 +2568,18 @@ async function runDepthChartCheck() {
       if (scanResponse.ok) {
         const payload = await scanResponse.json();
         window.OURLADS_DEPTH_CHECK = payload;
+        let activeResults = payload.results || [];
+        try {
+          const proxyResponse = await fetch(ourladsProxyUrl, { cache: "no-store" });
+          if (proxyResponse.ok) {
+            const liveText = await proxyResponse.text();
+            const parsed = parseOurladsDepthChart(liveText);
+            if (parsed.size >= 500) activeResults = buildDepthCheckResults(parsed);
+          }
+        } catch {}
         state.depthCheck = {
           status: "review",
-          results: unresolvedDepthCheckResults(payload.results || []),
+          results: unresolvedDepthCheckResults(activeResults),
           error: "",
           source: "live",
           fetchedAt: payload.fetchedAt,
@@ -2300,14 +2674,32 @@ function applyDepthCheckResult(index, overrideTeam = "", shouldRender = true, op
     if (shouldRender) render();
     return;
   }
-  const patch = toTeam === "Free Agent"
+  const patch = item.kind === "position-change"
+    ? { position: item.toPosition, rawPosition: item.toPosition }
+    : item.kind === "practice-squad"
+    ? {
+        team: toTeam,
+        teamAbbrev: state.data.meta.teamAbbrevs[toTeam] || toTeam,
+        injury: "Practice Squad",
+        week: "",
+      }
+    : item.kind === "reserve-ir"
+    ? {
+        team: toTeam,
+        teamAbbrev: state.data.meta.teamAbbrevs[toTeam] || toTeam,
+        ...injuryPatchForStatus(
+          document.querySelector(`[data-depth-ir-status-index="${index}"]`)?.value || item.suggestedStatus || "IR Thru Week ___",
+          document.querySelector(`[data-depth-ir-week-index="${index}"]`)?.value || item.suggestedWeek || ""
+        ),
+      }
+    : toTeam === "Free Agent"
     ? { team: "Free Agent", teamAbbrev: "FA" }
     : { team: toTeam, teamAbbrev: state.data.meta.teamAbbrevs[toTeam] || toTeam };
   if (toTeam === "Free Agent") Object.assign(patch, applyThumbMath(player, "down", 2), { ratingChangeType: "Nudge", ratingChangeNote: "Moved to Free Agent" });
   const deferRefresh = Boolean(options.deferRefresh);
   persistPlayer(player, patch, { deferRefresh });
   item.applied = true;
-  item.appliedTo = toTeam;
+  item.appliedTo = item.kind === "reserve-ir" || item.kind === "practice-squad" ? `${toTeam} / ${patch.injury}${patch.week ? ` ${patch.week}` : ""}` : toTeam;
   markDepthCheckResolved(item, !deferRefresh);
   if (!deferRefresh) state.players = applyOverrides(state.data.players);
   if (shouldRender) {
@@ -2322,6 +2714,9 @@ function applyAllDepthCheckResults() {
 
 function depthCheckActivityLabel(item) {
   if (!item) return "";
+  if (depthCheckIsReserveIr(item)) return "Injured Reserve";
+  if (item.kind === "practice-squad") return "Practice Squad";
+  if (item.kind === "position-change") return "Position Changed";
   if (item.kind === "move") return "Team Changed";
   if (item.kind === "free-agent") return freeAgentNameMatchCandidates(item).length ? "Name Match Suggested" : "Free Agent";
   if (item.kind === "missing-player") return "Missing Player";
@@ -2337,7 +2732,7 @@ function depthCheckActivityOptions() {
     return map;
   }, {});
   const labels = unique(pending.map(depthCheckActivityLabel));
-  const order = ["Team Changed", "Name Match Suggested", "Free Agent", "Duplicate Name", "Missing Player"];
+  const order = ["Injured Reserve", "Practice Squad", "Team Changed", "Position Changed", "Name Match Suggested", "Free Agent", "Duplicate Name", "Missing Player"];
   const sorted = labels.sort((a, b) => (order.indexOf(a) === -1 ? 99 : order.indexOf(a)) - (order.indexOf(b) === -1 ? 99 : order.indexOf(b)) || a.localeCompare(b));
   return [["All Activities", `All Activities (${pending.length})`], ...sorted.map((label) => [label, `${label} (${counts[label] || 0})`])];
 }
@@ -2350,7 +2745,17 @@ function pendingDepthActivityRows(activity = state.depthCheckActivity) {
 }
 
 function safeDepthCheckRows(rows = pendingDepthActivityRows("All Activities")) {
-  return rows.filter(({ item }) => item.kind === "move" || (item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length));
+  return rows.filter(({ item }) => item.kind === "move" || item.kind === "practice-squad" || depthCheckIsReserveIr(item) || depthCheckIsPracticeSquad(item) || (item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length));
+}
+
+function depthIrStatusSelect(index, value = "IR Thru Week ___") {
+  const options = injuryStatuses.filter((status) => /^ir\s+thru/i.test(status) || /^out\s+for\s+season/i.test(status) || /^healthy$/i.test(status));
+  return `<select class="depth-ir-status" data-depth-ir-status-index="${index}">${options.map((item) => `<option ${String(value || "IR Thru Week ___") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
+}
+
+function depthIrWeekSelect(index, value = "") {
+  const selected = value || defaultInjuryWeekForStatus("IR Thru Week ___");
+  return `<select class="depth-ir-week" data-depth-ir-week-index="${index}">${injuryWeeks.map((item) => `<option ${String(selected || "") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
 }
 
 const yieldToBrowser = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -2387,17 +2792,38 @@ async function applyDepthCheckActivity(activity = state.depthCheckActivity) {
   };
   if (activity === "All Activities") {
     await applyBatch(safeDepthCheckRows(rows), (item, index) => {
-      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      if (item.kind === "missing-player") addMissingDepthCheckPlayer(index, false);
+      else applyDepthCheckResult(index, "", false, { deferRefresh: true });
       return true;
     }, "Applying safe depth chart changes");
     return;
   }
   if (activity === "Missing Player") {
-    addAllMissingDepthCheckPlayers();
+    addAllMissingDepthCheckPlayers({ includeReserveIr: false });
     return;
   }
   await applyBatch(rows, (item, index) => {
+    if (activity === "Practice Squad" && item.kind === "practice-squad") {
+      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      return true;
+    }
+    if (activity === "Practice Squad" && item.kind === "missing-player") {
+      addMissingDepthCheckPlayer(index, false);
+      return true;
+    }
     if (activity === "Team Changed" && item.kind === "move") {
+      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      return true;
+    }
+    if (activity === "Injured Reserve" && item.kind === "reserve-ir") {
+      applyDepthCheckResult(index, "", false, { deferRefresh: true });
+      return true;
+    }
+    if (activity === "Injured Reserve" && item.kind === "missing-player") {
+      addMissingDepthCheckPlayer(index, false);
+      return true;
+    }
+    if (activity === "Position Changed" && item.kind === "position-change") {
       applyDepthCheckResult(index, "", false, { deferRefresh: true });
       return true;
     }
@@ -2426,6 +2852,9 @@ function depthCheckIndexFromKey(key) {
 
 function depthCheckSelectableAction(item, activity = depthCheckActivityLabel(item)) {
   if (!item || item.applied || item.ignored) return null;
+  if (item.kind === "position-change") return { type: "apply" };
+  if (item.kind === "reserve-ir") return { type: "apply" };
+  if (item.kind === "practice-squad") return { type: "apply" };
   if (item.kind === "move") return { type: "apply" };
   if (item.kind === "missing-player") return { type: "add" };
   if (item.kind === "free-agent") {
@@ -2584,6 +3013,8 @@ function missingPlayerFromDepthCheck(item) {
   const position = modelPosition({ player: item.player, team, teamAbbrev: state.data.meta.teamAbbrevs[team] || team, position: rawPosition }) || fallbackModelPosition(rawPosition);
   if (!position) return null;
   const defaultRating = missingDepthCheckDefaultRating(candidate);
+  const reserveStatus = item.suggestedStatus || (/reserves?/i.test(String(candidate.section || "")) ? "IR Thru Week ___" : /practice\s+squad/i.test(String(candidate.section || "")) ? "Practice Squad" : "");
+  const injuryPatch = reserveStatus ? injuryPatchForStatus(reserveStatus, item.suggestedWeek || "") : { injury: "Healthy", week: "" };
   return normalizeStarProgress({
     player: baseReviewPlayerName(item.player),
     team,
@@ -2596,8 +3027,8 @@ function missingPlayerFromDepthCheck(item) {
     newRating: defaultRating,
     stars: 0,
     newStars: 0,
-    injury: "Healthy",
-    week: "",
+    injury: injuryPatch.injury,
+    week: injuryPatch.week,
     thumb: "",
   });
 }
@@ -2605,6 +3036,13 @@ function missingPlayerFromDepthCheck(item) {
 function addMissingDepthCheckPlayer(index, shouldRender = true) {
   const item = state.depthCheck.results[index];
   if (!item || item.kind !== "missing-player" || item.ignored) return;
+  if (depthCheckIsReserveIr(item)) {
+    item.suggestedStatus = document.querySelector(`[data-depth-ir-status-index="${index}"]`)?.value || item.suggestedStatus || "IR Thru Week ___";
+    item.suggestedWeek = document.querySelector(`[data-depth-ir-week-index="${index}"]`)?.value || item.suggestedWeek || defaultInjuryWeekForStatus(item.suggestedStatus);
+  } else if (depthCheckIsPracticeSquad(item)) {
+    item.suggestedStatus = "Practice Squad";
+    item.suggestedWeek = "";
+  }
   const player = missingPlayerFromDepthCheck(item);
   if (!player) return;
   const key = playerKey(player);
@@ -2614,7 +3052,7 @@ function addMissingDepthCheckPlayer(index, shouldRender = true) {
     saveAddedPlayers();
   }
   item.applied = true;
-  item.appliedTo = `${player.team} ${player.position}`;
+  item.appliedTo = depthCheckIsReserveIr(item) || depthCheckIsPracticeSquad(item) ? `${player.team} / ${player.injury}${player.week ? ` ${player.week}` : ""}` : `${player.team} ${player.position}`;
   markDepthCheckResolved(item);
   state.players = applyOverrides(state.data.players);
   if (shouldRender) {
@@ -2624,10 +3062,12 @@ function addMissingDepthCheckPlayer(index, shouldRender = true) {
   }
 }
 
-function addAllMissingDepthCheckPlayers() {
+function addAllMissingDepthCheckPlayers(options = {}) {
+  const includeReserveIr = options.includeReserveIr !== false;
   let added = 0;
   state.depthCheck.results.forEach((item) => {
     if (item.kind !== "missing-player" || item.applied || item.ignored) return;
+    if (!includeReserveIr && (depthCheckIsReserveIr(item) || depthCheckIsPracticeSquad(item))) return;
     const player = missingPlayerFromDepthCheck(item);
     if (!player) return;
     const key = playerKey(player);
@@ -2636,7 +3076,7 @@ function addAllMissingDepthCheckPlayers() {
     if (alreadyExists) return;
     addedPlayers.push(player);
     item.applied = true;
-    item.appliedTo = `${player.team} ${player.position}`;
+    item.appliedTo = depthCheckIsReserveIr(item) || depthCheckIsPracticeSquad(item) ? `${player.team} / ${player.injury}${player.week ? ` ${player.week}` : ""}` : `${player.team} ${player.position}`;
     markDepthCheckResolved(item);
     added += 1;
   });
@@ -2736,19 +3176,78 @@ function unresolvedInjuryCheckResults(results) {
   return (results || []).filter((item) => !injuryResolvedResults[injuryCheckResolvedKey(item)]);
 }
 
-function runInjuryCheck() {
-  if (!window.ESPN_INJURY_CHECK?.results) {
-    state.injuryCheck = { status: "empty", results: [], error: "No ESPN injury scan file is loaded. Run refresh-espn-injury-check.bat, reload the app, then scan again.", source: "codex" };
-    render();
-    return;
+function injuryScanItemMatchesPlayer(item, player) {
+  if (!item || !player) return false;
+  const key = sourceKey(player);
+  const clean = cleanPlayerName(player.player || "");
+  const team = normalizeTeamName(player.team || "");
+  const position = String(player.position || "").toUpperCase();
+  const appStyleKey = `${normalizeTeamName(player.team)}|${position}|${player.player || ""}`;
+  const cacheStyleKey = `${player.player || ""}__${normalizeTeamName(player.team)}__${position}`;
+  return [key, appStyleKey, cacheStyleKey].includes(String(item.playerKey || ""))
+    || (cleanPlayerName(item.player || "") === clean && normalizeTeamName(item.team || item.espnTeam || "") === team && (!item.position || String(item.position).toUpperCase() === position))
+    || (cleanPlayerName(item.player || "") === clean && normalizeTeamName(item.espnTeam || "") === team);
+}
+
+function clearStaleInjuryStatusesFromLatestScan(scanRows = window.ESPN_INJURY_CHECK?.results || []) {
+  if (!scanRows?.length) return 0;
+  let cleared = 0;
+  (state.players || []).forEach((player) => {
+    const status = injuryStatusText(player);
+    if (!status || /^healthy$/i.test(status) || /suspended/i.test(status) || normalizeTeamName(player.team) === "Free Agent") return;
+    if (scanRows.some((item) => injuryScanItemMatchesPlayer(item, player))) return;
+    persistPlayer(player, { injury: "Healthy", week: "" }, { deferRefresh: true });
+    cleared += 1;
+  });
+  if (cleared) {
+    storage.set("nflz-player-overrides", overrides);
+    state.players = applyOverrides(state.data.players);
+    pffPlayerMatchIndexCache = null;
+    invalidateProjectionCaches();
   }
+  return cleared;
+}
+
+async function runInjuryCheck() {
   state.injuryCheck = {
-    status: "review",
-    results: unresolvedInjuryCheckResults(window.ESPN_INJURY_CHECK.results).map((item) => ({ ...item })),
-    error: "",
-    source: "codex",
-    fetchedAt: window.ESPN_INJURY_CHECK.fetchedAt,
+    ...state.injuryCheck,
+    status: "checking",
+    error: "Trying the live ESPN injury scan. If this local link is running as a static server, the page will use the cached ESPN injury file instead.",
   };
+  render();
+  try {
+    const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/espn-injury-check-scan" : "/api/espn-injury-check-scan";
+    const response = await fetch(apiUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
+    window.ESPN_INJURY_CHECK = await response.json();
+    if (!window.ESPN_INJURY_CHECK?.results) throw new Error("ESPN injury scan returned no review rows.");
+    const clearedStale = clearStaleInjuryStatusesFromLatestScan(window.ESPN_INJURY_CHECK.results);
+    const pending = unresolvedInjuryCheckResults(window.ESPN_INJURY_CHECK.results).map((item) => ({ ...item }));
+    state.injuryCheck = {
+      status: "review",
+      results: pending,
+      error: window.ESPN_INJURY_CHECK.fromCache
+        ? `ESPN live refresh failed, so cached injuries loaded. ${window.ESPN_INJURY_CHECK.refreshError || "Try again in a minute."}`
+        : `Live ESPN scan finished: ${window.ESPN_INJURY_CHECK.espnRows || 0} ESPN rows checked, ${pending.length} players need review.${clearedStale ? ` Cleared ${clearedStale} stale injury tag${clearedStale === 1 ? "" : "s"} for players no longer on the report.` : ""}`,
+      source: "codex",
+      fetchedAt: window.ESPN_INJURY_CHECK.fetchedAt,
+    };
+  } catch (error) {
+    if (window.ESPN_INJURY_CHECK?.results) {
+      const clearedStale = clearStaleInjuryStatusesFromLatestScan(window.ESPN_INJURY_CHECK.results);
+      const pending = unresolvedInjuryCheckResults(window.ESPN_INJURY_CHECK.results).map((item) => ({ ...item }));
+      state.injuryCheck = {
+        status: "review",
+        results: pending,
+        error: `Using the ESPN injury cache loaded with this page. The live scan route was not reachable from this local server (${error.message}). For a brand-new ESPN pull, run the scan server/refresh script, then press this again.${clearedStale ? ` Cleared ${clearedStale} stale injury tag${clearedStale === 1 ? "" : "s"} for players no longer on the report.` : ""}`,
+        source: "codex",
+        fetchedAt: window.ESPN_INJURY_CHECK.fetchedAt,
+      };
+      render();
+      return;
+    }
+    state.injuryCheck = { status: "empty", results: [], error: error.message || "No ESPN injury scan file is loaded.", source: "codex" };
+  }
   render();
 }
 
@@ -2756,7 +3255,7 @@ async function runDepthAndInjuryChecks() {
   state.injuryCheck = { ...state.injuryCheck, status: "checking", error: "Loading ESPN injury check" };
   render();
   await runDepthChartCheck();
-  runInjuryCheck();
+  await runInjuryCheck();
 }
 
 function injuryCheckCategory(item) {
@@ -2769,6 +3268,8 @@ function injuryCheckCategory(item) {
   if (injuryTextMeansReserveList(text)) return "Injured Reserve";
   if (/likely/.test(text) && /out/.test(text)) return "Likely Out";
   if (/out\s+thru|out\s+through|\bout\b/.test(text)) return "Out Thru";
+  if (/questionable\s+for\s+week/.test(status)) return "Questionable";
+  if (/probable\s+for\s+week/.test(status)) return "Probable";
   if (/suspend/.test(text)) return "Suspended";
   return "Other";
 }
@@ -2783,6 +3284,8 @@ function injuryCheckSuggestedAction(item) {
   if (/ir\s+thru/i.test(status)) return `IR thru ${week || "review"}`;
   if (/likely.*out\s+thru/i.test(status)) return `Likely out thru ${week || "review"}`;
   if (/out\s+thru/i.test(status)) return `Out thru ${week || "review"}`;
+  if (/questionable\s+for\s+week/i.test(status)) return `Questionable for ${week || "review"}`;
+  if (/probable\s+for\s+week/i.test(status)) return `Probable for ${week || "review"}`;
   if (/suspended/i.test(status)) return `Suspended thru ${week || "review"}`;
   return status || "Review";
 }
@@ -2809,7 +3312,7 @@ function injuryCheckCategoryOptions() {
   });
   const hiddenCategories = new Set(["Already Placed", "Idle Injury Status Alerts"]);
   const visibleTotal = Object.entries(counts).reduce((sum, [category, value]) => sum + (hiddenCategories.has(category) ? 0 : value), 0);
-  const ordered = ["All Categories", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Suspended", "Other", "Already Placed", "Idle Injury Status Alerts"];
+  const ordered = ["All Categories", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Questionable", "Probable", "Suspended", "Other", "Already Placed", "Idle Injury Status Alerts"];
   return ordered
     .filter((category) => category === "All Categories" || counts[category])
     .map((category) => [category, category === "All Categories" ? `All Categories (${visibleTotal})` : `${category} (${counts[category]})`]);
@@ -2820,6 +3323,26 @@ function filteredInjuryCheckRows() {
     .map((item, index) => ({ item, index, category: injuryCheckCategory(item) }))
     .filter((row) => ["Already Placed", "Idle Injury Status Alerts"].includes(state.injuryCheckActivity) || !["Already Placed", "Idle Injury Status Alerts"].includes(row.category))
     .filter((row) => state.injuryCheckActivity === "All Categories" || row.category === state.injuryCheckActivity);
+}
+
+function injuryCheckSummaryPanel() {
+  const pendingRows = (state.injuryCheck.results || [])
+    .map((item, index) => ({ item, index, category: injuryCheckCategory(item) }))
+    .filter(({ item }) => !item.applied && !item.ignored);
+  if (!pendingRows.length) return "";
+  const hiddenCategories = new Set(["Already Placed", "Idle Injury Status Alerts"]);
+  const counts = pendingRows.reduce((map, { category }) => {
+    map[category] = (map[category] || 0) + 1;
+    return map;
+  }, {});
+  const reviewTotal = pendingRows.reduce((sum, { category }) => sum + (hiddenCategories.has(category) ? 0 : 1), 0);
+  const order = ["Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Questionable", "Probable", "Suspended", "Other", "Already Placed", "Idle Injury Status Alerts"];
+  return `
+    <div class="depth-scan-summary injury-scan-summary">
+      <div><strong>${reviewTotal}</strong><span>Action Review</span></div>
+      ${order.filter((label) => counts[label]).map((label) => `<button type="button" class="depth-summary-chip ${state.injuryCheckActivity === label ? "active" : ""}" data-injury-summary-activity="${esc(label)}"><strong>${counts[label]}</strong><span>${esc(label)}</span></button>`).join("")}
+    </div>
+  `;
 }
 
 function injuryCheckAlreadyPlaced(item) {
@@ -2840,8 +3363,9 @@ function injuryTextMeansActivePupNfi(text) {
 
 function injuryTextMeansHealthy(text) {
   const value = String(text || "").toLowerCase();
-  if (/returned|return(ed)? to practice|full participant|cleared/.test(value)) return true;
-  if (/did not practice|not practicing|won't practice|will not practice|miss(?:ed|es|ing)? practice|held out|unable to practice|limited participant|limited practice/.test(value)) return false;
+  if (/full go|full-go|good to go|cleared|passed (?:his|her|their)? ?physical|activated from (?:the )?(?:pup|nfi)|removed from (?:the )?(?:injury|pup|nfi) list/.test(value)) return true;
+  if (/returned|return(ed)? to practice|full participant|practic(?:ed|es|ing) in full/.test(value)) return true;
+  if (/did not practice|not practicing|won't practice|will not practice|miss(?:ed|es|ing)? practice|held out|unable to practice|limited participant|limited practice|non-contact|noncontact|working off to the side|work(?:ed|ing)? on the side|running sprints on the side/.test(value)) return false;
   return /participat(?:ed|es|ing)? in (?:training camp|practice)|practic(?:ed|es|ing) (?:today|this week|during camp|at camp|in training camp)/.test(value);
 }
 
@@ -2852,7 +3376,65 @@ function injuryTextMeansCampRampUp(text) {
 function injuryTextMeansReserveList(text) {
   const value = String(text || "");
   if (injuryTextMeansActivePupNfi(value)) return false;
+  if (/did not place .* injured reserve|didn'?t place .* injured reserve|not placed? .* (?:on|onto) injured reserve|wasn'?t placed? .* injured reserve|will not be placed? .* injured reserve/i.test(value)) return false;
   return /\bir\b|injured reserve|reserve\/pup|reserve-pup|reserve pup|reserve\/physically unable|reserve physically unable|reserve\/nfi|reserve-nfi|reserve nfi|reserve\/non-football|reserve non-football/.test(value);
+}
+
+function injuryTextMeansProbableAvailability(text) {
+  const value = String(text || "").toLowerCase();
+  return /full go|full-go|good to go|on track to play|expected to (?:be a )?full go|expected to play|believes? (?:he|she|they)'?ll be available|optimism.*(?:available|play)|very optimistic.*(?:available|play)|trending in the right direction to play|should be (?:ready|available)|will travel .* trending|spotted .*participat(?:ed|es|ing)?|present at .*practice|returned to practice|return(ed)? to practice|limited participant|limited practice|working .* into full team drills|participat(?:ed|es|ing)? in .*practice/.test(value);
+}
+
+function injuryTextMeansQuestionablePractice(text) {
+  const value = String(text || "").toLowerCase();
+  if (/non-contact|noncontact|working off to the side|work(?:ed|ing)? on the side|running sprints on the side|wasn'?t suited up|not suited up|remains sidelined|still sidelined/.test(value)) return true;
+  if (/not (?:yet )?(?:doing|participating in) full-team drills|isn'?t (?:yet )?doing full-team drills|no full-team drills/.test(value)) return true;
+  return false;
+}
+
+function injuryTextMeansRosterRisk(text) {
+  return /may not be active on gamedays?|inactive on gamedays?|not expected to be active|unlikely to be active|could be inactive|roster bubble|buried on the depth chart/i.test(text || "");
+}
+
+function injuryCommentDaysBeforeReturn(item) {
+  const commentDate = String(item?.espnCommentDate || "").trim();
+  const returnDate = String(item?.espnReturnDate || "").trim();
+  const parse = (value) => {
+    const match = value.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})$/i);
+    if (!match) return null;
+    return new Date(`${match[1]} ${match[2]}, 2026`);
+  };
+  const start = parse(commentDate);
+  const end = parse(returnDate);
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function injuryQuestionablePracticeStatus(item) {
+  const comment = String(item?.espnComment || "").toLowerCase();
+  if (/non-contact|noncontact|not (?:yet )?(?:doing|participating in) full-team drills|isn'?t (?:yet )?doing full-team drills|no full-team drills/.test(comment)) return "Questionable for Week ___";
+  const daysBeforeReturn = injuryCommentDaysBeforeReturn(item);
+  if (/working off to the side|work(?:ed|ing)? on the side|running sprints on the side/.test(comment) && Number.isFinite(daysBeforeReturn) && daysBeforeReturn >= 8) return "Probable for Week ___";
+  return "Questionable for Week ___";
+}
+
+function injuryPracticeMonitorStatus(item) {
+  const tag = String(item?.espnTag || "").toLowerCase();
+  const comment = String(item?.espnComment || "").toLowerCase();
+  const text = `${tag} ${comment}`;
+  const monitorWeek = "Week ___";
+  if (!/questionable|probable|doubtful/.test(tag) && !/practice|injury report|limited|participant|sidelined|suited up/.test(comment)) return "";
+  if (/preseason/.test(comment) && /won't play|will not play/.test(comment) && /week 1|season opener|available/.test(comment)) return "Probable for Week ___";
+  if (/ruled out|won't play|will not play|not expected to play|unlikely to play|doubtful/.test(text)) return "*Likely* Out thru Week ___";
+  if (injuryTextMeansQuestionablePractice(comment)) return injuryQuestionablePracticeStatus(item);
+  if (injuryTextMeansProbableAvailability(comment)) return "Probable for Week ___";
+  if (/friday/.test(comment) && /did not practice|not practicing|won't practice|will not practice|miss(?:ed|es|ing)? practice|held out|unable to practice|not suited up|wasn't suited up/.test(comment)) return "Questionable for Week ___";
+  if (/thursday/.test(comment) && /did not practice|not practicing|won't practice|will not practice|miss(?:ed|es|ing)? practice|held out|unable to practice|not suited up|wasn't suited up/.test(comment)) return "Questionable for Week ___";
+  if (/wednesday/.test(comment) && /did not practice|not practicing|won't practice|will not practice|miss(?:ed|es|ing)? practice|held out|unable to practice|not suited up|wasn't suited up/.test(comment)) return "Probable for Week ___";
+  if (/returned|return(ed)? to practice|full participant|limited participant|limited practice|spotted at .*practice|present at .*practice|participat(?:ed|es|ing)? in .*practice|practic(?:ed|es|ing)/.test(comment)) return "Probable for Week ___";
+  if (/questionable/.test(tag)) return "Questionable for Week ___";
+  if (/probable/.test(tag)) return "Probable for Week ___";
+  return monitorWeek ? "" : "";
 }
 
 function effectiveInjurySuggestedStatus(item) {
@@ -2860,11 +3442,17 @@ function effectiveInjurySuggestedStatus(item) {
   const tag = String(item?.espnTag || "").toLowerCase();
   const comment = String(item?.espnComment || "").toLowerCase();
   const text = `${tag} ${comment}`;
-  if (injuryTextMeansHealthy(text)) return "Healthy";
   if (/questionable|doubtful/.test(tag) && !comment.trim()) return "Healthy";
   if (injuryTextMeansSeasonEnding(text)) return "OUT for Season";
   if (injuryTextMeansActivePupNfi(text)) return "OUT thru Week ___";
   if (injuryTextMeansReserveList(text)) return "IR Thru Week ___";
+  if (injuryTextMeansRosterRisk(text)) return "*Likely* Out thru Week ___";
+  if (/preseason/.test(comment) && /won't play|will not play/.test(comment) && /week 1|season opener|available/.test(comment)) return "Probable for Week ___";
+  if (injuryTextMeansQuestionablePractice(comment)) return injuryQuestionablePracticeStatus(item);
+  if (injuryTextMeansProbableAvailability(comment)) return "Probable for Week ___";
+  const monitorStatus = injuryPracticeMonitorStatus(item);
+  if (monitorStatus) return monitorStatus;
+  if (injuryTextMeansHealthy(text)) return "Healthy";
   return status || "Healthy";
 }
 
@@ -2876,6 +3464,7 @@ function effectiveInjurySuggestedWeek(item) {
   if (/^healthy$|out\s+for\s+season/i.test(status)) return "";
   if (injuryTextMeansActivePupNfi(text)) return "Pre3";
   if (injuryTextMeansCampRampUp(text) && String(selectedSiteWeek()).startsWith("Pre")) return "Pre3";
+  if (injuryTextMeansRosterRisk(text)) return injuryReviewWeekPlus(2);
   if (/out\s+thru|likely.*out\s+thru|suspended\s+thru/i.test(status) && String(selectedSiteWeek()).startsWith("Pre")) return currentInjuryReviewWeek();
   return item?.suggestedWeek || defaultInjuryWeekForStatus(status);
 }
@@ -2935,6 +3524,7 @@ async function applyShownInjuryCheckResults() {
 function clearInjuryReviewDue(playerKeyValue) {
   const player = findPlayer(playerKeyValue);
   if (!player) return;
+  state.injuryDueEditorKey = "";
   persistPlayer(player, { injury: "Healthy", week: "" });
   render();
 }
@@ -2943,29 +3533,394 @@ function keepInjuryReviewDue(playerKeyValue) {
   const player = findPlayer(playerKeyValue);
   if (!player) return;
   const week = selectedSiteWeek();
+  state.injuryDueEditorKey = "";
   persistPlayer(player, { week });
   render();
 }
 
-function renderInjuryReviewDuePanel() {
+function openInjuryDueStatusEditor(playerKeyValue) {
+  state.injuryDueEditorKey = playerKeyValue || "";
+  render();
+}
+
+function closeInjuryDueStatusEditor() {
+  state.injuryDueEditorKey = "";
+  render();
+}
+
+function changeInjuryReviewDueStatus(playerKeyValue) {
+  const player = findPlayer(playerKeyValue);
+  if (!player) return;
+  const editorKey = `due-${playerKeyValue}`;
+  const status = document.querySelector(`[data-injury-due-status-key="${cssEscape(editorKey)}"]`)?.value || player.injury || "Healthy";
+  const week = document.querySelector(`[data-injury-due-week-key="${cssEscape(editorKey)}"]`)?.value || "";
+  const patch = injuryPatchForStatus(status, week);
+  state.injuryDueEditorKey = "";
+  persistPlayer(player, patch);
+  render();
+}
+
+function injuryDueCategory(player) {
+  const status = injuryStatusText(player).toLowerCase();
+  if (/ir\s+thru/i.test(status)) return "Injured Reserve";
+  if (/likely.*out\s+thru/i.test(status)) return "Likely Out";
+  if (/out\s+thru/i.test(status)) return "Out Thru";
+  if (/probable\s+for\s+week/i.test(status)) return "Probable";
+  if (/questionable\s+for\s+week/i.test(status)) return "Questionable";
+  if (/suspended/i.test(status)) return "Suspended";
+  return "Other";
+}
+
+function injuryDueRows() {
+  return reconciledInjuryReviewDuePlayers()
+    .map((player) => ({ player, category: injuryDueCategory(player), latest: latestInjuryScanItemForPlayer(player) }))
+    .filter((row) => state.injuryDueActivity === "All Categories" || row.category === state.injuryDueActivity);
+}
+
+function injuryDueCategoryOptions(players = reconciledInjuryReviewDuePlayers()) {
+  const counts = players.reduce((map, player) => {
+    const category = injuryDueCategory(player);
+    map[category] = (map[category] || 0) + 1;
+    return map;
+  }, {});
+  const order = ["All Categories", "Injured Reserve", "Likely Out", "Out Thru", "Questionable", "Probable", "Suspended", "Other"];
+  return order
+    .filter((category) => category === "All Categories" || counts[category])
+    .map((category) => [category, category === "All Categories" ? `All Categories (${players.length})` : `${category} (${counts[category]})`]);
+}
+
+function injuryDueSummary(players = reconciledInjuryReviewDuePlayers()) {
+  if (!players.length) return "";
+  const counts = players.reduce((map, player) => {
+    const category = injuryDueCategory(player);
+    map[category] = (map[category] || 0) + 1;
+    return map;
+  }, {});
+  const order = ["Injured Reserve", "Likely Out", "Out Thru", "Questionable", "Probable", "Suspended", "Other"];
+  return `
+    <div class="depth-scan-summary injury-due-summary">
+      <div><strong>${players.length}</strong><span>Need Review</span></div>
+      ${order.filter((label) => counts[label]).map((label) => `<button type="button" class="depth-summary-chip ${state.injuryDueActivity === label ? "active" : ""}" data-injury-due-activity="${esc(label)}"><strong>${counts[label]}</strong><span>${esc(label)}</span></button>`).join("")}
+    </div>
+  `;
+}
+
+function latestInjuryScanItemForPlayer(player) {
+  const rows = latestInjuryScanRows();
+  const clean = cleanPlayerName(player?.player || "");
+  return rows.find((item) => injuryScanItemMatchesPlayer(item, player))
+    || rows.find((item) => clean && cleanPlayerName(item.player || "") === clean)
+    || null;
+}
+
+function latestInjuryScanRows() {
+  const seen = new Set();
+  return [
+    ...(window.ESPN_INJURY_CHECK?.results || []),
+    ...(state.injuryCheck?.results || []),
+  ].filter((item) => {
+    const key = injuryCheckResolvedKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function reconciledInjuryReviewDuePlayers() {
   const duePlayers = injuryReviewDuePlayers();
+  const scanRows = latestInjuryScanRows();
+  if (!scanRows.length) return duePlayers;
+  const active = duePlayers.filter((player) => latestInjuryScanItemForPlayer(player));
+  const cleared = duePlayers.filter((player) => !latestInjuryScanItemForPlayer(player));
+  if (cleared.length) {
+    cleared.forEach((player) => persistPlayer(player, { injury: "Healthy", week: "" }, { deferRefresh: true }));
+    storage.set("nflz-player-overrides", overrides);
+    state.players = applyOverrides(state.data.players);
+    pffPlayerMatchIndexCache = null;
+  }
+  return active;
+}
+
+function applyShownInjuryDueResults() {
+  const rows = injuryDueRows();
+  rows.forEach(({ player }) => {
+    persistPlayer(player, { injury: "Healthy", week: "" }, { deferRefresh: true });
+  });
+  storage.set("nflz-player-overrides", overrides);
+  state.players = applyOverrides(state.data.players);
+  pffPlayerMatchIndexCache = null;
+  render();
+}
+
+function injuryReportCategory(player) {
+  const status = injuryStatusText(player);
+  if (/suspended/i.test(status)) return "Suspended";
+  if (/out\s+for\s+season/i.test(status)) return "Out for Season";
+  if (/ir\s+thru/i.test(status)) return "Injured Reserve";
+  if (/likely.*out\s+thru/i.test(status)) return "Likely Out";
+  if (/out\s+thru/i.test(status)) return "Out Thru";
+  if (/questionable\s+for\s+week/i.test(status)) return "Questionable";
+  if (/probable\s+for\s+week/i.test(status)) return "Probable";
+  return "Other";
+}
+
+function allInjuryReportRows() {
+  return (state.players || [])
+    .filter((player) => normalizeTeamName(player.team) !== "Free Agent")
+    .filter((player) => {
+      const status = injuryStatusText(player);
+      return status && !/^healthy$/i.test(status);
+    })
+    .map((player) => ({ player, category: injuryReportCategory(player), latest: latestInjuryScanItemForPlayer(player), unavailable: playerUnavailableLabel(player, selectedSiteWeek()) }))
+    .filter((row) => state.injuryReportActivity === "All Statuses" || row.category === state.injuryReportActivity)
+    .sort((a, b) => injuryWeekSortValue(a.player.week) - injuryWeekSortValue(b.player.week)
+      || String(a.category).localeCompare(b.category)
+      || String(a.player.team).localeCompare(b.player.team)
+      || String(a.player.position).localeCompare(b.player.position)
+      || String(a.player.player).localeCompare(b.player.player));
+}
+
+function injuryReportCategoryOptions() {
+  const allRows = (state.players || [])
+    .filter((player) => normalizeTeamName(player.team) !== "Free Agent")
+    .filter((player) => {
+      const status = injuryStatusText(player);
+      return status && !/^healthy$/i.test(status);
+    })
+    .map((player) => ({ category: injuryReportCategory(player) }));
+  const counts = allRows.reduce((map, row) => {
+    map[row.category] = (map[row.category] || 0) + 1;
+    return map;
+  }, {});
+  const order = ["All Statuses", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Questionable", "Probable", "Suspended", "Other"];
+  return order
+    .filter((category) => category === "All Statuses" || counts[category])
+    .map((category) => [category, category === "All Statuses" ? `All Statuses (${allRows.length})` : `${category} (${counts[category]})`]);
+}
+
+function clearShownInjuryReportPlayers() {
+  allInjuryReportRows().forEach(({ player }) => {
+    if (/suspended/i.test(injuryStatusText(player))) return;
+    persistPlayer(player, { injury: "Healthy", week: "" }, { deferRefresh: true });
+  });
+  storage.set("nflz-player-overrides", overrides);
+  state.players = applyOverrides(state.data.players);
+  pffPlayerMatchIndexCache = null;
+  invalidateProjectionCaches();
+  render();
+}
+
+function renderAllInjuredPlayersPanel() {
+  const options = injuryReportCategoryOptions();
+  if (!options.some((option) => option[0] === state.injuryReportActivity)) state.injuryReportActivity = "All Statuses";
+  const rows = allInjuryReportRows();
+  const shownCanClear = rows.filter(({ player }) => !/suspended/i.test(injuryStatusText(player))).length;
+  const body = rows.map(({ player, category, latest, unavailable }) => {
+    const key = sourceKey(player);
+    const editing = state.injuryDueEditorKey === key;
+    const actionControls = editing
+      ? `<span class="injury-due-status-editor">${indexedInjuryStatusSelect(`due-${key}`, player.injury).replace("data-injury-status-index", "data-injury-due-status-key")}${indexedInjuryWeekSelect(`due-${key}`, player.week, player.injury).replace("data-injury-week-index", "data-injury-due-week-key")}<button class="mini-action primary injury-review-apply-status" data-player-key="${esc(key)}">Apply</button><button class="mini-action injury-review-cancel-status">Cancel</button></span>`
+      : `<span class="depth-review-actions"><button class="mini-action injury-report-clear" data-player-key="${esc(key)}" ${/suspended/i.test(injuryStatusText(player)) ? "disabled" : ""}>Mark Healthy</button><button class="mini-action injury-review-change" data-player-key="${esc(key)}">Change Status</button></span>`;
+    const commentText = latest?.espnComment || "";
+    const commentDate = latest?.espnCommentDate || "";
+    const cleanedComment = commentDate
+      ? String(commentText).replace(new RegExp(`^\\s*${commentDate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:?\\s*`, "i"), "")
+      : commentText;
+    return `
+      <tr class="${unavailable ? "current-out" : ""}">
+        <td>${playerNameButton(player)}</td>
+        <td>${teamCellByName(player.team)}</td>
+        <td><span class="review-chip">${esc(player.position || "-")}</span></td>
+        <td><span class="review-chip">${esc(category)}</span></td>
+        <td><span class="review-chip">${esc(player.injury || "Healthy")}</span></td>
+        <td>${esc(player.week ? weekDisplay(player.week) : "-")}</td>
+        <td>${unavailable ? `<span class="review-chip injury-action-chip">Out ${esc(weekOptionLabel(selectedSiteWeek()))}</span>` : "<span class='applied-chip'>Available</span>"}</td>
+        <td title="${esc([latest?.espnTag, latest?.espnReturnDate ? `Return: ${latest.espnReturnDate}` : ""].filter(Boolean).join(" / "))}"><span class="review-chip injury-tag-chip">${esc(latest?.espnTag || "-")}</span>${latest?.espnReturnDate ? `<small>${esc(latest.espnReturnDate)}</small>` : ""}</td>
+        <td class="injury-comment-cell" title="${esc(commentText || "No ESPN comment in the latest loaded scan.")}">${commentDate ? `<b>${esc(commentDate)}</b>` : ""}<span>${esc(cleanedComment || "No ESPN comment")}</span></td>
+        <td>${actionControls}</td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <div class="injury-due-box injury-report-master-box">
+      <div>
+        <strong><span class="workflow-step">1</span> Saved Injury Board</strong>
+        <span>${rows.length} players currently tagged in your app. This is the master list you have already applied.</span>
+      </div>
+      <div class="depth-check-controls">
+        ${optionSelect("injury-report-activity", state.injuryReportActivity, options)}
+        ${shownCanClear ? `<button id="injury-report-clear-shown" class="mini-action primary">Mark Shown Healthy (${shownCanClear})</button>` : `<span class="depth-check-note">No clearable players in this view.</span>`}
+      </div>
+      <div class="table-scroll review-scroll injury-review-scroll">
+        <table class="review-table injury-review-table injury-report-master-table">
+          <thead><tr><th>Player</th><th>Team</th><th>Pos</th><th>Type</th><th>Status</th><th>Thru</th><th>Current Week</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Action</th></tr></thead>
+          <tbody>${body || '<tr><td colspan="10">No injured players match this view.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function currentWeekOutDesignationOrder(designation) {
+  const order = ["Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Suspended", "Questionable", "Probable", "Other"];
+  const index = order.indexOf(designation);
+  return index === -1 ? 99 : index;
+}
+
+function currentWeekOutSortValue(row, key) {
+  const player = row.player || {};
+  if (key === "player") return cleanPlayerName(player.player || "");
+  if (key === "team") return normalizeTeamName(player.team || "");
+  if (key === "position") return (depthPositionRank(player.position) * 100) + (String(player.position || "").charCodeAt(0) || 0);
+  if (key === "designation") return currentWeekOutDesignationOrder(row.designation);
+  if (key === "status") return injuryStatusText(player).toLowerCase();
+  if (key === "week") return injuryWeekSortValue(player.week);
+  return "";
+}
+
+function sortCurrentWeekOutRows(rows) {
+  const sort = state.currentWeekOutSort || { key: "designation", direction: "asc" };
+  const direction = sort.direction === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const av = currentWeekOutSortValue(a, sort.key);
+    const bv = currentWeekOutSortValue(b, sort.key);
+    let diff = 0;
+    if (typeof av === "number" || typeof bv === "number") diff = num(av, 999) - num(bv, 999);
+    else diff = String(av).localeCompare(String(bv));
+    return (diff * direction)
+      || currentWeekOutDesignationOrder(a.designation) - currentWeekOutDesignationOrder(b.designation)
+      || String(a.player.team).localeCompare(b.player.team)
+      || depthPositionRank(a.player.position) - depthPositionRank(b.player.position)
+      || String(a.player.player).localeCompare(b.player.player);
+  });
+}
+
+function currentWeekOutCategoryOptions(rows) {
+  const counts = rows.reduce((map, row) => {
+    map[row.designation] = (map[row.designation] || 0) + 1;
+    return map;
+  }, {});
+  const order = ["All Designations", "Injured Reserve", "Likely Out", "Out Thru", "Out for Season", "Suspended", "Questionable", "Probable", "Other"];
+  return order
+    .filter((category) => category === "All Designations" || counts[category])
+    .map((category) => [category, category === "All Designations" ? `All Designations (${rows.length})` : `${category} (${counts[category]})`]);
+}
+
+function currentWeekOutSortHeader(label, key) {
+  const sort = state.currentWeekOutSort || {};
+  const active = sort.key === key;
+  const mark = active ? `<span class="sort-mark">${sort.direction === "asc" ? "^" : "v"}</span>` : "";
+  return `<button class="injury-sort-header" data-current-week-out-sort="${esc(key)}"><span>${esc(label)}</span>${mark}</button>`;
+}
+
+function currentWeekOutPlayers() {
+  const week = selectedSiteWeek();
+  const rows = (state.players || [])
+    .filter((player) => normalizeTeamName(player.team) !== "Free Agent")
+    .map((player) => ({ player, label: playerUnavailableLabel(player, week), designation: injuryReportCategory(player) }))
+    .filter((row) => row.label);
+  const filtered = rows.filter((row) => state.currentWeekOutActivity === "All Designations" || row.designation === state.currentWeekOutActivity);
+  return sortCurrentWeekOutRows(filtered);
+}
+
+function clearCurrentWeekOutPlayer(playerKeyValue) {
+  const player = findPlayer(playerKeyValue);
+  if (!player) return;
+  persistPlayer(player, { injury: "Healthy", week: "" });
+  render();
+}
+
+function renderCurrentWeekOutPanel() {
+  const week = selectedSiteWeek();
+  const allRows = (state.players || [])
+    .filter((player) => normalizeTeamName(player.team) !== "Free Agent")
+    .map((player) => ({ player, label: playerUnavailableLabel(player, week), designation: injuryReportCategory(player) }))
+    .filter((row) => row.label);
+  const options = currentWeekOutCategoryOptions(allRows);
+  if (!options.some((option) => option[0] === state.currentWeekOutActivity)) state.currentWeekOutActivity = "All Designations";
+  const rows = currentWeekOutPlayers();
+  const body = rows.map(({ player, label }) => {
+    const key = sourceKey(player);
+    const editing = state.injuryDueEditorKey === key;
+    const actionControls = editing
+      ? `<span class="injury-due-status-editor">${indexedInjuryStatusSelect(`due-${key}`, player.injury).replace("data-injury-status-index", "data-injury-due-status-key")}${indexedInjuryWeekSelect(`due-${key}`, player.week, player.injury).replace("data-injury-week-index", "data-injury-due-week-key")}<button class="mini-action primary injury-review-apply-status" data-player-key="${esc(key)}">Apply</button><button class="mini-action injury-review-cancel-status">Cancel</button></span>`
+      : `<span class="depth-review-actions"><button class="mini-action injury-review-clear primary" data-player-key="${esc(key)}">Mark Healthy</button><button class="mini-action injury-review-change" data-player-key="${esc(key)}">Change Status</button></span>`;
+    const latest = latestInjuryScanItemForPlayer(player);
+    const commentText = latest?.espnComment || "";
+    const commentDate = latest?.espnCommentDate || "";
+    const cleanedComment = commentDate
+      ? String(commentText).replace(new RegExp(`^\\s*${commentDate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:?\\s*`, "i"), "")
+      : commentText;
+    return `
+      <tr>
+        <td>${playerNameButton(player)}</td>
+        <td>${teamCellByName(player.team)}</td>
+        <td><span class="review-chip">${esc(player.position || "-")}</span></td>
+        <td><span class="review-chip">${esc(injuryReportCategory(player))}</span></td>
+        <td><span class="review-chip injury-action-chip">${esc(label)}</span></td>
+        <td><span class="review-chip">${esc(player.injury || "Healthy")}</span></td>
+        <td>${esc(player.week ? weekDisplay(player.week) : "-")}</td>
+        <td>${actionControls}</td>
+        <td class="injury-comment-cell" title="${esc(commentText || "No ESPN comment in the latest loaded scan.")}">${commentDate ? `<b>${esc(commentDate)}</b>` : ""}<span>${esc(cleanedComment || "No ESPN comment")}</span></td>
+      </tr>
+    `;
+  }).join("");
+  return `
+    <div class="injury-due-box current-week-out-box">
+      <div>
+        <strong><span class="workflow-step">2</span> Out This Week</strong>
+        <span>${rows.length} players treated as unavailable for ${esc(weekOptionLabel(week))}. Mark healthy or change the saved status before they return to the model.</span>
+      </div>
+      <div class="depth-check-controls">${optionSelect("current-week-out-activity", state.currentWeekOutActivity, options)}</div>
+      <div class="table-scroll review-scroll injury-review-scroll">
+        <table class="review-table injury-review-table current-week-out-table">
+          <thead><tr><th>${currentWeekOutSortHeader("Player", "player")}</th><th>${currentWeekOutSortHeader("Team", "team")}</th><th>${currentWeekOutSortHeader("Pos", "position")}</th><th>${currentWeekOutSortHeader("Designation", "designation")}</th><th>Flag</th><th>${currentWeekOutSortHeader("Status", "status")}</th><th>${currentWeekOutSortHeader("Thru", "week")}</th><th>Action</th><th>ESPN Comment</th></tr></thead>
+          <tbody>${body || '<tr><td colspan="9">No players are currently marked out for this week.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderInjuryReviewDuePanel() {
+  const duePlayers = reconciledInjuryReviewDuePlayers();
   if (!duePlayers.length) return "";
-  const rows = duePlayers.map((player) => `
+  const categoryOptions = injuryDueCategoryOptions(duePlayers);
+  if (!categoryOptions.some((option) => option[0] === state.injuryDueActivity)) state.injuryDueActivity = "All Categories";
+  const filteredRows = injuryDueRows();
+  const rows = filteredRows.map(({ player, category, latest }) => {
+    const key = sourceKey(player);
+    const editing = state.injuryDueEditorKey === key;
+    const actionControls = editing
+      ? `<span class="injury-due-status-editor">${indexedInjuryStatusSelect(`due-${key}`, player.injury).replace("data-injury-status-index", "data-injury-due-status-key")}${indexedInjuryWeekSelect(`due-${key}`, player.week, player.injury).replace("data-injury-week-index", "data-injury-due-week-key")}<button class="mini-action primary injury-review-apply-status" data-player-key="${esc(key)}">Apply</button><button class="mini-action injury-review-cancel-status">Cancel</button></span>`
+      : `<span class="depth-review-actions"><button class="mini-action injury-review-clear primary" data-player-key="${esc(key)}">Mark Healthy</button><button class="mini-action injury-review-keep" data-player-key="${esc(key)}">Keep Injured</button><button class="mini-action injury-review-change" data-player-key="${esc(key)}">Change Status</button></span>`;
+    const commentText = latest?.espnComment || "No ESPN comment in the latest loaded scan.";
+    const commentDate = latest?.espnCommentDate || "";
+    const cleanedComment = commentDate
+      ? String(commentText).replace(new RegExp(`^\\s*${commentDate.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:?\\s*`, "i"), "")
+      : commentText;
+    return `
     <tr>
       <td>${playerNameButton(player)}</td>
       <td>${teamCellByName(player.team)}</td>
+      <td><span class="review-chip">${esc(category)}</span></td>
       <td><span class="review-chip">${esc(player.injury)}</span></td>
       <td>${esc(player.week ? weekDisplay(player.week) : "-")}</td>
-      <td><span class="depth-review-actions"><button class="mini-action injury-review-clear primary" data-player-key="${esc(sourceKey(player))}">Mark Healthy</button><button class="mini-action injury-review-keep" data-player-key="${esc(sourceKey(player))}">Keep Injured</button></span></td>
+      <td title="${esc([latest?.espnTag, latest?.espnReturnDate ? `Return: ${latest.espnReturnDate}` : ""].filter(Boolean).join(" / "))}"><span class="review-chip injury-tag-chip">${esc(latest?.espnTag || "-")}</span>${latest?.espnReturnDate ? `<small>${esc(latest.espnReturnDate)}</small>` : ""}</td>
+      <td>${actionControls}</td>
+      <td class="injury-comment-cell" title="${esc(commentText)}">${commentDate ? `<b>${esc(commentDate)}</b>` : ""}<span>${esc(cleanedComment)}</span></td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
   return `
     <div class="injury-due-box">
       <div>
-        <strong>${duePlayers.length} injury statuses need review</strong>
-        <span>Current site week is ${esc(siteWeekLabel())}. These players were marked through an earlier week.</span>
+        <strong><span class="workflow-step">3</span> Return Review</strong>
+        <span>${duePlayers.length} players were marked through an earlier week. Clear, keep, or change their status here.</span>
       </div>
-      <div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Status</th><th>Thru</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${injuryDueSummary(duePlayers)}
+      <div class="depth-check-controls">${optionSelect("injury-due-activity", state.injuryDueActivity, categoryOptions)}${filteredRows.length ? `<button id="injury-due-apply-shown" class="mini-action primary">Mark ${state.injuryDueActivity === "All Categories" ? "Shown" : esc(state.injuryDueActivity)} Healthy (${filteredRows.length})</button>` : `<span class="depth-check-note">No pending statuses in this category.</span>`}</div>
+      <div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table injury-due-table"><thead><tr><th>Player</th><th>Team</th><th>Category</th><th>Status</th><th>Thru</th><th>ESPN Tag</th><th>Action</th><th>ESPN Comment</th></tr></thead><tbody>${rows || '<tr><td colspan="8">No injury statuses need review in this category.</td></tr>'}</tbody></table></div>
     </div>
   `;
 }
@@ -2979,7 +3934,11 @@ function indexedInjuryWeekSelect(index, value, status = "") {
   return `<select class="injury-review-week" data-injury-week-index="${index}">${injuryWeeks.map((item) => `<option ${String(selected || "") === item ? "selected" : ""}>${item}</option>`).join("")}</select>`;
 }
 
-function renderInjuryCheckPanel() {
+function renderInjuryCheckPanel(forceOpen = false) {
+  if (!forceOpen && !state.injuryCheckOpen) {
+    const pending = state.injuryCheck?.results?.filter((item) => !item.applied && !item.ignored).length || 0;
+    return `<section class="depth-check injury-check collapsed"><button id="injury-check-toggle" class="mini-action">${pending ? `Show Injury Check (${pending})` : "Show Injury Check"}</button></section>`;
+  }
   const check = state.injuryCheck;
   const categoryOptions = injuryCheckCategoryOptions();
   if (!categoryOptions.some((option) => option[0] === state.injuryCheckActivity)) state.injuryCheckActivity = "All Categories";
@@ -3009,16 +3968,134 @@ function renderInjuryCheckPanel() {
     <section class="depth-check injury-check">
       <div class="depth-check-head">
         <div>
-          <h3>Injury Check</h3>
-          <p>Reviews ESPN injury tags and comments, then suggests your injury status and return week. Adjust the dropdowns before applying if needed.</p>
+          <h3><span class="workflow-step">4</span> ESPN Scan Suggestions</h3>
+          <p>New ESPN rows that still need a decision. Pick a category, apply the whole category, or revise one player at a time.</p>
         </div>
+        ${forceOpen ? "" : `<button id="injury-check-toggle" class="mini-action">Hide Injury Check</button>`}
       </div>
-      ${renderInjuryReviewDuePanel()}
+      ${forceOpen ? "" : renderInjuryReviewDuePanel()}
+      ${forceOpen ? "" : renderCurrentWeekOutPanel()}
+      ${check.status === "idle" ? `<p class="depth-check-note">Press Refresh ESPN Scan to load the latest review rows this page can reach. If the local server is static, it will use the ESPN cache that loaded with the app.</p>` : ""}
       ${check.status === "checking" ? `<div class="depth-scan-progress"><div class="depth-scan-bar"><span></span></div><p>${esc(check.error || "Loading ESPN injury check")}</p></div>` : ""}
       ${check.status === "empty" ? `<p class="depth-check-note">${esc(check.error)}</p>` : ""}
-      ${check.status === "review" ? `<p class="depth-check-note">Showing ESPN injury scan from ${esc(check.fetchedAt || "latest refresh")}. Idle alerts and already placed statuses are hidden from All Categories so you can focus on real changes.</p><div class="depth-check-controls">${optionSelect("injury-check-activity", state.injuryCheckActivity, categoryOptions)}${pendingShown ? `<button id="injury-check-apply-shown" class="mini-action primary">${state.injuryCheckActivity === "Idle Injury Status Alerts" ? "Mark Idle Reviewed" : `Apply ${state.injuryCheckActivity === "All Categories" ? "Shown Injuries" : esc(state.injuryCheckActivity)}`} (${pendingShown})</button>` : `<span class="depth-check-note">No pending injuries in this category.</span>`}</div><div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Category</th><th>Suggested Action</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Suggested / Revise</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="8">No ESPN injury matches found.</td></tr>'}</tbody></table></div>` : ""}
+      ${check.status === "review" ? `<p class="depth-check-note">Loaded ESPN scan from ${esc(check.fetchedAt || "latest refresh")}. Already placed and idle alerts stay hidden under All Categories so the main review is only real action items.</p>${check.error ? `<p class="depth-check-note">${esc(check.error)}</p>` : ""}${injuryCheckSummaryPanel()}<div class="depth-check-controls">${optionSelect("injury-check-activity", state.injuryCheckActivity, categoryOptions)}${pendingShown ? `<button id="injury-check-apply-shown" class="mini-action primary">${state.injuryCheckActivity === "Idle Injury Status Alerts" ? "Mark Idle Reviewed" : `Apply ${state.injuryCheckActivity === "All Categories" ? "Shown Injuries" : esc(state.injuryCheckActivity)}`} (${pendingShown})</button>` : `<span class="depth-check-note">No pending injuries in this category.</span>`}</div><div class="table-scroll review-scroll injury-review-scroll"><table class="review-table injury-review-table"><thead><tr><th>Player</th><th>Team</th><th>Category</th><th>Suggested Action</th><th>ESPN Tag</th><th>ESPN Comment</th><th>Suggested / Revise</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="8">No ESPN injury matches found.</td></tr>'}</tbody></table></div>` : ""}
     </section>
   `;
+}
+
+function renderInjuryReportGuide() {
+  const latest = window.ESPN_INJURY_CHECK?.fetchedAt || state.injuryCheck?.fetchedAt || "";
+  const statusText = state.injuryCheck?.status === "checking"
+    ? "Refreshing now"
+    : state.injuryCheck?.status === "review"
+      ? (state.injuryCheck?.error?.startsWith("Using the ESPN injury cache") ? "Cached ESPN scan loaded. Live refresh was unavailable on this server." : "ESPN scan loaded and ready to review.")
+      : latest
+        ? "Cached ESPN injury data is loaded. Press Refresh ESPN Scan to try a live update."
+        : "No ESPN injury data is loaded yet.";
+  return `
+    <div class="injury-report-guide">
+      <div class="injury-guide-card scan-status">
+        <strong>Scan Status</strong>
+        <span>${esc(statusText)}</span>
+      </div>
+      <div class="injury-guide-card">
+        <strong>What To Do</strong>
+        <span>Start at ESPN Scan Suggestions, apply by category, then use Saved Injury Board for cleanups.</span>
+      </div>
+      <div class="injury-guide-card">
+        <strong>Week Logic</strong>
+        <span>Out This Week shows only players unavailable for ${esc(siteWeekLabel())}; future returns stay active after their return week.</span>
+      </div>
+      <div class="injury-guide-card">
+        <strong>Live vs Cache</strong>
+        <span>The normal localhost link can review cached ESPN data. A live pull needs the scan route or refresh script running.</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderInjuryReport() {
+  const latest = window.ESPN_INJURY_CHECK?.fetchedAt || state.injuryCheck?.fetchedAt || "";
+  setTimeout(() => {
+    wirePlayerActions();
+    wireInjuryReportControls();
+  });
+  return `
+    <section class="panel injury-report-page">
+      <div class="toolbar depth-toolbar">
+        <div>
+          <h2>Injury Report</h2>
+          <p class="depth-meta">Current site week: ${esc(siteWeekLabel())}. ${latest ? `Latest ESPN cache: ${esc(latest)}.` : "Run the ESPN scan to load the latest report."}</p>
+        </div>
+        <div class="filters depth-top-actions">
+          <button id="injury-check-run" class="mini-action primary">Refresh ESPN Scan</button>
+          <button id="depth-check-run-both" class="mini-action">Run Depth + Injury Checks</button>
+          <button class="mini-action" data-page="depth">Open Depth Charts</button>
+        </div>
+      </div>
+      ${renderInjuryReportGuide()}
+      ${renderInjuryCheckPanel(true)}
+      ${renderAllInjuredPlayersPanel()}
+      ${renderCurrentWeekOutPanel()}
+      ${renderInjuryReviewDuePanel()}
+    </section>
+    ${renderPlayerModal()}
+  `;
+}
+
+function wireInjuryReportControls() {
+  document.querySelector("#injury-check-run")?.addEventListener("click", runInjuryCheck);
+  document.querySelector("#depth-check-run-both")?.addEventListener("click", runDepthAndInjuryChecks);
+  document.querySelector("#injury-check-toggle")?.addEventListener("click", () => {
+    state.injuryCheckOpen = !state.injuryCheckOpen;
+    storage.set("nflz-injury-check-open", state.injuryCheckOpen);
+    render();
+  });
+  document.querySelector("#injury-report-activity")?.addEventListener("change", (event) => {
+    state.injuryReportActivity = event.target.value;
+    render();
+  });
+  document.querySelector("#current-week-out-activity")?.addEventListener("change", (event) => {
+    state.currentWeekOutActivity = event.target.value;
+    render();
+  });
+  document.querySelectorAll("[data-current-week-out-sort]").forEach((button) => button.addEventListener("click", () => {
+    const key = button.dataset.currentWeekOutSort || "designation";
+    const current = state.currentWeekOutSort || { key: "designation", direction: "asc" };
+    state.currentWeekOutSort = {
+      key,
+      direction: current.key === key && current.direction === "asc" ? "desc" : "asc",
+    };
+    render();
+  }));
+  document.querySelector("#injury-report-clear-shown")?.addEventListener("click", clearShownInjuryReportPlayers);
+  document.querySelectorAll(".injury-report-clear").forEach((button) => button.addEventListener("click", () => clearCurrentWeekOutPlayer(button.dataset.playerKey)));
+  document.querySelector("#injury-check-activity")?.addEventListener("change", (event) => {
+    state.injuryCheckActivity = event.target.value;
+    render();
+  });
+  document.querySelectorAll("[data-injury-summary-activity]").forEach((button) => button.addEventListener("click", () => {
+    state.injuryCheckActivity = button.dataset.injurySummaryActivity || "All Categories";
+    render();
+  }));
+  document.querySelector("#injury-check-apply-shown")?.addEventListener("click", applyShownInjuryCheckResults);
+  document.querySelector("#injury-due-activity")?.addEventListener("change", (event) => {
+    state.injuryDueActivity = event.target.value;
+    render();
+  });
+  document.querySelectorAll("[data-injury-due-activity]").forEach((button) => button.addEventListener("click", () => {
+    state.injuryDueActivity = button.dataset.injuryDueActivity || "All Categories";
+    render();
+  }));
+  document.querySelector("#injury-due-apply-shown")?.addEventListener("click", applyShownInjuryDueResults);
+  document.querySelectorAll(".injury-review-clear").forEach((button) => button.addEventListener("click", () => clearInjuryReviewDue(button.dataset.playerKey)));
+  document.querySelectorAll(".injury-review-keep").forEach((button) => button.addEventListener("click", () => keepInjuryReviewDue(button.dataset.playerKey)));
+  document.querySelectorAll(".injury-review-change").forEach((button) => button.addEventListener("click", () => openInjuryDueStatusEditor(button.dataset.playerKey)));
+  document.querySelectorAll(".injury-review-apply-status").forEach((button) => button.addEventListener("click", () => changeInjuryReviewDueStatus(button.dataset.playerKey)));
+  document.querySelectorAll(".injury-review-cancel-status").forEach((button) => button.addEventListener("click", closeInjuryDueStatusEditor));
+  document.querySelectorAll(".injury-apply-one").forEach((button) => button.addEventListener("click", () => applyInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
+  document.querySelectorAll(".injury-idle-resolve").forEach((button) => button.addEventListener("click", () => resolveIdleInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
+  document.querySelectorAll(".injury-ignore-one").forEach((button) => button.addEventListener("click", () => ignoreInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
 }
 
 function renderDepthCheckPanel() {
@@ -3029,7 +4106,12 @@ function renderDepthCheckPanel() {
   const bulkCount = state.depthCheckActivity === "All Activities"
     ? safeDepthCheckRows(selectedActivityRows).length
     : selectedActivityRows.filter(({ item, activity }) =>
-      activity === "Team Changed"
+      activity === "Injured Reserve"
+      || item.kind === "reserve-ir"
+      || activity === "Practice Squad"
+      || item.kind === "practice-squad"
+      || item.kind === "position-change"
+      || activity === "Team Changed"
       || activity === "Missing Player"
       || (activity === "Name Match Suggested" && item.kind === "free-agent" && freeAgentNameMatchCandidates(item).length === 1)
       || (activity === "Free Agent" && item.kind === "free-agent" && !freeAgentNameMatchCandidates(item).length)
@@ -3037,6 +4119,19 @@ function renderDepthCheckPanel() {
   const pendingMissing = (check.results || []).filter((item) => item.kind === "missing-player" && !item.applied && !item.ignored);
   const pendingMissingRoster = pendingMissing.filter((item) => item.toTeam !== "Free Agent").length;
   const pendingMissingFa = pendingMissing.length - pendingMissingRoster;
+  const pendingRows = (check.results || []).filter((item) => !item.applied && !item.ignored);
+  const summaryCounts = pendingRows.reduce((map, item) => {
+    const label = depthCheckActivityLabel(item);
+    map[label] = (map[label] || 0) + 1;
+    return map;
+  }, {});
+  const summaryOrder = ["Injured Reserve", "Practice Squad", "Team Changed", "Position Changed", "Free Agent", "Name Match Suggested", "Duplicate Name", "Missing Player"];
+  const depthSummary = pendingRows.length ? `
+    <div class="depth-scan-summary">
+      <div><strong>${pendingRows.length}</strong><span>Total Review</span></div>
+      ${summaryOrder.filter((label) => summaryCounts[label]).map((label) => `<button type="button" class="depth-summary-chip ${state.depthCheckActivity === label ? "active" : ""}" data-depth-summary-activity="${esc(label)}"><strong>${summaryCounts[label]}</strong><span>${esc(label)}</span></button>`).join("")}
+    </div>
+  ` : "";
   const missingPreviewRows = pendingMissing.map((item) => {
     const candidate = item.candidates?.[0] || {};
     const positionText = candidate.rawPosition && candidate.rawPosition !== candidate.position ? `${candidate.rawPosition}->${candidate.position}` : candidate.position;
@@ -3062,7 +4157,21 @@ function renderDepthCheckPanel() {
     if (item.ignored) return "<span class='ignored-chip'>Ignored</span>";
     const baseAttrs = `data-depth-check-index="${index}" data-depth-check-key="${esc(rowKey)}"`;
     const ignore = `<button class="mini-action depth-ignore-one" ${baseAttrs}>Ignore</button>`;
-    if (item.kind === "missing-player") return `<span class="depth-review-actions"><button class="mini-action depth-add-missing" ${baseAttrs}>Add</button>${ignore}</span>`;
+    if (item.kind === "reserve-ir") {
+      return `<span class="depth-review-actions depth-ir-actions"><span class="depth-ir-controls">${depthIrStatusSelect(index, item.suggestedStatus || "IR Thru Week ___")}${depthIrWeekSelect(index, item.suggestedWeek || "")}</span><button class="mini-action depth-apply-one primary" ${baseAttrs}>Apply IR</button>${ignore}</span>`;
+    }
+    if (item.kind === "practice-squad") {
+      return `<span class="depth-review-actions"><button class="mini-action depth-apply-one primary" ${baseAttrs}>Apply PS</button>${ignore}</span>`;
+    }
+    if (item.kind === "missing-player") {
+      if (depthCheckIsReserveIr(item)) {
+        return `<span class="depth-review-actions depth-ir-actions"><span class="depth-ir-controls">${depthIrStatusSelect(index, item.suggestedStatus || "IR Thru Week ___")}${depthIrWeekSelect(index, item.suggestedWeek || "")}</span><button class="mini-action depth-add-missing primary" ${baseAttrs}>Add IR</button>${ignore}</span>`;
+      }
+      if (depthCheckIsPracticeSquad(item)) {
+        return `<span class="depth-review-actions"><button class="mini-action depth-add-missing primary" ${baseAttrs}>Add PS</button>${ignore}</span>`;
+      }
+      return `<span class="depth-review-actions"><button class="mini-action depth-add-missing" ${baseAttrs}>Add</button>${ignore}</span>`;
+    }
     if (item.kind === "duplicate") {
       const choices = (item.candidates || []).map((candidate) => `
         <span class="depth-candidate-actions">
@@ -3084,7 +4193,7 @@ function renderDepthCheckPanel() {
     }
     return `<span class="depth-review-actions"><button class="mini-action depth-apply-one" ${baseAttrs}>Apply</button>${ignore}</span>`;
   };
-  const activityOrder = ["Team Changed", "Name Match Suggested", "Free Agent", "Duplicate Name", "Missing Player"];
+  const activityOrder = ["Injured Reserve", "Practice Squad", "Team Changed", "Position Changed", "Name Match Suggested", "Free Agent", "Duplicate Name", "Missing Player"];
   const rowItems = (check.results || [])
     .map((item, index) => ({ item, index, activity: depthCheckActivityLabel(item) }))
     .filter((row) => !row.item.applied && !row.item.ignored)
@@ -3113,6 +4222,7 @@ function renderDepthCheckPanel() {
       ${check.status === "review" && check.source === "codex" ? `<p class="depth-check-note">Showing Codex-generated OurLads scan from ${esc(check.fetchedAt || window.OURLADS_DEPTH_CHECK?.fetchedAt || "latest refresh")}.</p>` : ""}
       ${check.status === "review" && state.depthCheckNotice ? `<p class="depth-check-note depth-check-success">${esc(state.depthCheckNotice)}</p>` : ""}
       ${check.status === "paste" ? `<div class="paste-check"><p>${esc(check.error)}</p><textarea id="depth-check-paste" placeholder="Paste copied OurLads all-teams depth chart text or HTML here"></textarea><button id="depth-check-paste-run" class="mini-action primary">Review Pasted Chart</button></div>` : ""}
+      ${check.status === "review" ? depthSummary : ""}
       ${check.status === "review" ? `<div class="depth-check-controls">${optionSelect("depth-check-activity", state.depthCheckActivity, activityOptions)}${bulkCount ? `<button id="depth-check-apply-all" class="mini-action primary">Apply ${state.depthCheckActivity === "All Activities" ? "Safe Changes" : esc(state.depthCheckActivity)} (${bulkCount})</button>` : `<span class="depth-check-note">No automatic apply actions in this view.</span>`}</div>` : ""}
       ${check.status === "review" && (state.depthCheckActivity === "All Activities" || state.depthCheckActivity === "Missing Player") ? missingPreview : ""}
       ${check.status === "review" ? `<div class="table-scroll review-scroll"><table class="review-table depth-review-table"><thead><tr><th>Player</th><th>Current</th><th>OurLads</th><th>Activity</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="5">No team-placement changes found.</td></tr>'}</tbody></table></div>${hasMoreRows ? `<div class="depth-check-more"><span>Showing ${visibleRows.length} of ${rowItems.length}</span><button id="depth-check-show-more" class="mini-action">Show More</button></div>` : ""}` : ""}
@@ -3168,8 +4278,8 @@ function scheduleGameKey(game, index = 0) {
 }
 
 function scheduleActiveMode(game = null) {
-  if (state.scheduleSimMode !== "auto") return state.scheduleSimMode;
-  return game?.preseason || String(game?.week || selectedSiteWeek()).startsWith("Pre") ? "preseason" : "regular";
+  const week = String(game?.week || selectedSiteWeek());
+  return game?.preseason || week.startsWith("Pre") ? "preseason" : "regular";
 }
 
 function playerGroupForSchedule(player) {
@@ -3198,15 +4308,30 @@ function weightedAverage(values) {
   return totalWeight ? rows.reduce((sum, item) => sum + (Number(item.value) * Number(item.weight)), 0) / totalWeight : "";
 }
 
+function scheduleOlMultipliers(mode, source = null) {
+  const desired = mode === "preseason" ? 10 : 5;
+  const fallback = mode === "preseason" ? defaultPreseasonDepthMultipliers.OL : defaultRegularDepthMultipliers.OL;
+  const values = source?.OL || (mode === "preseason" ? state.preseasonDepthMultipliers.OL : state.regularDepthMultipliers.OL) || fallback;
+  return Array.isArray(values) && values.length === desired ? values : fallback;
+}
+
+function scheduleOlMultiplierRows(teamName, mode, week = selectedSiteWeek()) {
+  const multipliers = scheduleOlMultipliers(mode);
+  const linePositions = ["LT", "LG", "C", "RG", "RT"];
+  return linePositions.flatMap((position, positionIndex) => {
+    const depthCount = mode === "preseason" ? 2 : 1;
+    const players = schedulePlayersFor(teamName, position, week).slice(0, depthCount);
+    return players.map((player, depthIndex) => ({
+      value: player.rating,
+      weight: num(multipliers[(positionIndex * depthCount) + depthIndex], 100) / 100,
+    }));
+  });
+}
+
 function preseasonPositionScore(teamName, group, week = selectedSiteWeek()) {
   const multipliers = state.preseasonDepthMultipliers[group] || defaultPreseasonDepthMultipliers[group] || [100];
   if (group === "OL") {
-    const linePositions = ["LT", "LG", "C", "RG", "RT"];
-    const values = linePositions.flatMap((position) => {
-      const players = schedulePlayersFor(teamName, position, week).slice(0, multipliers.length);
-      return players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 }));
-    });
-    return weightedAverage(values);
+    return weightedAverage(scheduleOlMultiplierRows(teamName, "preseason", week));
   }
   const players = schedulePlayersFor(teamName, group, week).slice(0, multipliers.length);
   return weightedAverage(players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 })));
@@ -3215,12 +4340,7 @@ function preseasonPositionScore(teamName, group, week = selectedSiteWeek()) {
 function depthMultiplierPositionScore(teamName, group, multipliersByGroup, defaultByGroup, week = selectedSiteWeek()) {
   const multipliers = multipliersByGroup[group] || defaultByGroup[group] || [100];
   if (group === "OL") {
-    const linePositions = ["LT", "LG", "C", "RG", "RT"];
-    const values = linePositions.flatMap((position) => {
-      const players = schedulePlayersFor(teamName, position, week).slice(0, multipliers.length);
-      return players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 }));
-    });
-    return weightedAverage(values);
+    return weightedAverage(scheduleOlMultiplierRows(teamName, defaultByGroup === defaultPreseasonDepthMultipliers ? "preseason" : "regular", week));
   }
   const players = schedulePlayersFor(teamName, group, week).slice(0, multipliers.length);
   return weightedAverage(players.map((player, index) => ({ value: player.rating, weight: num(multipliers[index], 100) / 100 })));
@@ -3298,6 +4418,19 @@ function isNeutralSiteGame(game) {
   return neutralSiteGames.some(([week, visitor, home]) => String(game.week) === String(week) && normalizeTeamName(normalizeScheduleTeam(game.visitor)) === normalizeTeamName(normalizeScheduleTeam(visitor)) && normalizeTeamName(normalizeScheduleTeam(game.home)) === normalizeTeamName(normalizeScheduleTeam(home)));
 }
 
+function neutralSiteLabel(game) {
+  const info = neutralSiteKickerInfo(game);
+  if (!info) return "";
+  if (/Melbourne/i.test(info.venue)) return "MEL";
+  if (/Maracana|Rio/i.test(info.venue)) return "RIO";
+  if (/Tottenham|Wembley|London/i.test(info.venue)) return "LDN";
+  if (/France|Paris/i.test(info.venue)) return "PAR";
+  if (/Bernabeu|Madrid/i.test(info.venue)) return "MAD";
+  if (/Munich|Bayern/i.test(info.venue)) return "MUN";
+  if (/Banorte|Mexico/i.test(info.venue)) return "MEX";
+  return info.venue.split(/\s+/).map((word) => word[0]).join("").slice(0, 4).toUpperCase();
+}
+
 function neutralSiteKickerInfo(game) {
   return neutralSiteKickerRatings.find((item) => String(game?.week) === String(item.week)
     && normalizeTeamName(normalizeScheduleTeam(game?.visitor)) === normalizeTeamName(normalizeScheduleTeam(item.visitor))
@@ -3353,6 +4486,15 @@ function scheduleTeamProjectionScore(team, opponent, mode, homeAdvantage = 0, we
   return ((scheduleOffensePoints(team, mode, week) + scheduleDefensePointsAllowed(opponent, mode, week)) / 2) + num(homeAdvantage, 0);
 }
 
+function scheduleSpreadScale(game, mode) {
+  if (mode !== "regular") return 1;
+  const week = Number(String(game?.week || "").replace(/\D/g, ""));
+  if (!Number.isFinite(week) || week <= 1) return scheduleScoreTuning.weekOneSpreadScale;
+  if (week >= 8) return scheduleScoreTuning.lateSeasonSpreadScale;
+  if (week >= 4) return scheduleScoreTuning.midSeasonSpreadScale;
+  return 1.55;
+}
+
 function scheduleProjection(game) {
   const mode = scheduleActiveMode(game);
   const visitorTeam = teamByName(game.visitor);
@@ -3360,6 +4502,12 @@ function scheduleProjection(game) {
   if (visitorTeam && homeTeam) {
     let visitorRaw = scheduleTeamProjectionScore(visitorTeam, homeTeam, mode, 0, game.week);
     let homeRaw = scheduleTeamProjectionScore(homeTeam, visitorTeam, mode, scheduleHomeAdvantage(game, mode), game.week);
+    const spreadScale = scheduleSpreadScale(game, mode);
+    if (spreadScale !== 1) {
+      const midpoint = (visitorRaw + homeRaw) / 2;
+      visitorRaw = midpoint + ((visitorRaw - midpoint) * spreadScale);
+      homeRaw = midpoint + ((homeRaw - midpoint) * spreadScale);
+    }
     if (mode === "preseason") {
       const rawTotal = Math.max(1, visitorRaw + homeRaw);
       const targetTotal = Math.max(
@@ -3418,9 +4566,15 @@ function dkLogo() {
 
 function draftKingsOddsFor(game) {
   const games = window.DRAFTKINGS_ODDS?.games || [];
-  return games.find((odds) => odds.visitor === game.visitor && odds.home === game.home && (!game.date || odds.date === game.date))
-    || games.find((odds) => odds.visitor === game.visitor && odds.home === game.home && String(odds.week) === String(game.week))
-    || games.find((odds) => odds.visitor === game.visitor && odds.home === game.home)
+  const visitor = normalizeTeamName(normalizeScheduleTeam(game?.visitor || ""));
+  const home = normalizeTeamName(normalizeScheduleTeam(game?.home || ""));
+  const sameTeams = (odds) => (
+    normalizeTeamName(normalizeScheduleTeam(odds?.visitor || "")) === visitor
+    && normalizeTeamName(normalizeScheduleTeam(odds?.home || "")) === home
+  );
+  return games.find((odds) => sameTeams(odds) && (!game.date || odds.date === game.date))
+    || games.find((odds) => sameTeams(odds) && String(odds.week) === String(game.week))
+    || games.find((odds) => sameTeams(odds))
     || null;
 }
 
@@ -3433,6 +4587,31 @@ function draftKingsOddsKey(game) {
   ].join("|");
 }
 
+function scheduleGameForOdds(game) {
+  const visitor = normalizeTeamName(normalizeScheduleTeam(game?.visitor || ""));
+  const home = normalizeTeamName(normalizeScheduleTeam(game?.home || ""));
+  return scheduleGames().find((item) => (
+    normalizeTeamName(item.visitor) === visitor
+    && normalizeTeamName(item.home) === home
+    && (!game?.date || item.date === game.date)
+  )) || scheduleGames().find((item) => (
+    normalizeTeamName(item.visitor) === visitor
+    && normalizeTeamName(item.home) === home
+    && String(item.week || "") === String(game?.week || "")
+  )) || scheduleGames().find((item) => (
+    normalizeTeamName(item.visitor) === visitor
+    && normalizeTeamName(item.home) === home
+  )) || null;
+}
+
+function hasSubmittedGameResultForOdds(game) {
+  const scheduleGame = scheduleGameForOdds(game) || game;
+  const scheduleList = scheduleGames();
+  const key = scheduleGameKey(scheduleGame, scheduleGame.calendarIndex ?? scheduleList.indexOf(scheduleGame) ?? 0);
+  const action = gameAction(key);
+  return action.awayScore !== "" && action.homeScore !== "";
+}
+
 function isPastScheduleDate(dateText) {
   if (!dateText) return false;
   const gameDate = new Date(`${dateText}T23:59:59`);
@@ -3441,11 +4620,15 @@ function isPastScheduleDate(dateText) {
 
 function mergeDraftKingsOddsScan(freshScan, existingScan = window.DRAFTKINGS_ODDS) {
   const freshGames = freshScan?.games || [];
-  const existingGames = existingScan?.games || [];
+  const backupScan = storage.get(backupKeys.draftKingsOddsBackup, null);
+  const existingGames = existingScan?.games?.length ? existingScan.games : (backupScan?.games || []);
   const byKey = new Map(freshGames.map((game) => [draftKingsOddsKey(game), game]));
   existingGames.forEach((game) => {
-    if (isPastScheduleDate(game.date) && !byKey.has(draftKingsOddsKey(game))) {
-      byKey.set(draftKingsOddsKey(game), { ...game, preservedPastGame: true });
+    const key = draftKingsOddsKey(game);
+    if (hasSubmittedGameResultForOdds(game)) {
+      byKey.set(key, { ...game, preservedCompletedGame: true });
+    } else if (isPastScheduleDate(game.date) && !byKey.has(key)) {
+      byKey.set(key, { ...game, preservedPastGame: true });
     }
   });
   const games = [...byKey.values()].sort((a, b) => `${a.date || ""} ${a.visitor || ""}`.localeCompare(`${b.date || ""} ${b.visitor || ""}`));
@@ -3454,7 +4637,129 @@ function mergeDraftKingsOddsScan(freshScan, existingScan = window.DRAFTKINGS_ODD
     games,
     freshGames: freshGames.length,
     preservedPastGames: games.filter((game) => game.preservedPastGame).length,
+    preservedCompletedGames: games.filter((game) => game.preservedCompletedGame).length,
   };
+}
+
+const manualPreseasonWeek3Odds = [
+  { visitor: "Pittsburgh Steelers", home: "Buffalo Bills", favorite: "Buffalo Bills", spread: 3, total: 35.5 },
+  { visitor: "New England Patriots", home: "Cleveland Browns", favorite: "Cleveland Browns", spread: 2.5, total: 35.5 },
+  { visitor: "San Francisco 49ers", home: "Las Vegas Raiders", favorite: "Las Vegas Raiders", spread: 2.5, total: 37.5 },
+  { visitor: "Los Angeles Rams", home: "Los Angeles Chargers", favorite: "Los Angeles Chargers", spread: 4.5, total: 38.5 },
+];
+
+function preseasonWeek3ManualOddsRow(game, spec) {
+  const favorite = normalizeTeamName(spec.favorite);
+  const favoriteAbbrev = scheduleTeamAbbrev(favorite);
+  const visitor = normalizeTeamName(game.visitor || spec.visitor);
+  const home = normalizeTeamName(game.home || spec.home);
+  return {
+    eventId: game.eventId || "",
+    date: game.date || "2026-08-27",
+    week: game.week || "Pre3",
+    visitor,
+    visitorAbbrev: scheduleTeamAbbrev(visitor),
+    home,
+    homeAbbrev: scheduleTeamAbbrev(home),
+    provider: "DraftKings",
+    providerLogo: "https://a.espncdn.com/i/betting/Draftkings_Light.svg",
+    spreadDetails: `${favoriteAbbrev || favorite} -${fmt(spec.spread, 1)}`,
+    spreadLine: -Math.abs(num(spec.spread, 0)),
+    spreadFavoriteTeam: favorite,
+    totalLine: num(spec.total, 0),
+    overLine: `o${fmt(spec.total, 1)}`,
+    overOdds: "",
+    underLine: `u${fmt(spec.total, 1)}`,
+    underOdds: "",
+    awayMoneyline: "",
+    homeMoneyline: "",
+    mlFavorite: favorite,
+    sourceUrl: "Manual Preseason Week 3 restore",
+    manualRestored: true,
+    manualRestoredAt: new Date().toISOString(),
+  };
+}
+
+function applyPreseasonWeek3ManualOddsFixes() {
+  const migrationKey = "nflz-pre3-manual-lines-repick-20260828";
+  if (storage.get(migrationKey, false)) return 0;
+  const games = scheduleGames();
+  const currentOdds = window.DRAFTKINGS_ODDS || storage.get(backupKeys.draftKingsOddsBackup, null) || { games: [] };
+  const byKey = new Map((currentOdds.games || []).map((game) => [draftKingsOddsKey(game), game]));
+  let changed = 0;
+  manualPreseasonWeek3Odds.forEach((spec) => {
+    const visitor = normalizeTeamName(spec.visitor);
+    const home = normalizeTeamName(spec.home);
+    const scheduleGame = games.find((game) => (
+      String(game.week || "") === "Pre3"
+      && normalizeTeamName(game.visitor) === visitor
+      && normalizeTeamName(game.home) === home
+    ));
+    if (!scheduleGame) return;
+    const repairedRow = preseasonWeek3ManualOddsRow(scheduleGame, spec);
+    byKey.set(draftKingsOddsKey(repairedRow), repairedRow);
+
+    const gameKey = scheduleGameKey(scheduleGame, scheduleGame.calendarIndex ?? games.indexOf(scheduleGame) ?? 0);
+    const action = gameAction(gameKey);
+    if (action.ml || action.spread || action.total || action.mlModelZReason || action.spreadModelZReason || action.totalModelZReason) {
+      savedPicks[gameKey] = {
+        ...action,
+        ml: "",
+        spread: "",
+        total: "",
+        mlModelZReason: "",
+        spreadModelZReason: "",
+        totalModelZReason: "",
+      };
+    }
+    changed += 1;
+  });
+  if (changed) {
+    const repairedScan = {
+      ...currentOdds,
+      games: [...byKey.values()].sort((a, b) => `${a.date || ""} ${a.visitor || ""}`.localeCompare(`${b.date || ""} ${b.visitor || ""}`)),
+      manualPre3RestoredAt: new Date().toISOString(),
+    };
+    window.DRAFTKINGS_ODDS = repairedScan;
+    storage.set(backupKeys.draftKingsOddsBackup, repairedScan);
+    storage.set("nflz-picks", savedPicks);
+  }
+  storage.set(migrationKey, true);
+  return changed;
+}
+
+function ensureRamsChargersPreseasonWeek3OddsLine() {
+  const games = scheduleGames();
+  const scheduleGame = games.find((game) => (
+    String(game.week || "") === "Pre3"
+    && normalizeTeamName(game.visitor) === "LA Rams"
+    && normalizeTeamName(game.home) === "LA Chargers"
+  ));
+  if (!scheduleGame) return 0;
+  const currentOdds = window.DRAFTKINGS_ODDS || storage.get(backupKeys.draftKingsOddsBackup, null) || { games: [] };
+  const existing = draftKingsOddsFor(scheduleGame);
+  const alreadyCorrect = existing
+    && Math.abs(num(existing.spreadLine, 0)) === 4.5
+    && normalizeTeamName(existing.spreadFavoriteTeam || existing.mlFavorite) === "LA Chargers"
+    && num(existing.totalLine, 0) === 38.5;
+  if (alreadyCorrect) return 0;
+  const byKey = new Map((currentOdds.games || []).map((game) => [draftKingsOddsKey(game), game]));
+  const repairedRow = preseasonWeek3ManualOddsRow(scheduleGame, {
+    visitor: "LA Rams",
+    home: "LA Chargers",
+    favorite: "LA Chargers",
+    spread: 4.5,
+    total: 38.5,
+  });
+  byKey.set(draftKingsOddsKey(repairedRow), repairedRow);
+  const repairedScan = {
+    ...currentOdds,
+    games: [...byKey.values()].sort((a, b) => `${a.date || ""} ${a.visitor || ""}`.localeCompare(`${b.date || ""} ${b.visitor || ""}`)),
+    manualRamsChargersPre3RestoredAt: new Date().toISOString(),
+  };
+  window.DRAFTKINGS_ODDS = repairedScan;
+  storage.set(backupKeys.draftKingsOddsBackup, repairedScan);
+  return 1;
 }
 
 function dkMoneylineLabel(game, odds) {
@@ -3465,25 +4770,147 @@ function dkMoneylineLabel(game, odds) {
   return abbrev && ml ? `${abbrev} ${ml}` : odds.awayMoneyline || odds.homeMoneyline || "-";
 }
 
+function scheduleTeamAbbrev(teamName, fallback = "") {
+  const team = teamByName(teamName);
+  return team?.teamAbbrev || teamAbbrevFor(teamName, fallback || teamName) || fallback || teamName || "";
+}
+
 function spreadPickOptions(game, odds) {
-  if (!odds?.spreadDetails || !Number.isFinite(Number(odds.spreadLine))) return [];
-  const favorite = odds.spreadFavoriteTeam || "";
-  const dog = favorite === game.visitor ? game.home : game.visitor;
-  const dogAbbrev = dog === game.visitor ? odds.visitorAbbrev : odds.homeAbbrev;
+  if (!odds || !Number.isFinite(Number(odds.spreadLine))) return [];
+  if (Math.abs(num(odds.spreadLine, 0)) === 0) {
+    return [`${scheduleTeamAbbrev(game.visitor)} PK`, `${scheduleTeamAbbrev(game.home)} PK`];
+  }
+  if (!odds.spreadDetails) return [];
+  const favorite = normalizeTeamName(odds.spreadFavoriteTeam || "");
+  const favoriteAbbrev = scheduleTeamAbbrev(favorite);
+  const dog = normalizeTeamName(favorite) === normalizeTeamName(game.visitor) ? game.home : game.visitor;
+  const dogAbbrev = scheduleTeamAbbrev(dog);
   return [
-    odds.spreadDetails,
+    favorite ? `${favoriteAbbrev || favorite} -${fmt(Math.abs(num(odds.spreadLine)), 1)}` : odds.spreadDetails,
     `${dogAbbrev || dog} +${fmt(Math.abs(num(odds.spreadLine)), 1)}`,
   ];
 }
 
 function totalPickOptions(odds) {
   if (!odds || !Number.isFinite(Number(odds.totalLine))) return [];
-  return [odds.overLine || `o${fmt(odds.totalLine, 1)}`, odds.underLine || `u${fmt(odds.totalLine, 1)}`];
+  return [`Over ${fmt(odds.totalLine, 1)}`, `Under ${fmt(odds.totalLine, 1)}`];
+}
+
+function isNoPickChoice(value) {
+  return String(value || "") === NO_PICK_VALUE;
+}
+
+function noPickOption() {
+  return [NO_PICK_VALUE, NO_PICK_LABEL];
+}
+
+function dkSpreadFavoriteTeam(game, odds) {
+  if (!odds || !Number.isFinite(Number(odds.spreadLine)) || Math.abs(num(odds.spreadLine, 0)) === 0) return "";
+  return normalizeTeamName(odds.spreadFavoriteTeam || odds.mlFavorite || "");
+}
+
+function modelSpreadRelativeToTeam(game, projection, teamName) {
+  if (!teamName || !projection?.favorite || !Number.isFinite(Number(projection.spread)) || num(projection.spread, 0) === 0) return 0;
+  return normalizeTeamName(projection.favorite) === normalizeTeamName(teamName) ? num(projection.spread, 0) : -num(projection.spread, 0);
+}
+
+function modelZSpreadPick(game) {
+  const odds = draftKingsOddsFor(game);
+  const projection = scheduleProjection(game);
+  if (!odds || !Number.isFinite(Number(odds.spreadLine))) return { pick: NO_PICK_VALUE, side: "none", reason: "No DK spread" };
+  const dkMargin = Math.abs(num(odds.spreadLine, 0));
+  const visitorPick = `${scheduleTeamAbbrev(game.visitor)}${dkMargin ? ` +${fmt(dkMargin, 1)}` : " PK"}`;
+  const homePick = `${scheduleTeamAbbrev(game.home)}${dkMargin ? ` +${fmt(dkMargin, 1)}` : " PK"}`;
+  if (dkMargin === 0) {
+    if (!projection.favorite) return { pick: NO_PICK_VALUE, side: "none", reason: "DK and Model both PK" };
+    return { pick: `${scheduleTeamAbbrev(projection.favorite)} PK`, side: "model-favorite", reason: "DK PK, take model winner" };
+  }
+  const favorite = dkSpreadFavoriteTeam(game, odds);
+  if (!favorite) return { pick: NO_PICK_VALUE, side: "none", reason: "No DK favorite" };
+  const dog = normalizeTeamName(favorite) === normalizeTeamName(game.visitor) ? game.home : game.visitor;
+  const favoritePick = `${scheduleTeamAbbrev(favorite)} -${fmt(dkMargin, 1)}`;
+  const dogPick = normalizeTeamName(dog) === normalizeTeamName(game.visitor) ? visitorPick : homePick;
+  const modelMargin = modelSpreadRelativeToTeam(game, projection, favorite);
+  const dogEdge = dkMargin - modelMargin;
+  const isClose = (a, b) => Math.abs(num(a) - num(b)) < 0.001;
+  if (modelMargin < 0) return { pick: dogPick, side: "underdog", reason: "Model projects DK underdog to win" };
+  if (modelMargin >= dkMargin) return { pick: favoritePick, side: "favorite", reason: "Model confirms favorite" };
+  if ([6, 7, 10, 14].some((key) => isClose(dkMargin, key)) && isClose(modelMargin, dkMargin - 0.5)) {
+    return { pick: favoritePick, side: "favorite", reason: "Favorite key-number exception" };
+  }
+  if (isClose(modelMargin, 0)) {
+    return dkMargin >= 3.5
+      ? { pick: dogPick, side: "underdog", reason: "Model PK, take +3.5 or more" }
+      : { pick: NO_PICK_VALUE, side: "none", reason: "Model PK inside 3" };
+  }
+  if (dogEdge > 3) return { pick: dogPick, side: "underdog", reason: "Underdog has >3 point model edge" };
+  if (isClose(dogEdge, 3) && dkMargin >= 3.5 && modelMargin < 3) {
+    return { pick: dogPick, side: "underdog", reason: "Exact 3-point underdog key exception" };
+  }
+  return { pick: NO_PICK_VALUE, side: "none", reason: "Inconclusive" };
+}
+
+function modelZMoneylinePick(game) {
+  const projection = scheduleProjection(game);
+  const margin = Math.abs(num(projection?.spread, 0));
+  if (!projection?.favorite || margin <= 1) {
+    return { pick: NO_PICK_VALUE, side: "none", reason: margin ? "Model margin is 1 point or less" : "Model projects pick'em" };
+  }
+  return { pick: projection.favorite, side: "ml", reason: `Model projects ${scheduleTeamAbbrev(projection.favorite)} by ${fmt(margin, 1)}` };
+}
+
+function modelZTotalPick(game) {
+  const odds = draftKingsOddsFor(game);
+  const projection = scheduleProjection(game);
+  if (!odds || !Number.isFinite(Number(odds.totalLine))) return { pick: NO_PICK_VALUE, side: "none", reason: "No DK total" };
+  const dkTotal = num(odds.totalLine);
+  const modelTotal = num(projection?.total);
+  if (!Number.isFinite(modelTotal)) return { pick: NO_PICK_VALUE, side: "none", reason: "No model total" };
+  const edge = modelTotal - dkTotal;
+  if (edge > 2.5) return { pick: `Over ${fmt(dkTotal, 1)}`, side: "over", reason: `Model total is ${fmt(edge, 1)} higher` };
+  if (edge < -2.5) return { pick: `Under ${fmt(dkTotal, 1)}`, side: "under", reason: `Model total is ${fmt(Math.abs(edge), 1)} lower` };
+  return { pick: NO_PICK_VALUE, side: "none", reason: "Total edge is 2.5 points or less" };
+}
+
+function fillModelZPicksForSelectedWeek() {
+  const targetWeek = state.scheduleWeek === "All Weeks" || state.scheduleWeek === "Current Week" ? selectedSiteWeek() : state.scheduleWeek;
+  const games = scheduleGames().filter((game) => scheduleWeekMatches(game, targetWeek));
+  const counts = { favorite: 0, underdog: 0, spreadNone: 0, ml: 0, mlNone: 0, over: 0, under: 0, totalNone: 0, skippedFinal: 0 };
+  games.forEach((game) => {
+    const key = scheduleGameKey(game, game.calendarIndex ?? state.data?.schedule?.indexOf(game) ?? 0);
+    const action = gameAction(key);
+    const hasFinalScore = action.awayScore !== "" && action.homeScore !== "";
+    if (hasFinalScore) {
+      counts.skippedFinal += 1;
+      return;
+    }
+    const spread = modelZSpreadPick(game);
+    const ml = modelZMoneylinePick(game);
+    const total = modelZTotalPick(game);
+    saveGameAction(key, {
+      ml: ml.pick,
+      spread: spread.pick,
+      total: total.pick,
+      mlModelZReason: ml.reason,
+      spreadModelZReason: spread.reason,
+      totalModelZReason: total.reason,
+    });
+    counts[spread.side === "underdog" ? "underdog" : spread.side === "none" ? "spreadNone" : "favorite"] += 1;
+    counts[ml.side === "ml" ? "ml" : "mlNone"] += 1;
+    counts[total.side === "over" ? "over" : total.side === "under" ? "under" : "totalNone"] += 1;
+  });
+  state.picksLastSaved = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  state.schedulePickFillMessage = `Filled Model Z picks for ${weekDisplay(targetWeek)}: spread ${counts.favorite} fav / ${counts.underdog} dog / ${counts.spreadNone} no-pick, ML ${counts.ml} picks, totals ${counts.over} over / ${counts.under} under / ${counts.totalNone} no-pick${counts.skippedFinal ? `, skipped ${counts.skippedFinal} completed game${counts.skippedFinal === 1 ? "" : "s"}` : ""}.`;
+  render();
 }
 
 function scheduleMarketCards(game, projection) {
   const odds = draftKingsOddsFor(game);
-  const myFavorite = projection.favorite === game.visitor ? (odds?.visitorAbbrev || teamByName(game.visitor)?.teamAbbrev || game.visitor) : projection.favorite === game.home ? (odds?.homeAbbrev || teamByName(game.home)?.teamAbbrev || game.home) : "PK";
+  const myFavorite = projection.favorite === game.visitor
+    ? (odds?.visitorAbbrev || scheduleTeamAbbrev(game.visitor))
+    : projection.favorite === game.home
+      ? (odds?.homeAbbrev || scheduleTeamAbbrev(game.home))
+      : "PK";
   const mySpread = projection.favorite ? `${myFavorite} -${fmt(projection.spread, 0)}` : "PK";
   const profile = projectionWinProfile(game, projection);
   const modelMl = projection.favorite === game.visitor ? `${myFavorite} ${profile.visitorMl}` : projection.favorite === game.home ? `${myFavorite} ${profile.homeMl}` : "PK";
@@ -3506,10 +4933,15 @@ function scheduleMarketCards(game, projection) {
 function schedulePickPanel(game, gameKey, projection) {
   const action = gameAction(gameKey);
   const odds = draftKingsOddsFor(game);
-  const mlOptions = ["", game.visitor, game.home].map((team) => [team, team ? `${teamByName(team)?.teamAbbrev || team} ML` : "ML Pick"]);
-  const spreadOptions = [["", "Spread Pick"], ...spreadPickOptions(game, odds).map((option) => [option, option])];
-  const totalOptions = [["", "Total Pick"], ...totalPickOptions(odds).map((option) => [option, option])];
-  const resultOptions = ["", game.visitor, game.home].map((team) => [team, team ? `${teamByName(team)?.teamAbbrev || team} Win` : "Winner"]);
+  const mlOptions = [["", "ML Pick"], noPickOption(), ...[game.visitor, game.home].map((team) => [team, `${teamByName(team)?.teamAbbrev || team} ML`])];
+  const spreadOptions = [["", "Spread Pick"], noPickOption(), ...spreadPickOptions(game, odds).map((option) => [option, option])];
+  const totalOptions = [["", "Total Pick"], noPickOption(), ...totalPickOptions(odds).map((option) => [option, option])];
+  const resultOptions = [
+    ["", "Winner"],
+    [game.visitor, `${teamByName(game.visitor)?.teamAbbrev || game.visitor} Win`],
+    [game.home, `${teamByName(game.home)?.teamAbbrev || game.home} Win`],
+    ["Tie", "Tie"],
+  ];
   return `
     <div class="schedule-action-panel">
       <div class="schedule-pick-grid">
@@ -3564,6 +4996,10 @@ const scheduleStarterSlots = [
   "IDL1", "IDL2", "IDL3", "EDGE1", "EDGE2", "EDGE3", "LB1", "LB2", "LB3", "CB1", "CB2", "CB3", "S1", "S2",
 ];
 
+function scheduleSlotLabel(slot) {
+  return String(slot).replace(/^EDGE/, "ED");
+}
+
 function starterSlotParts(slot) {
   const match = String(slot).match(/^([A-Z]+)(\d+)$/);
   return match ? { group: match[1], depth: Number(match[2]) } : { group: slot, depth: 1 };
@@ -3591,14 +5027,13 @@ function starterListPlayerCell(player) {
 }
 
 function scheduleStarterComparison(game) {
-  const mode = scheduleActiveMode(game);
-  const slots = mode === "preseason" ? schedulePlayerComparisonSlots() : scheduleStarterSlots;
+  const slots = scheduleStarterSlots;
   const rows = slots.map((slot) => {
     const away = scheduleStarterFor(game.visitor, slot, game.week);
     const home = scheduleStarterFor(game.home, slot, game.week);
     const edge = away && home ? num(home.rating) - num(away.rating) : NaN;
     return `<tr>
-      <td><span class="starter-slot">${esc(slot)}</span></td>
+      <td><span class="starter-slot">${esc(scheduleSlotLabel(slot))}</span></td>
       <td>${starterCompareCell(away)}</td>
       <td>${starterCompareCell(home)}</td>
       <td class="num ${edge >= 0 ? "plus" : "minus"}">${Number.isFinite(edge) ? `${edge > 0 ? "+" : ""}${fmt(edge, 0)}` : "-"}</td>
@@ -3608,7 +5043,7 @@ function scheduleStarterComparison(game) {
   const homeAbbrev = teamByName(game.home)?.teamAbbrev || state.data?.meta?.teamAbbrevs?.[game.home] || "Home";
   return `
     <section class="starter-compare-card">
-      <h3>${mode === "preseason" ? "Players Comparison" : "Starters Comparison"}</h3>
+      <h3>Starters</h3>
       <div class="table-scroll starter-compare-scroll">
         ${table([{ label: "Slot" }, { label: visitorAbbrev }, { label: homeAbbrev }, { label: "Home Edge", cls: "num" }], rows)}
       </div>
@@ -3617,12 +5052,11 @@ function scheduleStarterComparison(game) {
 }
 
 function scheduleTeamStartersList(teamName, week = selectedSiteWeek()) {
-  const mode = scheduleActiveMode({ visitor: teamName, home: teamName, week });
-  const slots = mode === "preseason" ? schedulePlayerComparisonSlots() : scheduleStarterSlots;
+  const slots = scheduleStarterSlots;
   const rows = slots.map((slot) => {
     const player = scheduleStarterFor(teamName, slot, week);
     return `<tr>
-      <td><span class="starter-slot">${esc(slot)}</span></td>
+      <td><span class="starter-slot">${esc(scheduleSlotLabel(slot))}</span></td>
       <td>${starterListPlayerCell(player)}</td>
       <td>${player ? esc(player.position || starterSlotParts(slot).group) : "-"}</td>
       <td class="num">${player ? ratingBadge(player.rating) : "-"}</td>
@@ -3630,7 +5064,7 @@ function scheduleTeamStartersList(teamName, week = selectedSiteWeek()) {
   });
   return `
     <section class="starter-compare-card starter-list-card">
-      <h3>${mode === "preseason" ? "Players List" : "Starting Lineup"}</h3>
+      <h3>Starting Lineup</h3>
       <div class="table-scroll starter-compare-scroll">
         ${table([{ label: "Slot" }, { label: "Player" }, { label: "Pos" }, { label: "Rating", cls: "num" }], rows)}
       </div>
@@ -3716,14 +5150,60 @@ function renderScheduleProjectionMath() {
           <span>The spread is rounded to the nearest half point, then mapped through your spread-to-win table.</span>
         </div>
       </div>
-      <p>Current score formula: team score = average(offense points, opponent defense allowed points) + HFA. Offense points use ${fmt(scheduleScoreTuning.offenseBase, 1)} plus roster edge x ${fmt(scheduleScoreTuning.offenseScale, 2)}. Defense allowed uses ${fmt(scheduleScoreTuning.defenseAllowedBase, 1)} minus defense edge x ${fmt(scheduleScoreTuning.defenseScale, 2)}. Preseason totals scale to ${fmt(scheduleScoreTuning.preseasonTotalScale * 100, 0)}% and stay between ${fmt(scheduleScoreTuning.preseasonTotalMin, 0)}-${fmt(scheduleScoreTuning.preseasonTotalMax, 1)}.</p>
+      <p>Current score formula: team score = average(offense points, opponent defense allowed points) + HFA. Offense points use ${fmt(scheduleScoreTuning.offenseBase, 1)} plus roster edge x ${fmt(scheduleScoreTuning.offenseScale, 2)}. Defense allowed uses ${fmt(scheduleScoreTuning.defenseAllowedBase, 1)} minus defense edge x ${fmt(scheduleScoreTuning.defenseScale, 2)}. Game type is automatic: preseason games use preseason depth, while regular season and playoffs use regular-season depth. Preseason totals scale to ${fmt(scheduleScoreTuning.preseasonTotalScale * 100, 0)}% and stay between ${fmt(scheduleScoreTuning.preseasonTotalMin, 0)}-${fmt(scheduleScoreTuning.preseasonTotalMax, 1)}.</p>
+    </div>
+  `;
+}
+
+function renderModelZPickRules() {
+  if (!state.scheduleRulesOpen) return "";
+  return `
+    <div class="schedule-control-block projection-math-card model-rules-card">
+      <h3>Model Z Pick Rules</h3>
+      <div class="model-rules-grid">
+        <section>
+          <h4>Moneyline</h4>
+          <ul>
+            <li>If Model Z projects a team by more than 1 point, take that team's ML.</li>
+            <li>If the projected margin is 1 point or less, use No Pick.</li>
+            <li>DraftKings price is displayed, but it does not choose the ML pick yet.</li>
+          </ul>
+        </section>
+        <section>
+          <h4>Spread</h4>
+          <ul>
+            <li>If DK is pick'em, take the model winner at PK.</li>
+            <li>If Model Z has the DK underdog winning outright, take the underdog spread.</li>
+            <li>If Model Z matches or beats the DK favorite margin, take the favorite spread.</li>
+            <li>Allow favorite exceptions only at DK -6, -7, -10, and -14 when the model is 0.5 lower.</li>
+            <li>If Model Z is PK, take the dog only at +3.5 or more.</li>
+            <li>Take the dog when the dog edge is more than 3 points, plus the exact-3 key-number exception.</li>
+          </ul>
+        </section>
+        <section>
+          <h4>Total</h4>
+          <ul>
+            <li>Model total more than 2.5 above DK total: Over.</li>
+            <li>Model total more than 2.5 below DK total: Under.</li>
+            <li>Anything within 2.5 points: No Pick.</li>
+          </ul>
+        </section>
+        <section>
+          <h4>Protection</h4>
+          <ul>
+            <li>Fill Model Z Picks skips games with entered final scores.</li>
+            <li>DraftKings scans preserve completed-game odds and picks.</li>
+            <li>No Pick means inconclusive and does not count against pick stats.</li>
+          </ul>
+        </section>
+      </div>
     </div>
   `;
 }
 
 function renderScheduleControls() {
   if (!state.scheduleControlsOpen) return "";
-  const depthMode = state.scheduleSimMode === "auto" ? scheduleActiveMode({ week: selectedSiteWeek(), preseason: String(selectedSiteWeek()).startsWith("Pre") }) : state.scheduleSimMode;
+  const depthMode = scheduleActiveMode({ week: selectedSiteWeek(), preseason: String(selectedSiteWeek()).startsWith("Pre") });
   const depthDefaults = depthMode === "regular" ? defaultRegularDepthMultipliers : defaultPreseasonDepthMultipliers;
   const depthState = depthMode === "regular" ? state.regularDepthMultipliers : state.preseasonDepthMultipliers;
   const depthTitle = depthMode === "regular" ? "Regular Season Depth Multipliers" : "Preseason Depth Multipliers";
@@ -3734,8 +5214,12 @@ function renderScheduleControls() {
     scheduleSlider(key, key, num(state.schedulePositionWeights[key], defaultSchedulePositionWeights[key]), 0, 30, "schedule-weight", 1, " pts")
   ).join("");
   const depthRows = (groups) => groups.map((group) => {
-    const values = depthState[group] || depthDefaults[group];
-    const labels = group === "OL" ? values.map((_, index) => `OL${index + 1}`) : values.map((_, index) => `${group}${index + 1}`);
+    const values = group === "OL" ? scheduleOlMultipliers(depthMode, depthState) : depthState[group] || depthDefaults[group];
+    const labels = group === "OL"
+      ? (depthMode === "preseason"
+        ? ["LT1", "LG1", "C1", "RG1", "RT1"].flatMap((label) => [label, label.replace("1", "2")])
+        : ["LT1", "LG1", "C1", "RG1", "RT1"])
+      : values.map((_, index) => `${group}${index + 1}`);
     return `
       <div class="depth-slider-row">
         <strong>${esc(group)}</strong>
@@ -3772,14 +5256,14 @@ function renderScheduleControls() {
 }
 
 function wireScheduleControls() {
-  document.querySelector("#schedule-sim-mode")?.addEventListener("change", (event) => {
-    state.scheduleSimMode = event.target.value;
-    storage.set("nflz-schedule-sim-mode", state.scheduleSimMode);
-    render();
-  });
   document.querySelector("#schedule-controls-toggle")?.addEventListener("click", () => {
     state.scheduleControlsOpen = !state.scheduleControlsOpen;
     storage.set("nflz-schedule-controls-open", state.scheduleControlsOpen);
+    render();
+  });
+  document.querySelector("#schedule-rules-toggle")?.addEventListener("click", () => {
+    state.scheduleRulesOpen = !state.scheduleRulesOpen;
+    storage.set("nflz-schedule-rules-open", state.scheduleRulesOpen);
     render();
   });
   document.querySelector("#schedule-reset-controls")?.addEventListener("click", () => {
@@ -3859,6 +5343,118 @@ function quickPlayerMatches(limit = 18) {
 function selectedQuickPlayer() {
   if (state.quickPlayerKey) return findPlayer(state.quickPlayerKey);
   return state.quickPlayerQuery.trim() ? quickPlayerMatches()[0] || null : null;
+}
+
+function bulkCandidateScore(rawInput, player) {
+  const raw = String(rawInput || "");
+  const wanted = normalizeName(initialsExpandedName(raw));
+  const wantedCompact = compactName(initialsExpandedName(raw));
+  const name = normalizeName(initialsExpandedName(player.player));
+  const nameCompact = compactName(initialsExpandedName(player.player));
+  if (!wanted || !name) return 0;
+  const wantedTokens = wanted.split(/\s+/).filter((token) => token.length > 1);
+  const nameTokens = name.split(/\s+/).filter(Boolean);
+  const nameTokenSet = new Set(nameTokens);
+  const overlap = wantedTokens.filter((token) => nameTokenSet.has(token)).length;
+  const allNameInInput = nameTokens.every((token) => wantedTokens.includes(token));
+  const allInputInName = wantedTokens.length <= nameTokens.length && wantedTokens.every((token) => nameTokenSet.has(token));
+  let score = 0;
+  if (wanted === name) score += 1000;
+  if (wantedCompact === nameCompact) score += 950;
+  if (wanted.startsWith(name) || name.startsWith(wanted)) score += 300;
+  if (wanted.includes(name) || name.includes(wanted)) score += 240;
+  if (allNameInInput) score += 220;
+  if (allInputInName) score += 180;
+  score += overlap * 70;
+  if (raw.toLowerCase().includes(String(player.team || "").toLowerCase())) score += 35;
+  if (raw.toLowerCase().includes(String(player.teamAbbrev || "").toLowerCase())) score += 20;
+  return score + Math.min(30, num(player.rating, 0) / 4);
+}
+
+function bulkChangeCandidates(rawInput, limit = 6) {
+  return state.players
+    .map((player) => ({ player, score: bulkCandidateScore(rawInput, player) }))
+    .filter((item) => item.score >= 120)
+    .sort((a, b) => b.score - a.score || num(b.player.rating) - num(a.player.rating) || String(a.player.player).localeCompare(b.player.player))
+    .slice(0, limit)
+    .map((item) => item.player);
+}
+
+function detectBulkChangeRows() {
+  const lines = String(state.bulkChangeText || "")
+    .split(/\r?\n|;/)
+    .map((line) => line.replace(/^\s*[-*]\s*/, "").trim())
+    .filter(Boolean);
+  state.bulkChangeRows = lines.map((line) => {
+    const candidates = bulkChangeCandidates(line, 8);
+    const top = candidates[0] || null;
+    const runnerUp = candidates[1] || null;
+    const topScore = top ? bulkCandidateScore(line, top) : 0;
+    const nextScore = runnerUp ? bulkCandidateScore(line, runnerUp) : 0;
+    const confident = top && (topScore >= 480 || topScore - nextScore >= 120);
+    return {
+      id: uid("bulk"),
+      input: line,
+      key: confident ? sourceKey(top) : "",
+      candidateKeys: candidates.map(sourceKey),
+      status: candidates.length ? (confident ? "matched" : "review") : "missing",
+    };
+  });
+}
+
+function bulkChangeSelect(row) {
+  const candidates = (row.candidateKeys || []).map((key) => findPlayer(key)).filter(Boolean);
+  if (!candidates.length) return `<span class="bulk-missing">No match</span>`;
+  const options = [`<option value="">Review match...</option>`, ...candidates.map((player) => `<option value="${esc(sourceKey(player))}" ${sourceKey(player) === row.key ? "selected" : ""}>${esc(player.player)} - ${esc(player.team || "Free Agent")} - ${esc(player.position)}</option>`)];
+  return `<select data-bulk-id="${esc(row.id)}" data-bulk-field="match">${options.join("")}</select>`;
+}
+
+function bulkDataSelect(row, field, value, options) {
+  return `<select data-bulk-id="${esc(row.id)}" data-bulk-field="${esc(field)}">${options.map((item) => `<option value="${esc(item)}" ${String(item) === String(value || "") ? "selected" : ""}>${esc(item)}</option>`).join("")}</select>`;
+}
+
+function bulkPlayerEditableRow(row) {
+  const player = row.key ? findPlayer(row.key) : null;
+  const teams = ["Free Agent", ...unique(state.players.map((p) => p.team).filter((team) => team && team !== "Free Agent")).sort()];
+  const positions = ["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"];
+  const depthOptions = ["", ...Array.from({ length: 15 }, (_, index) => String(index + 1))];
+  const matchCell = bulkChangeSelect(row);
+  if (!player) {
+    return `<div class="bulk-change-row unresolved">
+      <div class="bulk-original"><b>${esc(row.input)}</b><em>${row.status === "missing" ? "Could not find this player" : "Choose the right player"}</em></div>
+      ${matchCell}
+      <span class="bulk-empty" aria-hidden="true"></span>
+    </div>`;
+  }
+  return `<div class="bulk-change-row" data-bulk-player-key="${esc(sourceKey(player))}">
+    <div class="bulk-original"><b>${esc(row.input)}</b><em>${row.status === "review" ? "Review match" : "Matched"}</em></div>
+    ${matchCell}
+    <label>Name <span><input data-bulk-id="${esc(row.id)}" data-bulk-field="name" value="${esc(player.player)}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" /><button class="mini-action" data-bulk-id="${esc(row.id)}" data-bulk-action="card">Card</button></span></label>
+    <label>Position ${bulkDataSelect(row, "position", player.position, positions)}</label>
+    <label>Depth ${bulkDataSelect(row, "depth", String(player.depth || ""), depthOptions)}</label>
+    <label>Team ${bulkDataSelect(row, "team", player.team || "Free Agent", teams)}</label>
+    <label>Rating <span><button class="mini-action" data-bulk-id="${esc(row.id)}" data-bulk-action="nudge-down">-</button><input data-bulk-id="${esc(row.id)}" data-bulk-field="rating" type="number" min="50" max="110" value="${fmt(player.rating, 0)}" /><button class="mini-action" data-bulk-id="${esc(row.id)}" data-bulk-action="nudge-up">+</button></span></label>
+    <label>Injury ${bulkDataSelect(row, "injury", player.injury || "Healthy", injuryStatuses)}</label>
+    <label>Week ${bulkDataSelect(row, "week", player.week || "", injuryWeeks)}</label>
+  </div>`;
+}
+
+function renderBulkChanges() {
+  const rows = state.bulkChangeRows || [];
+  const missing = rows.filter((row) => row.status === "missing").map((row) => row.input);
+  const review = rows.filter((row) => row.status === "review").length;
+  const matched = rows.filter((row) => row.key && findPlayer(row.key)).length;
+  return `<article class="quick-card bulk-changes-card">
+    <div class="quick-card-title"><span>05</span><h3>Bulk Changes</h3></div>
+    <textarea id="bulk-change-text" placeholder="Example:\nJames Conner\nA.J. Brown\nMalik Nabers likely out" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false">${esc(state.bulkChangeText || "")}</textarea>
+    <div class="bulk-change-actions">
+      <button id="bulk-detect" class="quick-bubble">Detect Players</button>
+      <button id="bulk-clear" class="mini-action">Clear</button>
+      ${rows.length ? `<span>${matched} matched${review ? `, ${review} review` : ""}${missing.length ? `, ${missing.length} missing` : ""}</span>` : ""}
+    </div>
+    ${missing.length ? `<div class="bulk-missing-note"><b>Needs review:</b> ${missing.map(esc).join(", ")}</div>` : ""}
+    ${rows.length ? `<div class="bulk-change-list">${rows.map(bulkPlayerEditableRow).join("")}</div>` : ""}
+  </article>`;
 }
 
 function quickRankPlayers(scope, limit) {
@@ -4004,6 +5600,8 @@ function renderQuickDepthChart() {
 
 function renderQuickPlayerPicker(player) {
   const matches = quickPlayerMatches(24);
+  const typedName = state.quickPlayerQuery.trim().replace(/\s+/g, " ");
+  const canAddTyped = typedName && !state.players.some((p) => fantasyMergeKey(p.player) === fantasyMergeKey(typedName));
   const resultText = state.quickPlayerQuery.trim()
     ? `${matches.length} leaguewide matches`
     : "Start typing to search every roster and free agent";
@@ -4020,7 +5618,64 @@ function renderQuickPlayerPicker(player) {
         ${ratingBadge(p.rating)}
       </button>
     `).join("") || "<p class='note'>No leaguewide player matches found.</p>"}</div>` : ""}
-    ${player ? `<div class="quick-player-current">${playerNameButton(player)}<span>${teamCell(player)}</span><span class="pos-chip ${positionChipClass(player.position)}">${esc(player.position)}</span>${ratingBadge(player.rating)}</div>` : "<p class='note'>Search for a player to unlock the player quick actions.</p>"}
+    ${player ? `<div class="quick-player-current">${playerNameButton(player)}<span>${teamCell(player)}</span><span class="pos-chip ${positionChipClass(player.position)}">${esc(player.position)}</span>${ratingBadge(player.rating)}</div>` : canAddTyped ? `<div class="quick-player-add-inline">
+      <b>No exact player found for "${esc(typedName)}"</b>
+      <span>Add them here, then edit position, team, depth, rating, and injury below.</span>
+      <button id="quick-add-missing-player" class="mini-action primary">Add Player</button>
+    </div>` : ""}
+  `;
+}
+
+function addPlayerFromQuickAction(name, position = "WR", team = "Free Agent", rating = 68) {
+  const cleanName = String(name || "").replace(/\s+/g, " ").trim();
+  if (!cleanName) return null;
+  const normalizedTeam = normalizeTeamName(team || "Free Agent");
+  const player = normalizeStarProgress({
+    player: cleanName,
+    team: isFreeAgentTeam(normalizedTeam) ? "Free Agent" : normalizedTeam,
+    teamAbbrev: isFreeAgentTeam(normalizedTeam) ? "FA" : state.data.meta.teamAbbrevs[normalizedTeam] || normalizedTeam,
+    position,
+    rawPosition: position,
+    depth: 99,
+    positionNumber: 99,
+    rating,
+    newRating: rating,
+    stars: 0,
+    newStars: 0,
+    injury: "Healthy",
+    week: "",
+    thumb: "",
+  });
+  const already = state.players.find((entry) => fantasyMergeKey(entry.player) === fantasyMergeKey(cleanName) && normalizeTeamName(entry.team) === normalizeTeamName(player.team) && entry.position === position);
+  if (!already) {
+    addedPlayers.push(player);
+    saveAddedPlayers();
+    state.players = applyOverrides(state.data.players);
+    return state.players.find((entry) => fantasyMergeKey(entry.player) === fantasyMergeKey(cleanName) && normalizeTeamName(entry.team) === normalizeTeamName(player.team) && entry.position === position) || player;
+  }
+  return already;
+}
+
+function quickPlayerEditableRow(player) {
+  if (!player) return "";
+  const teams = ["Free Agent", ...unique(state.players.map((p) => p.team).filter((team) => team && team !== "Free Agent")).sort()];
+  const positions = ["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"];
+  const depthOptions = ["", ...Array.from({ length: 15 }, (_, index) => String(index + 1)), "INJ", "SUS"];
+  return `
+    <div class="quick-player-edit-row">
+      <label class="wide">Name
+        <span><input id="quick-player-name" value="${esc(player.player)}" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" /><button id="quick-open-details" class="mini-action">Card</button></span>
+      </label>
+      <label>Position ${optionSelect("quick-player-position", player.position, positions)}</label>
+      <label>Depth ${optionSelect("quick-player-depth", String(player.depth || ""), depthOptions)}</label>
+      <label>Team ${optionSelect("quick-move-team", player.team || "Free Agent", teams)}</label>
+      <label>Rating
+        <span><button class="mini-action quick-thumb" data-dir="down">-</button><input id="quick-rating" type="number" min="50" max="110" value="${fmt(player.rating, 0)}" /><button class="mini-action quick-thumb" data-dir="up">+</button></span>
+      </label>
+      <label>Injury ${injurySelect("quick", player.injury).replace("class=\"injury-status\"", "id=\"quick-injury\" class=\"injury-status\"")}</label>
+      <label>Week ${weekSelect("quick", player.week).replace("class=\"injury-week\"", "id=\"quick-week\" class=\"injury-week\"")}</label>
+      <button id="quick-undo-changes" class="quick-bubble">Undo Changes</button>
+    </div>
   `;
 }
 
@@ -4044,6 +5699,7 @@ function wireQuickActions() {
     const next = quickPlayerMatches()[0];
     state.quickPlayerKey = next ? sourceKey(next) : "";
     if (next) state.quickMoveTeam = next.team || "Free Agent";
+    if (next) state.quickPlayerSnapshot = { key: sourceKey(next), player: next.player, position: next.position, depth: next.depth, team: next.team, teamAbbrev: next.teamAbbrev, rating: next.rating, injury: next.injury, week: next.week };
     render();
   });
   document.querySelector("#quick-player-set")?.addEventListener("click", () => {
@@ -4052,6 +5708,16 @@ function wireQuickActions() {
     const next = exact || quickPlayerMatches(1)[0];
     state.quickPlayerKey = next ? sourceKey(next) : "";
     if (next) state.quickMoveTeam = next.team || "Free Agent";
+    if (next) state.quickPlayerSnapshot = { key: sourceKey(next), player: next.player, position: next.position, depth: next.depth, team: next.team, teamAbbrev: next.teamAbbrev, rating: next.rating, injury: next.injury, week: next.week };
+    render();
+  });
+  document.querySelector("#quick-add-missing-player")?.addEventListener("click", () => {
+    const added = addPlayerFromQuickAction(state.quickPlayerQuery, "WR", "Free Agent", 68);
+    if (!added) return;
+    state.quickPlayerKey = sourceKey(added);
+    state.quickPlayerQuery = added.player;
+    state.quickMoveTeam = added.team || "Free Agent";
+    state.quickPlayerSnapshot = { key: sourceKey(added), player: added.player, position: added.position, depth: added.depth, team: added.team, teamAbbrev: added.teamAbbrev, rating: added.rating, injury: added.injury, week: added.week };
     render();
   });
   document.querySelectorAll("[data-quick-player-key]").forEach((button) => button.addEventListener("click", () => {
@@ -4060,6 +5726,7 @@ function wireQuickActions() {
     state.quickPlayerKey = sourceKey(next);
     state.quickPlayerQuery = next.player;
     state.quickMoveTeam = next.team || "Free Agent";
+    state.quickPlayerSnapshot = { key: sourceKey(next), player: next.player, position: next.position, depth: next.depth, team: next.team, teamAbbrev: next.teamAbbrev, rating: next.rating, injury: next.injury, week: next.week };
     render();
   }));
   document.querySelector("#quick-open-details")?.addEventListener("click", () => {
@@ -4067,16 +5734,42 @@ function wireQuickActions() {
     if (player) state.selectedPlayerKey = sourceKey(player);
     render();
   });
-  document.querySelector("#quick-move-team")?.addEventListener("change", (event) => { state.quickMoveTeam = event.target.value; });
-  document.querySelector("#quick-apply-move")?.addEventListener("click", () => {
+  document.querySelector("#quick-player-name")?.addEventListener("change", (event) => {
     const player = selectedQuickPlayer();
     if (!player) return;
-    const team = state.quickMoveTeam;
+    renamePlayer(player, event.target.value);
+    const next = findPlayerByName(event.target.value) || selectedQuickPlayer();
+    if (next) {
+      state.quickPlayerKey = sourceKey(next);
+      state.quickPlayerQuery = next.player;
+    }
+    render();
+  });
+  document.querySelector("#quick-player-position")?.addEventListener("change", (event) => {
+    const player = selectedQuickPlayer();
+    if (!player) return;
+    persistPlayer(player, { position: event.target.value });
+    state.quickPlayerKey = sourceKey(selectedQuickPlayer() || player);
+    render();
+  });
+  document.querySelector("#quick-player-depth")?.addEventListener("change", (event) => {
+    const player = selectedQuickPlayer();
+    if (!player) return;
+    const value = event.target.value;
+    persistPlayer(player, { depth: Number.isFinite(Number(value)) ? Number(value) : value });
+    state.quickPlayerKey = sourceKey(selectedQuickPlayer() || player);
+    render();
+  });
+  document.querySelector("#quick-move-team")?.addEventListener("change", (event) => {
+    const player = selectedQuickPlayer();
+    if (!player) return;
+    const team = event.target.value;
+    state.quickMoveTeam = team;
     persistPlayer(player, team === "Free Agent" ? { team, teamAbbrev: "FA" } : { team, teamAbbrev: state.data.meta.teamAbbrevs[team] || team });
     state.quickPlayerKey = sourceKey(selectedQuickPlayer() || player);
     render();
   });
-  document.querySelector("#quick-rating-save")?.addEventListener("click", () => {
+  document.querySelector("#quick-rating")?.addEventListener("change", () => {
     const player = selectedQuickPlayer();
     if (!player) return;
     const rating = Math.max(50, Math.min(105, Math.floor(num(document.querySelector("#quick-rating")?.value, player.rating))));
@@ -4098,13 +5791,125 @@ function wireQuickActions() {
     if (player) persistPlayer(player, { week: event.target.value });
     render();
   });
+  document.querySelector("#quick-undo-changes")?.addEventListener("click", () => {
+    const player = selectedQuickPlayer();
+    const snap = state.quickPlayerSnapshot;
+    if (!player || !snap) return;
+    const currentKey = sourceKey(player);
+    if (snap.key !== currentKey && fantasyMergeKey(snap.player) !== fantasyMergeKey(player.player)) return;
+    const patch = {
+      player: snap.player,
+      position: snap.position,
+      depth: snap.depth,
+      team: snap.team,
+      teamAbbrev: snap.teamAbbrev,
+      rating: snap.rating,
+      injury: snap.injury,
+      week: snap.week,
+    };
+    persistPlayer(player, patch);
+    state.quickPlayerQuery = snap.player;
+    const restored = findPlayerByName(snap.player) || player;
+    state.quickPlayerKey = sourceKey(restored);
+    render();
+  });
   document.querySelector("#quick-depth-team")?.addEventListener("change", (event) => { state.quickDepthTeam = event.target.value; render(); });
   document.querySelector("#quick-depth-scope")?.addEventListener("change", (event) => { state.quickDepthScope = event.target.value; render(); });
   document.querySelector("#quick-rank-scope")?.addEventListener("change", (event) => { state.quickRankScope = event.target.value; render(); });
   document.querySelector("#quick-rank-limit")?.addEventListener("change", (event) => { state.quickRankLimit = Number(event.target.value); render(); });
   document.querySelector("#quick-team-rank-scope")?.addEventListener("change", (event) => { state.quickTeamRankScope = event.target.value; render(); });
   document.querySelector("#quick-team-rank-limit")?.addEventListener("change", (event) => { state.quickTeamRankLimit = Number(event.target.value); render(); });
+  document.querySelector("#bulk-change-text")?.addEventListener("input", (event) => {
+    state.bulkChangeText = event.target.value;
+  });
+  document.querySelector("#bulk-detect")?.addEventListener("click", () => {
+    state.bulkChangeText = document.querySelector("#bulk-change-text")?.value || state.bulkChangeText;
+    detectBulkChangeRows();
+    render();
+  });
+  document.querySelector("#bulk-clear")?.addEventListener("click", () => {
+    state.bulkChangeText = "";
+    state.bulkChangeRows = [];
+    render();
+  });
+  document.querySelectorAll("[data-bulk-field]").forEach((field) => field.addEventListener("change", (event) => {
+    const row = (state.bulkChangeRows || []).find((item) => item.id === event.currentTarget.dataset.bulkId);
+    if (!row) return;
+    if (event.currentTarget.dataset.bulkField === "match") {
+      row.key = event.currentTarget.value;
+      row.status = row.key ? "matched" : "review";
+      render();
+      return;
+    }
+    const player = row.key ? findPlayer(row.key) : null;
+    if (!player) return;
+    const value = event.currentTarget.value;
+    if (event.currentTarget.dataset.bulkField === "name") {
+      renamePlayer(player, value);
+      const renamed = findPlayer(row.key) || findPlayerByName(value);
+      if (renamed) row.key = sourceKey(renamed);
+    } else if (event.currentTarget.dataset.bulkField === "position") {
+      persistPlayer(player, { position: value });
+    } else if (event.currentTarget.dataset.bulkField === "depth") {
+      persistPlayer(player, { depth: Number.isFinite(Number(value)) ? Number(value) : value });
+    } else if (event.currentTarget.dataset.bulkField === "team") {
+      persistPlayer(player, value === "Free Agent" ? { team: value, teamAbbrev: "FA" } : { team: value, teamAbbrev: state.data.meta.teamAbbrevs[value] || value });
+    } else if (event.currentTarget.dataset.bulkField === "rating") {
+      const rating = Math.max(50, Math.min(110, Math.floor(num(value, player.rating))));
+      persistPlayer(player, { rating, newRating: rating, ratingChangeType: "Manual adjustment" });
+    } else if (event.currentTarget.dataset.bulkField === "injury") {
+      persistPlayer(player, injuryPatchForStatus(value, /^ir\s+thru/i.test(value) ? "" : player.week));
+    } else if (event.currentTarget.dataset.bulkField === "week") {
+      persistPlayer(player, { week: value });
+    }
+    const refreshed = findPlayer(row.key) || findPlayerByName(value);
+    if (refreshed) row.key = sourceKey(refreshed);
+    render();
+  }));
+  document.querySelectorAll("[data-bulk-action]").forEach((button) => button.addEventListener("click", () => {
+    const row = (state.bulkChangeRows || []).find((item) => item.id === button.dataset.bulkId);
+    const player = row?.key ? findPlayer(row.key) : null;
+    if (!player) return;
+    if (button.dataset.bulkAction === "card") {
+      state.selectedPlayerKey = sourceKey(player);
+    } else if (button.dataset.bulkAction === "nudge-up") {
+      applyThumb(player, "up");
+    } else if (button.dataset.bulkAction === "nudge-down") {
+      applyThumb(player, "down");
+    }
+    const refreshed = findPlayer(row.key);
+    if (refreshed) row.key = sourceKey(refreshed);
+    render();
+  }));
+  document.querySelector("#manual-add-player")?.addEventListener("click", () => {
+    const name = String(document.querySelector("#manual-add-name")?.value || "").replace(/\s+/g, " ").trim();
+    const position = String(document.querySelector("#manual-add-position")?.value || "WR").trim();
+    const team = normalizeTeamName(document.querySelector("#manual-add-team")?.value || "Free Agent");
+    const rating = Math.max(50, Math.min(110, Math.floor(num(document.querySelector("#manual-add-rating")?.value, 68))));
+    const player = addPlayerFromQuickAction(name, position, team, rating);
+    if (!player) return;
+    state.quickPlayerKey = sourceKey(player);
+    state.quickPlayerQuery = player.player;
+    render();
+  });
   wirePlayerActions();
+}
+
+function renderManualAddPlayer() {
+  const teams = ["Free Agent", ...unique(state.players.map((p) => normalizeTeamName(p.team)).filter((team) => team && team !== "Free Agent")).sort()];
+  const positions = ["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"];
+  return `
+    <article class="quick-card add-player-card">
+      <div class="quick-card-title"><span>06</span><h3>Add Player</h3></div>
+      <div class="quick-three add-player-grid">
+        <input id="manual-add-name" placeholder="Player name" autocomplete="off" autocorrect="off" autocapitalize="words" spellcheck="false" />
+        ${optionSelect("manual-add-position", "WR", positions)}
+        ${optionSelect("manual-add-team", "Free Agent", teams)}
+        <input id="manual-add-rating" type="number" min="50" max="110" value="68" />
+        <button id="manual-add-player" class="quick-bubble">Add Player</button>
+      </div>
+    </article>
+  `;
 }
 
 function renderHome() {
@@ -4115,7 +5920,6 @@ function renderHome() {
   const teamRankScopes = ["Whole Team", "Offense", "Defense", "QB", "RB", "WR", "TE", "OT", "OG", "C", "IOL", "OL", "OLINE", "IDL", "EDGE Def", "DL\n(DT + EDGE)", "LB Only", "LB + EDGE", "CB", "S", "Defensive Backs"];
   const normalizedTeamScope = state.quickTeamRankScope === "OLINE" ? "OL" : state.quickTeamRankScope;
   const teamRanked = quickTeamRankRows(normalizedTeamScope, state.quickTeamRankLimit);
-  const playerDisabled = player ? "" : "disabled";
   setTimeout(wireQuickActions);
   return `
     <section class="home-quick">
@@ -4135,38 +5939,20 @@ function renderHome() {
           <div class="quick-player-search-panel">
             ${renderQuickPlayerPicker(player)}
           </div>
-          <div class="quick-player-action-grid">
-            <article class="quick-card action-card">
-              <div class="quick-card-title"><span>02</span><h3>Adjust Rating</h3></div>
-              <div class="quick-search-row"><input id="quick-rating" type="number" min="50" max="105" value="${player ? fmt(player.rating, 0) : ""}" ${playerDisabled} /><button id="quick-rating-save" class="quick-bubble" ${playerDisabled}>Save</button></div>
-              <div class="quick-two"><button class="quick-bubble quick-thumb" data-dir="up" ${playerDisabled}>Nudge Up</button><button class="quick-bubble quick-thumb" data-dir="down" ${playerDisabled}>Nudge Down</button></div>
-            </article>
-            <article class="quick-card action-card">
-              <div class="quick-card-title"><span>03</span><h3>Apply Injury</h3></div>
-              <div class="quick-two">${injurySelect("quick", player?.injury).replace("class=\"injury-status\"", "id=\"quick-injury\" class=\"injury-status\"")} ${weekSelect("quick", player?.week).replace("class=\"injury-week\"", "id=\"quick-week\" class=\"injury-week\"")}</div>
-            </article>
-            <article class="quick-card action-card">
-              <div class="quick-card-title"><span>04</span><h3>Move Player</h3></div>
-              ${select("quick-move-team", state.quickMoveTeam, teams)}
-              <button id="quick-apply-move" class="quick-bubble" ${playerDisabled}>Assign Team / FA</button>
-            </article>
-            <article class="quick-card action-card">
-              <div class="quick-card-title"><span>05</span><h3>View Details</h3></div>
-              <button id="quick-open-details" class="quick-bubble" ${playerDisabled}>Open Player Details</button>
-            </article>
-          </div>
+          ${quickPlayerEditableRow(player)}
         </section>
+        ${renderBulkChanges()}
       <article class="quick-card quick-card-third">
-          <div class="quick-card-title"><span>06</span><h3>Quick Depth Chart</h3></div>
+          <div class="quick-card-title"><span>02</span><h3>Quick Depth Chart</h3></div>
           ${renderQuickDepthChart()}
         </article>
         <article class="quick-card quick-card-third">
-          <div class="quick-card-title"><span>07</span><h3>Positional Rankings</h3></div>
+          <div class="quick-card-title"><span>03</span><h3>Positional Rankings</h3></div>
           <div class="quick-three">${select("quick-rank-scope", state.quickRankScope, rankScopes)}${select("quick-rank-limit", state.quickRankLimit, [10, 20, 30, 50, 100])}<button class="quick-bubble" data-page="top30">Open Top 30s</button></div>
           <div class="quick-rank-list">${ranked.map((p, index) => `<button class="quick-rank-row player-open" data-player-key="${esc(sourceKey(p))}"><b>${index + 1}</b><span class="quick-rank-player">${playerAvatar(p)}<span>${esc(p.player)}</span></span><em>${teamCell(p)}</em><strong>${fmt(p.rating, 0)}</strong></button>`).join("")}</div>
         </article>
         <article class="quick-card quick-card-third">
-          <div class="quick-card-title"><span>08</span><h3>Team Rankings</h3></div>
+          <div class="quick-card-title"><span>04</span><h3>Team Rankings</h3></div>
           <div class="quick-three">${select("quick-team-rank-scope", state.quickTeamRankScope, teamRankScopes)}${select("quick-team-rank-limit", state.quickTeamRankLimit, [10, 20, 32])}<button class="quick-bubble" data-page="live">Open Live Rankings</button></div>
           <div class="quick-rank-list">${teamRanked.map((row, index) => `<div class="quick-rank-row quick-team-row"><b>${index + 1}</b><span>${teamCellByName(row.team.team)}</span><em>${esc(state.quickTeamRankScope)}</em><strong>${fmt(row.score, 1)}</strong></div>`).join("")}</div>
         </article>
@@ -4265,15 +6051,24 @@ function wireDepthLockEditor() {
   });
 }
 
+function renderDepthPositionCell(player) {
+  const key = sourceKey(player);
+  if (state.depthPositionEditor === key) {
+    return editablePositionSelect(`depth-pos-${key}`, player.position, `player-position-select pos-chip ${positionChipClass(player.position)}`, key);
+  }
+  return `<button class="position-change-button pos-chip ${positionChipClass(player.position)}" data-position-edit="${esc(key)}" title="Change position">${esc(player.position)}</button>`;
+}
+
 function renderDepth() {
   const teams = ["All Teams", ...unique(state.players.map((p) => p.team))];
   const positions = ["All Positions", ...unique(state.players.map((p) => p.position)).sort((a, b) => depthPositionRank(a) - depthPositionRank(b) || String(a).localeCompare(String(b)))];
-  const sides = ["All Sides", "Offense", "Defense"];
+  const sides = ["All Sides", "Starters", "Offense", "Defense"];
   const depthWeek = state.depthWeek === "auto" ? selectedSiteWeek() : state.depthWeek;
   const depthWeekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
   let players = state.players.filter(matches);
   if (state.depthTeam !== "All Teams") players = players.filter((p) => normalizeTeamName(p.team) === normalizeTeamName(state.depthTeam));
-  if (state.depthSide !== "All Sides") players = players.filter((p) => depthSideFor(p) === state.depthSide);
+  if (state.depthSide === "Starters") players = players.filter((p) => isDepthStarter(p, depthWeek));
+  else if (state.depthSide !== "All Sides") players = players.filter((p) => depthSideFor(p) === state.depthSide);
   if (state.depthPosition !== "All Positions") players = players.filter((p) => p.position === state.depthPosition);
   players = players.sort((a, b) => a.team.localeCompare(b.team) || depthPositionRank(a.position) - depthPositionRank(b.position) || num(b.rating) - num(a.rating) || num(a.depth, 999) - num(b.depth, 999) || String(a.player).localeCompare(b.player));
   const rookies = players.filter((p) => String(p.player).includes("(R)")).length;
@@ -4286,10 +6081,10 @@ function renderDepth() {
   const depthTableRow = (p, includeTeam = true, extraClass = "", displayDepth = playerUnavailableLabel(p, depthWeek) || p.depth) => `
     <tr class="${String(p.player).includes("(R)") ? "rookie" : ""} ${playerUnavailableLabel(p, depthWeek) ? "unavailable-player" : ""} ${playerDepthLock(p, depthWeek) ? "depth-locked-player" : ""} ${extraClass}" data-player-key="${esc(sourceKey(p))}">
       ${includeTeam ? `<td class="team-col">${teamCell(p)}</td>` : ""}
-      <td class="pos-col"><span class="pos-chip ${positionChipClass(p.position)}">${esc(p.position)}</span></td>
+      <td class="pos-col">${renderDepthPositionCell(p)}</td>
       <td class="player-col">${playerNameButton(p)}</td>
       <td class="num rating-col">${ratingBadge(p.rating)}</td>
-      <td class="num depth-col">${depthLockControl(p, displayDepth, depthWeek)}</td>
+      <td class="num depth-col"><span class="depth-tie-wrap">${depthLockControl(p, displayDepth, depthWeek)}<span class="depth-tie-actions"><button class="depth-tie" data-player-key="${esc(sourceKey(p))}" data-dir="up" title="Move ahead when ratings tie">^</button><button class="depth-tie" data-player-key="${esc(sourceKey(p))}" data-dir="down" title="Move behind when ratings tie">v</button></span></span></td>
       <td class="stars-col">${starsMeter(p)}</td>
       <td class="nudge-col">${nudgeControls(p)}</td>
       <td class="injury-col"><span class="injury-stack">${injurySelect(sourceKey(p), p.injury)}${weekSelect(sourceKey(p), p.week)}</span></td>
@@ -4297,9 +6092,15 @@ function renderDepth() {
   `;
   const depthRowsForSide = (sidePlayers) => {
     const positionCounts = {};
-    const available = depthOrderedByPosition(sidePlayers.filter((player) => !playerUnavailableLabel(player, depthWeek)), depthWeek);
-    const unavailable = [...sidePlayers].filter((player) => playerUnavailableLabel(player, depthWeek)).sort((a, b) => depthPositionRank(a.position) - depthPositionRank(b.position) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player));
-    const ordered = [...available, ...unavailable];
+    const ordered = depthOrderedByPosition(sidePlayers, depthWeek).sort((a, b) => {
+      const posDiff = depthPositionRank(a.position) - depthPositionRank(b.position) || String(a.position).localeCompare(String(b.position));
+      if (posDiff) return posDiff;
+      const aUnavailable = playerUnavailableLabel(a, depthWeek);
+      const bUnavailable = playerUnavailableLabel(b, depthWeek);
+      if (Boolean(aUnavailable) !== Boolean(bUnavailable)) return aUnavailable ? 1 : -1;
+      if (aUnavailable && bUnavailable) return num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
+      return num(a.depth, 999) - num(b.depth, 999) || num(b.rating) - num(a.rating) || String(a.player).localeCompare(b.player);
+    });
     return ordered.map((p, index) => {
       const unavailable = playerUnavailableLabel(p, depthWeek);
       if (!unavailable) positionCounts[p.position] = (positionCounts[p.position] || 0) + 1;
@@ -4356,6 +6157,12 @@ function renderDepth() {
       state.depthCheckNotice = "";
       render();
     });
+    document.querySelectorAll("[data-depth-summary-activity]").forEach((button) => button.addEventListener("click", () => {
+      state.depthCheckActivity = button.dataset.depthSummaryActivity || "All Activities";
+      state.depthCheckVisibleLimit = 250;
+      state.depthCheckNotice = "";
+      render();
+    }));
     document.querySelector("#depth-check-show-more")?.addEventListener("click", () => {
       state.depthCheckVisibleLimit += 250;
       render();
@@ -4363,19 +6170,51 @@ function renderDepth() {
     document.querySelector("#depth-check-apply-all")?.addEventListener("click", applyAllDepthCheckResults);
     document.querySelector("#depth-check-add-missing")?.addEventListener("click", addAllMissingDepthCheckPlayers);
     document.querySelector("#injury-check-run")?.addEventListener("click", runInjuryCheck);
+    document.querySelector("#injury-check-toggle")?.addEventListener("click", () => {
+      state.injuryCheckOpen = !state.injuryCheckOpen;
+      storage.set("nflz-injury-check-open", state.injuryCheckOpen);
+      render();
+    });
     document.querySelector("#injury-check-activity")?.addEventListener("change", (event) => {
       state.injuryCheckActivity = event.target.value;
       render();
     });
+    document.querySelectorAll("[data-injury-summary-activity]").forEach((button) => button.addEventListener("click", () => {
+      state.injuryCheckActivity = button.dataset.injurySummaryActivity || "All Categories";
+      render();
+    }));
     document.querySelector("#injury-check-apply-shown")?.addEventListener("click", applyShownInjuryCheckResults);
+    document.querySelector("#injury-due-activity")?.addEventListener("change", (event) => {
+      state.injuryDueActivity = event.target.value;
+      render();
+    });
+    document.querySelectorAll("[data-injury-due-activity]").forEach((button) => button.addEventListener("click", () => {
+      state.injuryDueActivity = button.dataset.injuryDueActivity || "All Categories";
+      render();
+    }));
+    document.querySelector("#injury-due-apply-shown")?.addEventListener("click", applyShownInjuryDueResults);
     document.querySelectorAll(".injury-review-clear").forEach((button) => button.addEventListener("click", () => clearInjuryReviewDue(button.dataset.playerKey)));
     document.querySelectorAll(".injury-review-keep").forEach((button) => button.addEventListener("click", () => keepInjuryReviewDue(button.dataset.playerKey)));
+    document.querySelectorAll(".injury-review-change").forEach((button) => button.addEventListener("click", () => openInjuryDueStatusEditor(button.dataset.playerKey)));
+    document.querySelectorAll(".injury-review-apply-status").forEach((button) => button.addEventListener("click", () => changeInjuryReviewDueStatus(button.dataset.playerKey)));
+    document.querySelectorAll(".injury-review-cancel-status").forEach((button) => button.addEventListener("click", closeInjuryDueStatusEditor));
     document.querySelectorAll(".injury-apply-one").forEach((button) => button.addEventListener("click", () => applyInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
     document.querySelectorAll(".injury-idle-resolve").forEach((button) => button.addEventListener("click", () => resolveIdleInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
     document.querySelectorAll(".injury-ignore-one").forEach((button) => button.addEventListener("click", () => ignoreInjuryCheckResult(Number(button.dataset.injuryCheckIndex))));
     document.querySelectorAll(".depth-lock-button").forEach((button) => button.addEventListener("click", (event) => {
       event.stopPropagation();
       promptDepthLock(button.dataset.depthLockKey);
+    }));
+    document.querySelectorAll("[data-position-edit]").forEach((button) => button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      state.depthPositionEditor = button.dataset.positionEdit || "";
+      render();
+    }));
+    document.querySelectorAll(".depth-tie").forEach((button) => button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const player = findPlayer(button.dataset.playerKey);
+      if (player) adjustDepthTie(player, button.dataset.dir);
+      render();
     }));
     wireDepthLockEditor();
   });
@@ -4393,12 +6232,11 @@ function renderDepth() {
           ${optionSelect("depth-week", state.depthWeek, depthWeekOptions)}
           <button id="depth-check-run-both" class="mini-action primary">Run Both Checks</button>
           <button id="depth-check-run" class="mini-action primary">Scan OurLads</button>
-          <button id="injury-check-run" class="mini-action primary">Scan ESPN Injuries</button>
+          <button class="mini-action" data-page="injuries">Open Injury Report</button>
           ${pendingMissingDepthCheckCount() ? `<button id="depth-check-add-missing" class="mini-action primary">Add Missing Players (${pendingMissingDepthCheckCount()})</button>` : ""}
         </div>
       </div>
       ${renderDepthCheckPanel()}
-      ${renderInjuryCheckPanel()}
       ${reviewIsActive ? "<p class='depth-check-note depth-review-focus'>Team depth bubbles are paused while scan results are open so review actions stay quick.</p>" : `<div class="depth-bubble-list">${groupedTeams || "<p class='note'>No players match this view.</p>"}</div>`}
     </section>
     ${renderDepthLockEditor()}
@@ -4415,7 +6253,7 @@ function findPlayerByName(name) {
   return state.players.find((p) => p.player === name) || state.players.find((p) => String(p.player).toLowerCase() === String(name).toLowerCase());
 }
 
-const injuryStatuses = ["Healthy", "OUT for Season", "OUT thru Week ___", "IR Thru Week ___", "Suspended thru Week ___", "*Likely* Out thru Week ___"];
+const injuryStatuses = ["Healthy", "Probable for Week ___", "Questionable for Week ___", "OUT for Season", "OUT thru Week ___", "IR Thru Week ___", "Practice Squad", "Suspended thru Week ___", "*Likely* Out thru Week ___"];
 const injuryWeeks = ["", "Pre1", "Pre2", "Pre3", ...Array.from({ length: 18 }, (_, i) => String(i + 1)), "WC", "DIV", "ACC", "NCC", "SB"];
 
 function irAutoThruWeek() {
@@ -4433,11 +6271,19 @@ function currentInjuryReviewWeek() {
   return week === "Pre0" ? "Pre1" : week;
 }
 
+function injuryReviewWeekPlus(amount = 0) {
+  const current = currentInjuryReviewWeek();
+  if (String(current).startsWith("Pre")) return "1";
+  const week = Number(current);
+  if (!Number.isFinite(week)) return current || "1";
+  return String(Math.max(1, Math.min(18, week + amount)));
+}
+
 function defaultInjuryWeekForStatus(status, currentWeek = "") {
   const injury = status || "Healthy";
-  if (/^healthy$|out\s+for\s+season/i.test(injury)) return "";
+  if (/^healthy$|^practice\s+squad$|^ps$|out\s+for\s+season/i.test(injury)) return "";
   if (/^ir\s+thru/i.test(injury)) return irAutoThruWeek();
-  if (/out\s+thru|likely.*out\s+thru|suspended\s+thru/i.test(injury)) return currentWeek || currentInjuryReviewWeek();
+  if (/out\s+thru|likely.*out\s+thru|suspended\s+thru|probable\s+for\s+week|questionable\s+for\s+week/i.test(injury)) return currentWeek || currentInjuryReviewWeek();
   return currentWeek || "";
 }
 
@@ -4519,6 +6365,12 @@ function wirePlayerActions() {
     if (p) persistPlayer(p, { week: sel.value });
     render();
   }));
+  document.querySelectorAll(".player-position-select[data-player-key]").forEach((sel) => sel.addEventListener("change", () => {
+    const p = findPlayer(sel.dataset.playerKey);
+    if (p) persistPlayer(p, { position: sel.value, rawPosition: sel.value });
+    state.depthPositionEditor = "";
+    render();
+  }));
   document.querySelector("#modal-close")?.addEventListener("click", () => {
     state.selectedPlayerKey = null;
     render();
@@ -4535,6 +6387,34 @@ function wirePlayerActions() {
       render();
     }
   };
+  document.querySelector("#manual-player-name")?.addEventListener("blur", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    const newName = event.target.value;
+    if (p && newName && newName.trim() !== p.player) renamePlayer(p, newName);
+    render();
+  });
+  document.querySelector("#modal-position")?.addEventListener("change", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (p) persistPlayer(p, { position: event.target.value });
+    render();
+  });
+  document.querySelector("#modal-depth")?.addEventListener("change", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    const next = event.target.value;
+    if (p) persistPlayer(p, { depth: Number.isFinite(Number(next)) ? Number(next) : next });
+    render();
+  });
+  document.querySelector("#modal-team")?.addEventListener("change", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (p) persistPlayer(p, { team: normalizeTeamName(event.target.value) || "Free Agent" });
+    render();
+  });
+  document.querySelector("#manual-rating")?.addEventListener("change", () => {
+    const p = findPlayer(state.selectedPlayerKey);
+    const rating = num(document.querySelector("#manual-rating")?.value, p?.rating);
+    if (p) persistPlayer(p, { rating: Math.max(50, Math.min(105, Math.floor(rating))), newRating: Math.floor(rating), ratingChangeType: "Manual adjustment" });
+    render();
+  });
   document.querySelector("#rating-save")?.addEventListener("click", () => {
     const p = findPlayer(state.selectedPlayerKey);
     const rating = num(document.querySelector("#manual-rating")?.value, p?.rating);
@@ -4573,6 +6453,25 @@ function wirePlayerActions() {
     if (p) persistPlayer(p, { week: event.target.value });
     render();
   });
+  document.querySelector("#modal-position")?.addEventListener("change", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (p) persistPlayer(p, { position: event.target.value, rawPosition: event.target.value });
+    render();
+  });
+  document.querySelector("#modal-team")?.addEventListener("change", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (!p) return;
+    const team = event.target.value;
+    persistPlayer(p, isFreeAgentTeam(team) ? { team: "Free Agent", teamAbbrev: "FA" } : { team, teamAbbrev: state.data.meta.teamAbbrevs[team] || team });
+    render();
+  });
+  document.querySelector("#modal-depth")?.addEventListener("change", (event) => {
+    const p = findPlayer(state.selectedPlayerKey);
+    if (!p) return;
+    const value = event.target.value;
+    persistPlayer(p, { depth: Number.isFinite(Number(value)) ? Number(value) : value });
+    render();
+  });
   document.querySelector("#delete-player")?.addEventListener("click", () => {
     const p = findPlayer(state.selectedPlayerKey);
     if (!p) return;
@@ -4580,6 +6479,13 @@ function wirePlayerActions() {
     deletePlayer(p);
     render();
   });
+  document.querySelectorAll("[data-player-fantasy-league]").forEach((button) => button.addEventListener("click", () => {
+    state.page = "start";
+    state.myFantasyLeagueView = button.dataset.playerFantasyLeague || "all";
+    storage.set("nflz-my-fantasy-league-view", state.myFantasyLeagueView);
+    state.selectedPlayerKey = null;
+    render();
+  }));
 }
 
 function renderPlayerModal() {
@@ -4590,6 +6496,8 @@ function renderPlayerModal() {
   const team = teamByName(p.team) || { team: p.team, teamAbbrev: p.teamAbbrev };
   const source = sourceKey(p);
   const hasRenamedPlayer = Boolean(overrides[source]?.player);
+  const teams = ["Free Agent", ...unique(state.players.map((player) => normalizeTeamName(player.team)).filter((teamName) => teamName && teamName !== "Free Agent")).sort()];
+  const depthOptions = ["", ...Array.from({ length: 15 }, (_, index) => String(index + 1)), "INJ", "SUS"];
   return `
     <div class="modal">
       <div class="modal-card">
@@ -4601,29 +6509,27 @@ function renderPlayerModal() {
             <h2>${p.player}</h2>
             <p>${teamLogo(team.team, team.teamAbbrev)}<span>${esc(p.team)} - ${esc(p.position)}${String(p.player).includes("(R)") ? " - Rookie" : ""}</span></p>
           </div>
-          <div class="player-hero-rating player-hero-rating-large">${ratingBadge(p.rating)}<span>Current Rating</span><em>${esc(playerDepthLabel(p))}</em></div>
+          <div class="player-hero-rating player-hero-rating-large">${ratingBadge(p.rating)}<span>Current Rating</span><em>${playerDepthLabelMarkup(p)}</em></div>
+        </div>
+        <div class="player-card-edit-bar">
+          <label>Name <input id="manual-player-name" type="text" autocomplete="off" spellcheck="false" value="${esc(p.player)}" /></label>
+          <label>Position ${editablePositionSelect("modal-position", p.position, "modal-position-select")}</label>
+          <label>Depth ${optionSelect("modal-depth", String(p.depth || ""), depthOptions)}</label>
+          <label>Team ${optionSelect("modal-team", normalizeTeamName(p.team) || "Free Agent", teams)}</label>
+          <label class="rating-edit-label"><span>Rating</span><div class="rating-edit-controls"><button type="button" class="modal-thumb compact" data-dir="down">-</button><input id="manual-rating" type="number" min="50" max="105" value="${fmt(p.rating, 0)}" /><button type="button" class="modal-thumb compact" data-dir="up">+</button></div></label>
+          <label>Injury ${injurySelect("modal", p.injury).replace("class=\"injury-status\"", "id=\"modal-injury\" class=\"injury-status\"")}</label>
+          <label>Week ${weekSelect("modal", p.week).replace("class=\"injury-week\"", "id=\"modal-week\" class=\"injury-week\"")}</label>
+          <button id="modal-undo" class="mini-action">Undo</button>
         </div>
         <div class="player-card-grid">
+          ${playerDepthPanel(p)}
           ${playerRanksPanel(p)}
           ${playerReferencePanel(p)}
           ${playerFantasyPanel(p)}
           ${playerUsagePanel(p)}
         </div>
-        <div class="editor-row player-name-editor">
-          <label>Player name <input id="manual-player-name" type="text" value="${esc(p.player)}" /></label>
-          <button id="player-name-save">Save Name</button>
+        <div class="editor-row player-card-danger-row">
           ${hasRenamedPlayer ? `<button id="player-name-reset" class="mini-action">Reset Name</button>` : ""}
-        </div>
-        <div class="editor-row">
-          <label>Manual rating <input id="manual-rating" type="number" min="50" max="105" value="${fmt(p.rating, 0)}" /></label>
-          <button id="rating-save">Save Rating</button>
-          <button class="modal-thumb" data-dir="up">Nudge Up</button>
-          <button class="modal-thumb" data-dir="down">Nudge Down</button>
-          <button id="modal-undo">Undo Nudge</button>
-        </div>
-        <div class="editor-row">
-          <label>Injury status ${injurySelect("modal", p.injury).replace("class=\"injury-status\"", "id=\"modal-injury\" class=\"injury-status\"")}</label>
-          <label>Week ${weekSelect("modal", p.week).replace("class=\"injury-week\"", "id=\"modal-week\" class=\"injury-week\"")}</label>
           <button id="delete-player" class="danger">Delete Player</button>
         </div>
         ${renderRatingHistory(p)}
@@ -4749,6 +6655,13 @@ function wirePlayerModalControls() {
     deletePlayer(p);
     render();
   });
+  document.querySelectorAll("[data-player-fantasy-league]").forEach((button) => button.addEventListener("click", () => {
+    state.page = "start";
+    state.myFantasyLeagueView = button.dataset.playerFantasyLeague || "all";
+    storage.set("nflz-my-fantasy-league-view", state.myFantasyLeagueView);
+    state.selectedPlayerKey = null;
+    render();
+  }));
 }
 
 function positionRank(player) {
@@ -4806,6 +6719,12 @@ function playerDepthLabel(player) {
   return depth ? `${groupPosition(player.position)}${depth}` : groupPosition(player.position);
 }
 
+function playerDepthLabelMarkup(player) {
+  const unavailable = playerUnavailableLabel(player);
+  if (unavailable === "INJ") return `<span class="player-depth-icon-label">${depthBadge("INJ")}</span>`;
+  return esc(playerDepthLabel(player));
+}
+
 function maddenReferenceForPlayer(player) {
   const name = normalizeName(player.player);
   const team = normalizeTeamName(player.team);
@@ -4834,10 +6753,12 @@ function playerRanksPanel(player) {
 
 function playerReferencePanel(player) {
   const pff = pffRankInfo(player);
-  const madden = maddenReferenceForPlayer(player);
   const pffUrl = `https://www.pff.com/nfl/grades/position/${pffPositionSlug(player.position)}`;
   const pffRank = pff?.rank ? `#${pff.rank}${pff.total ? ` / ${pff.total}` : ""}` : "No rank";
   const pffGrade = pffHasGrade(pff) ? fmt(pff.grade, 1) : "No grade";
+  const importedAt = pff?.importedAt || window.PFF_POSITION_OVERRIDES?.fetchedAt || "";
+  const importedLabel = importedAt ? historyDate(importedAt) : "not imported";
+  const pffSeason = pff?.season || window.PFF_POSITION_OVERRIDES?.season || "2025";
   return `
     <section class="player-card-panel player-reference-panel">
       <div class="modal-section-head">
@@ -4845,27 +6766,75 @@ function playerReferencePanel(player) {
         <a class="mini-action" href="${esc(pffUrl)}" target="_blank" rel="noreferrer">PFF ${esc(groupPosition(player.position))}</a>
       </div>
       <div class="player-reference-grid">
-        <div>${madden ? ratingBadge(madden.ovr) : "<b>-</b>"}<span>Madden</span><em>${madden ? "last imported" : "No match"}</em></div>
-        <div class="pff-reference-tile">${renderMaddenPffCell(pff)}<span>PFF</span><em>${esc(pffRank)} / ${esc(pffGrade)}</em></div>
+        <div class="pff-reference-tile">${renderMaddenPffCell(pff)}<span>PFF Rank</span><em>${esc(pffRank)} among ${esc(groupPosition(player.position))}</em></div>
+        <div><b>${esc(pffGrade)}</b><span>PFF Grade</span><em>${esc(pffSeason)} / ${esc(importedLabel)}</em></div>
         <div>${player.school ? `<b>${esc(player.school)}</b>` : "<b>-</b>"}<span>College</span><em>${player.school ? "last school before NFL" : "not loaded yet"}</em></div>
       </div>
     </section>
   `;
 }
 
-function playerFantasyPanel(player) {
+function fantasyRowsForPlayer(player, kind = "weekly", week = null) {
   const position = groupPosition(player.position);
-  const weeklyRows = fantasyBoardRows("weekly", position, fantasyRankItem("weekly", position)?.rows || []);
-  const row = weeklyRows.find((item) => fantasyMergeKey(item.player) === fantasyMergeKey(player.player));
-  const seasonRows = fantasyBoardRows("season", position, fantasyRankItem("season", position)?.rows || []);
-  const season = seasonRows.find((item) => fantasyMergeKey(item.player) === fantasyMergeKey(player.player));
-  const bars = [["Weekly", row?.score], ["Last 5", row?.last5Score], ["Season", season?.score || row?.seasonScore]];
-  const max = Math.max(1, ...bars.map(([, value]) => num(value, 0)));
+  const base = fantasyRankItem(kind, position)?.rows || [];
+  const rows = kind === "weekly" && week !== null ? weeklyFantasyPlayerPool(position, base, week) : fantasyBoardRows(kind, position, base);
+  const match = rows.find((item) => item._playerKey === sourceKey(player))
+    || rows.find((item) => fantasyMergeKey(item.player || item.name) === fantasyMergeKey(player.player) && normalizeTeamName(item.team) === normalizeTeamName(player.team))
+    || rows.find((item) => fantasyMergeKey(item.player || item.name) === fantasyMergeKey(player.player));
+  return { position, rows, row: match };
+}
+
+function playerNextFantasyWeeks(player, startWeek = selectedSiteWeek()) {
+  const current = Number(String(startWeek).replace(/\D/g, "")) || 1;
+  return Array.from({ length: 5 }, (_, index) => current + index).filter((week) => week <= 17).map((week) => {
+    const { position, rows, row } = fantasyRowsForPlayer(player, "weekly", week);
+    const score = fantasyScoreForScoring(row, position, "full");
+    const rank = fantasyScoreRankForScoring(row, position, "full");
+    const opp = row?.opponent || "";
+    return { week, score, rank, total: rows.length, opp };
+  });
+}
+
+function playerDepthNeighborhood(player) {
+  const group = groupPosition(player.position);
+  const pool = depthOrderedPlayers(state.players.filter((item) =>
+    normalizeTeamName(item.team) === normalizeTeamName(player.team)
+    && groupPosition(item.position) === group
+  ));
+  const index = Math.max(0, pool.findIndex((item) => sourceKey(item) === sourceKey(player)));
+  const start = Math.max(0, Math.min(index - 1, pool.length - 3));
+  return pool.slice(start, start + 3).map((item, offset) => ({ player: item, depth: start + offset + 1, active: sourceKey(item) === sourceKey(player) }));
+}
+
+function playerFantasyTeamsFor(player) {
+  return ensureFantasyTeams().flatMap((league) => {
+    const rows = [...(league.teamRows || []), ...(league.lineupRows || [])];
+    const matches = rows.filter((row) => {
+      const found = findFantasyTeamPlayer(row);
+      return found && (sourceKey(found) === sourceKey(player) || fantasyMergeKey(found.player) === fantasyMergeKey(player.player));
+    });
+    return matches.map((row) => ({ league, tag: row.tag || row.slot || "Roster" }));
+  });
+}
+
+function playerFantasyPanel(player) {
+  const { position, rows: weeklyRows, row } = fantasyRowsForPlayer(player, "weekly");
+  if (!["QB", "RB", "WR", "TE", "Kicker"].includes(position)) return "";
+  const { rows: seasonRows, row: season } = fantasyRowsForPlayer(player, "season");
+  const score = fantasyScoreForScoring(row, position, "full");
+  const rank = fantasyScoreRankForScoring(row, position, "full");
+  const seasonRank = season?.rank || fantasyScoreRankForScoring(season, position, "full");
+  const nextWeeks = playerNextFantasyWeeks(player);
+  const weekRankText = rank ? `#${fantasyDisplay(rank, 0)} / ${weeklyRows.length}` : "-";
+  const seasonRankText = seasonRank ? `#${fantasyDisplay(seasonRank, 0)} / ${seasonRows.length || "-"}` : "-";
+  const chipStyle = (value) => Number.isFinite(Number(value)) ? cfStyle(value, 0, 24) : "";
   return `
     <section class="player-card-panel player-fantasy-panel">
-      <div class="modal-section-head"><h3>Fantasy</h3><span>${row?.opponent ? `Week ${esc(siteWeekLabel())} vs ${esc(row.opponent)}` : "projections building out"}</span></div>
-      <div class="player-fantasy-bars">
-        ${bars.map(([label, value]) => `<div><span>${esc(label)}</span><b>${fantasyDisplay(value, 1)}</b><em style="width:${Math.max(4, Math.round((num(value, 0) / max) * 100))}%"></em></div>`).join("")}
+      <div class="modal-section-head"><h3>Fantasy</h3><span>${row?.opponent ? `${esc(siteWeekLabel())} vs ${esc(row.opponent)}` : "projections building out"}</span></div>
+      <div class="player-fantasy-season-chip-grid">
+        <span class="season-week-chip player-fantasy-main-chip" ${chipStyle(score)}><span class="season-week-number">Now</span><b><span>Week</span></b><em>${esc(fantasyDisplay(score, 1))}</em><small>${esc(weekRankText)}</small></span>
+        <span class="season-week-chip player-fantasy-main-chip"><span class="season-week-number">Yr</span><b><span>Season</span></b><em>${esc(seasonRank ? `#${fantasyDisplay(seasonRank, 0)}` : "-")}</em><small>${esc(seasonRankText)}</small></span>
+        ${nextWeeks.map((item) => `<span class="season-week-chip player-fantasy-week-chip ${item.opp ? "" : "bye"}" ${item.opp ? chipStyle(item.score) : ""}><span class="season-week-number">W${esc(item.week)}</span><b>${item.opp ? `${teamLogoOnly(item.opp)}<span>${esc(teamAbbrevFor(item.opp, item.opp))}</span>` : "<span>BYE</span>"}</b><em>${esc(fantasyDisplay(item.score, 1))}</em><small>${item.rank ? `#${fantasyDisplay(item.rank, 0)} / ${item.total}` : "-"}</small></span>`).join("")}
       </div>
     </section>
   `;
@@ -4886,12 +6855,31 @@ function playerUsagePanel(player) {
     <section class="player-card-panel player-usage-panel">
       <div class="modal-section-head"><h3>Fantasy Usage</h3><span>Season / Last 5</span></div>
       <div class="player-usage-grid">
-        ${metric("Snap %", fantasyDisplay(snap, 1), fantasyDisplay(l5Snap, 1))}
-        ${metric("Targets", fantasyDisplay(targets, 1), fantasyDisplay(l5Targets, 1))}
-        ${metric("RZone", fantasyDisplay(rz, 1), fantasyDisplay(l5Rz, 1))}
+        ${metric("Snap %", fantasyDisplay(snap, 1), `L5 ${fantasyDisplay(l5Snap, 1)} / 2026 -`)}
+        ${metric("Targets", fantasyDisplay(targets, 1), `L5 ${fantasyDisplay(l5Targets, 1)} / 2026 -`)}
+        ${metric("RZone", fantasyDisplay(rz, 1), `L5 ${fantasyDisplay(l5Rz, 1)} / 2026 -`)}
       </div>
+      ${playerFantasyTeamMembershipPanel(player)}
     </section>
   `;
+}
+
+function playerDepthPanel(player) {
+  const rows = playerDepthNeighborhood(player);
+  if (!rows.length) return "";
+  return `<section class="player-card-panel player-depth-panel">
+    <div class="modal-section-head"><h3>Team Depth</h3><span>${playerDepthLabelMarkup(player)}</span></div>
+    <div class="player-depth-neighborhood">${rows.map((row) => `<div class="${row.active ? "active" : ""}"><b>${esc(groupPosition(row.player.position))}${esc(row.depth)}</b>${playerAvatar(row.player)}<span>${esc(row.player.player)}</span>${ratingBadge(row.player.rating)}</div>`).join("")}</div>
+  </section>`;
+}
+
+function playerFantasyTeamMembershipPanel(player) {
+  const teams = playerFantasyTeamsFor(player);
+  if (!teams.length) return "";
+  return `<div class="player-fantasy-team-list">
+    <h4>My Fantasy Teams</h4>
+    <div>${teams.map(({ league, tag }) => `<button type="button" data-player-fantasy-league="${esc(league.id)}"><b>${esc(league.league || league.name)}</b><span>${esc(tag)}</span></button>`).join("")}</div>
+  </div>`;
 }
 
 function playerTeamResultsPanel(player) {
@@ -4962,7 +6950,13 @@ function initialsExpandedName(value) {
 }
 
 function normalizeTeamName(value) {
-  return teamNameAliases[value] || value || "";
+  const raw = String(value || "").trim();
+  if (/^z\s*-\s*free\s*agent$/i.test(raw) || /^free\s*agent$/i.test(raw)) return "Free Agent";
+  return teamNameAliases[raw] || raw || "";
+}
+
+function isFreeAgentTeam(value) {
+  return /free agent/i.test(String(value || "")) || normalizeTeamName(value) === "Free Agent";
 }
 
 function maddenPosition(pos) {
@@ -5437,13 +7431,15 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   const pffPct = pffRankPercentile(pff);
   const snapPct = Number.isFinite(Number(pff?.snapPercentile)) ? Math.max(0.25, Math.min(1, Number(pff.snapPercentile) / 100)) : 0.5;
   const hasPff = pffPct !== null;
-  if (!hasPff && baseline && mine === num(baseline.mine) && Number.isFinite(Number(baseline.suggested))) {
+  const posGroup = groupPosition(row.match.position || row.madden.pos || "");
+  const isDefense = ["IDL", "EDGE", "LB", "CB", "S"].includes(posGroup);
+  if (!hasPff && baseline && mine === num(baseline.mine) && Number.isFinite(Number(baseline.suggested)) && !(isDefense && mine >= 90 && madden < 80)) {
     return Math.max(68, Math.min(110, num(baseline.suggested)));
   }
   const trust = hasPff ? Math.max(0.35, Math.min(1, 0.35 + (snapPct * 0.65))) : 0.45;
   let closePct;
   if (!hasPff) {
-    closePct = gap > 0 ? 0.1 : 0.14;
+    closePct = gap > 0 ? 0.1 : (isDefense && mine >= 90 && madden < 80 ? 0.34 : 0.22);
   } else if (gap > 0) {
     closePct = pffPct >= 0.9
       ? 0.82 + (0.16 * trust)
@@ -5465,7 +7461,10 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   }
   closePct = Math.max(0.05, Math.min(0.92, closePct));
   let suggested = Math.round(mine + (gap * closePct));
-  if (!hasPff && Math.abs(suggested - mine) > 2) suggested = mine + (gap > 0 ? 2 : -2);
+  if (!hasPff) {
+    const maxNoPffMove = gap > 0 ? 2 : (isDefense && mine >= 92 && madden < 80 ? 6 : isDefense && mine >= 90 ? 4 : 3);
+    if (Math.abs(suggested - mine) > maxNoPffMove) suggested = mine + (gap > 0 ? maxNoPffMove : -maxNoPffMove);
+  }
   if (gap > 0 && hasPff && pffPct >= 0.88 && snapPct >= 0.65 && Math.abs(gap) >= 8) suggested = Math.max(suggested, madden - 1);
   if (gap > 0 && hasPff && pffPct >= 0.8 && snapPct >= 0.55 && Math.abs(gap) >= 7) suggested = Math.max(suggested, madden - 2);
   if (gap > 0 && hasPff && pffPct >= 0.7 && snapPct >= 0.45 && Math.abs(gap) >= 6) suggested = Math.max(suggested, mine + Math.min(Math.abs(gap), 5));
@@ -5474,6 +7473,12 @@ function maddenSuggestedRating(row, pff = maddenRowPff(row)) {
   if (gap > 0 && hasPff && pffPct >= 0.55 && snapPct >= 0.4 && Math.abs(gap) >= 4) suggested = Math.max(suggested, mine + 2);
   if (gap < 0 && hasPff && pffPct >= 0.8) suggested = Math.max(suggested, mine - 1);
   if (gap < 0 && hasPff && pffPct <= 0.25 && Math.abs(gap) >= 4) suggested = Math.min(suggested, mine - 3);
+  if (gap < 0 && isDefense && mine >= 90 && madden < 80 && hasPff) {
+    if (pffPct >= 0.8) suggested = Math.max(suggested, mine - 1);
+    else if (pffPct >= 0.6) suggested = Math.min(suggested, mine - 3);
+    else if (pffPct >= 0.35) suggested = Math.min(suggested, mine - Math.min(5, Math.abs(gap)));
+    else suggested = Math.min(suggested, mine - Math.min(7, Math.abs(gap)));
+  }
   if (Math.abs(gap) >= 5 && suggested !== mine && Math.abs(suggested - mine) === 1 && hasPff && pffPct > 0.25 && pffPct < 0.8) {
     suggested = mine + (gap > 0 ? 2 : -2);
   }
@@ -5819,10 +7824,21 @@ function renderMadden() {
 }
 
 function renderTop30() {
-  const positionOrder = [...new Map(state.players.sort((a, b) => num(a.positionNumber, 99) - num(b.positionNumber, 99)).map((p) => [groupPosition(p.position), p.positionNumber])).keys()];
-  const positions = ["All Positions", ...positionOrder];
+  const corePositions = ["QB", "RB", "WR", "TE", "LT", "LG", "C", "RG", "RT", "IDL", "EDGE", "LB", "CB", "S"];
+  const top30PositionFor = (player) => {
+    const raw = String(player?.position || "").trim().toUpperCase();
+    if (excludedPlayerPositions.has(raw)) return "";
+    const position = fallbackModelPosition(raw) || raw;
+    return corePositions.includes(position) ? position : "";
+  };
+  const positionOrder = corePositions;
+  const positions = ["ALL", "All Positions", ...positionOrder];
+  if (!positions.includes(state.topPosition)) {
+    state.topPosition = "ALL";
+    storage.set("nflz-top-position", "ALL");
+  }
   const limits = [10, 20, 30, 50, 100, 150, 250, 500, 1000];
-  const shownPositions = state.topPosition === "All Positions" ? positionOrder.slice(0, 8) : [state.topPosition];
+  const shownPositions = state.topPosition === "All Positions" ? positionOrder : [state.topPosition];
   setTimeout(() => {
     wireSelect("top-position", "topPosition");
     document.querySelector("#top-limit")?.addEventListener("change", (event) => {
@@ -5832,12 +7848,19 @@ function renderTop30() {
     wirePlayerActions();
   });
   const cards = shownPositions.map((position) => {
-    const ranked = buildRankedPlayers(position, Number(state.topLimit)).filter(matches);
+    const isAll = position === "ALL";
+    const ranked = state.players
+      .filter((p) => (isAll ? Boolean(top30PositionFor(p)) : top30PositionFor(p) === position) && Number.isFinite(Number(p.rating)))
+      .sort((a, b) => num(b.rating) - num(a.rating) || num(b.depthTie, 0) - num(a.depthTie, 0) || String(a.player || "").localeCompare(String(b.player || "")))
+      .slice(0, Number(state.topLimit))
+      .map((p, index) => ({ ...p, rank: index + 1 }))
+      .filter(matches);
     return `<section class="position-card"><div class="position-card-head"><h3>${esc(position)}</h3><span>${ranked.length}</span></div>
-      ${table([{ label: "#" }, { label: "Player" }, { label: "Tm" }, { label: "Rt", cls: "num" }], ranked.map((p) => `
+      ${table([{ label: "#" }, { label: "Player" }, ...(isAll ? [{ label: "Pos" }] : []), { label: "Tm" }, { label: "Rt", cls: "num" }], ranked.map((p) => `
         <tr class="${String(p.player).includes("(R)") ? "rookie" : ""}">
           <td><span class="rank mini-rank">${p.rank}</span></td>
           <td>${playerNameButton(p)}</td>
+          ${isAll ? `<td>${esc(top30PositionFor(p))}</td>` : ""}
           <td>${teamCell(p)}</td>
           <td class="num">${ratingBadge(p.rating)}</td>
         </tr>`))}
@@ -5867,6 +7890,7 @@ function scheduleGameCard(game, gameKey) {
   const oddsText = projection.favorite ? `${fmt(winProfile.favoriteChance * 100, 1)}% ${winAbbrev} Win` : "50.0% Pick'em";
   const averages = scheduleMetricAverages();
   const hfa = scheduleHomeAdvantage(game, projection.mode);
+  const neutralLabel = neutralSiteLabel(game);
   const visitorWins = projection.visitor > projection.home;
   const homeWins = projection.home > projection.visitor;
   const modeLabel = projection.mode === "preseason" ? "Preseason" : "Regular";
@@ -5885,10 +7909,64 @@ function scheduleGameCard(game, gameKey) {
       ${scheduleBubble("ODDS", oddsText, "", relativeMetricStyle(winProfile.favoriteChance * 100, 55, 22))}
       ${scheduleBubble("Total", fmt(projection.total, 1), "", relativeMetricStyle(projection.total, averages.total, 16))}
       ${scheduleBubble("HFA", `+${fmt(hfa, 1)}`, "", relativeMetricStyle(hfa, 1.5, 3))}
+      ${neutralLabel ? scheduleBubble("Neutral", neutralLabel, "", "style=\"background:#eef6ff;border-color:#93c5fd;\"") : ""}
     </div>
     ${scheduleMarketCards(game, projection)}
     ${schedulePickPanel(game, gameKey, projection)}
+    ${renderSchedulePropWatch(game, gameKey)}
   </article>`;
+}
+
+function schedulePropWatchRows(game) {
+  const week = scheduleWeekGroupKey(game.week);
+  const teams = new Set([normalizeTeamName(game.visitor), normalizeTeamName(game.home)]);
+  const allRows = ["QB", "RB", "WR", "TE"].flatMap((position) => {
+    const workbookRows = fantasyRankItem("weekly", position)?.rows || [];
+    return weeklyFantasyPlayerPool(position, workbookRows, week).map((row) => ({ ...row, propPosition: position }));
+  }).filter((row) => teams.has(normalizeTeamName(row.team)) && teams.has(normalizeTeamName(row.opponent)));
+  return allRows
+    .map((row) => {
+      const position = row.propPosition || normalizeFantasyPositionLabel(row.position);
+      const advantages = weeklyPropWatchAdvantage(row, position);
+      return {
+        row,
+        position,
+        advantages,
+        props: weeklyPropWatchProps(row, position),
+        watchScore: weeklyPropWatchScore(row, position, advantages),
+      };
+    })
+    .filter((item) => isFantasyRowAvailable(item.row) && item.advantages.length && item.props.some(([, value]) => value !== "" && value !== "-"))
+    .sort((a, b) => b.watchScore - a.watchScore || num(a.row.scoreRank || a.row.rank, 999) - num(b.row.scoreRank || b.row.rank, 999))
+    .slice(0, 5);
+}
+
+function renderSchedulePropWatch(game, gameKey) {
+  const open = Boolean(state.schedulePropWatchOpen?.[gameKey]);
+  const items = open ? schedulePropWatchRows(game) : [];
+  return `
+    <section class="prop-watch-panel schedule-prop-watch ${open ? "" : "collapsed"}">
+      <div class="prop-watch-head">
+        <div>
+          <h3>Players to Watch</h3>
+          <p>${open ? (items.length ? "Prop angles from this matchup." : "No strong prop angles found.") : "Expand for matchup-based prop angles."}</p>
+        </div>
+        <button class="mini-action schedule-prop-watch-toggle" data-schedule-prop-watch="${esc(gameKey)}">${open ? "Hide" : "Show"}</button>
+      </div>
+      ${open ? `
+        ${items.length ? `<div class="prop-watch-grid schedule-prop-watch-grid">${items.map(({ row, position, advantages, props }) => `
+          <article class="prop-watch-card">
+            <div class="prop-watch-player">
+              ${playerAvatar(findPlayer(row._playerKey) || row)}
+              <div><button class="player-open prop-watch-name" data-player-key="${esc(row._playerKey || "")}">${esc(row.player || row.team)}</button><span>${teamLogo(row.team, teamAbbrevFor(row.team))}${esc(teamAbbrevFor(row.team, row.team))} ${esc(position)} vs ${teamLogo(row.opponent, teamAbbrevFor(row.opponent))}${esc(teamAbbrevFor(row.opponent, row.opponent))}</span></div>
+            </div>
+            <div class="prop-watch-edge">${advantages.map((piece) => `<span>${esc(piece)}</span>`).join("")}</div>
+            <div class="prop-watch-props">${props.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</div>
+          </article>
+        `).join("")}</div>` : `<p class="empty-cell">No strong QB/RB/WR/TE prop-matchup angles for this game.</p>`}
+      ` : ""}
+    </section>
+  `;
 }
 
 function scheduleScorePill(teamName, score) {
@@ -6000,6 +8078,7 @@ function renderSchedule() {
     });
     wireScheduleControls();
     document.querySelector("#scan-draftkings-odds")?.addEventListener("click", scanDraftKingsOdds);
+    document.querySelector("#fill-model-z-picks")?.addEventListener("click", fillModelZPicksForSelectedWeek);
     document.querySelectorAll(".scan-espn-scores").forEach((button) => button.addEventListener("click", scanEspnScores));
     document.querySelector("#schedule-week")?.addEventListener("change", (event) => {
       state.scheduleWeek = event.target.value;
@@ -6031,7 +8110,7 @@ function renderSchedule() {
       const action = { ...gameAction(input.dataset.game), ...patch };
       if (Number.isFinite(Number(action.awayScore)) && Number.isFinite(Number(action.homeScore)) && action.awayScore !== "" && action.homeScore !== "") {
         const item = scheduleGames().map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) })).find((row) => row.key === input.dataset.game);
-        if (item) patch.resultWinner = num(action.awayScore) > num(action.homeScore) ? item.game.visitor : num(action.homeScore) > num(action.awayScore) ? item.game.home : "";
+        if (item) patch.resultWinner = num(action.awayScore) > num(action.homeScore) ? item.game.visitor : num(action.homeScore) > num(action.awayScore) ? item.game.home : "Tie";
       }
       autosaveGameAction(input.dataset.game, patch);
       if (rerender) render();
@@ -6040,6 +8119,14 @@ function renderSchedule() {
       input.addEventListener("input", () => persistScoreInput(input, false));
       input.addEventListener("change", () => persistScoreInput(input, true));
     });
+    document.querySelectorAll(".schedule-prop-watch-toggle").forEach((button) => button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const key = button.dataset.schedulePropWatch;
+      state.schedulePropWatchOpen = { ...(state.schedulePropWatchOpen || {}), [key]: !state.schedulePropWatchOpen?.[key] };
+      storage.set("nflz-schedule-prop-watch-open", state.schedulePropWatchOpen);
+      render();
+    }));
     document.querySelector(".schedule-groups")?.addEventListener("click", (event) => {
       if (isScheduleInteractiveTarget(event.target)) return;
       const card = event.target.closest(".schedule-card");
@@ -6070,14 +8157,18 @@ function renderSchedule() {
           ${optionSelect("schedule-view", state.scheduleView, [["season", "Season"], ["week", "Week"], ["team", "Team"]])}
           ${optionSelect("schedule-week", state.scheduleWeek, weeks)}
           ${select("schedule-team", state.scheduleTeam, teams)}
-          ${optionSelect("schedule-sim-mode", state.scheduleSimMode, [["auto", `Auto (${scheduleActiveMode({ week: selectedSiteWeek(), preseason: String(selectedSiteWeek()).startsWith("Pre") })})`], ["preseason", "Preseason Mode"], ["regular", "Regular Mode"]])}
+          <span class="mode-pill">Auto: ${scheduleActiveMode({ week: selectedSiteWeek(), preseason: String(selectedSiteWeek()).startsWith("Pre") }) === "preseason" ? "Preseason" : "Regular"} Mode</span>
           <button id="scan-draftkings-odds" class="mini-action primary" ${state.draftKingsScanStatus === "checking" ? "disabled" : ""}>Scan DraftKings Odds</button>
+          <button id="fill-model-z-picks" class="mini-action primary">Fill Model Z Picks</button>
+          <button id="schedule-rules-toggle" class="mini-action">${state.scheduleRulesOpen ? "Hide Rules" : "Show Pick Rules"}</button>
           <button id="schedule-controls-toggle" class="mini-action">${state.scheduleControlsOpen ? "Hide Sliders" : "Show Sliders"}</button>
           <button id="schedule-reset-controls" class="mini-action">Reset Sliders</button>
         </div>
       </div>
       ${draftKingsStatusNote()}
       ${scoreScanStatusNote()}
+      ${state.schedulePickFillMessage ? `<span class="scan-status review">${esc(state.schedulePickFillMessage)}</span>` : ""}
+      ${renderModelZPickRules()}
       ${renderScheduleControls()}
       <div class="schedule-groups">
         ${weekGroups.map(([week, weekGames]) => `<section class="schedule-week-group">
@@ -6158,7 +8249,7 @@ function standingSort(a, b) {
   return b.wins - a.wins || b.favored - a.favored || b.sos - a.sos || a.team.localeCompare(b.team);
 }
 
-function standingMiniTable(rows, showSeed = false, scaleRows = rows) {
+function standingMiniTable(rows, showSeed = false, scaleRows = rows, compactTeams = false) {
   const winValues = scaleRows.map((row) => row.wins);
   const lossValues = scaleRows.map((row) => row.losses);
   const favValues = scaleRows.map((row) => row.favored);
@@ -6172,7 +8263,7 @@ function standingMiniTable(rows, showSeed = false, scaleRows = rows) {
     { label: "SOS Rk", cls: "num", title: "Strength of schedule rank. 1 is easiest." },
   ], rows.map((row, index) => `<tr>
     ${showSeed ? `<td class="num"><span class="rank mini-rank">${index + 1}</span></td>` : ""}
-    <td><button class="standings-team-link" data-standings-team="${esc(row.team)}">${teamCellByName(row.team)}</button></td>
+    <td><button class="standings-team-link" data-standings-team="${esc(row.team)}">${compactTeams ? teamCellByNameCompact(row.team) : teamCellByName(row.team)}</button></td>
     <td class="num standings-num strong cf" ${cfStyle(row.wins, Math.min(...winValues), Math.max(...winValues))}>${fmt(row.wins, 2)}</td>
     <td class="num standings-num cf" ${cfStyle(row.losses, Math.min(...lossValues), Math.max(...lossValues), true)}>${fmt(row.losses, 2)}</td>
     <td class="num cf" ${cfStyle(row.favored, Math.min(...favValues), Math.max(...favValues))}>${fmt(row.favored, 0)}</td>
@@ -6263,7 +8354,7 @@ function renderStandings() {
   const nfcDivisions = divisions.filter((division) => division.startsWith("NFC"));
   const afcSeeds = playoffSeeds(rows, "AFC");
   const nfcSeeds = playoffSeeds(rows, "NFC");
-  const divisionBubble = (division) => `<div class="division-bubble"><h4>${esc(division)}</h4>${standingMiniTable(rows.filter((row) => row.division === division).sort(standingSort), false, rows)}</div>`;
+  const divisionBubble = (division) => `<div class="division-bubble"><h4>${esc(division)}</h4>${standingMiniTable(rows.filter((row) => row.division === division).sort(standingSort), false, rows, true)}</div>`;
   setTimeout(() => {
     document.querySelectorAll("[data-playoff-game]").forEach((button) => button.addEventListener("click", () => {
       try {
@@ -6298,8 +8389,8 @@ function renderStandings() {
       <section class="standings-card league"><h3>Full League</h3><div class="table-scroll standings-mini-scroll">${standingMiniTable(rows, true, rows)}</div></section>
       <section class="standings-card playoff"><h3>Playoff View</h3>
         <div class="playoff-seed-columns">
-          <div><h4>AFC</h4>${standingMiniTable(afcSeeds, true, rows)}</div>
-          <div><h4>NFC</h4>${standingMiniTable(nfcSeeds, true, rows)}</div>
+          <div><h4>AFC</h4>${standingMiniTable(afcSeeds, true, rows, true)}</div>
+          <div><h4>NFC</h4>${standingMiniTable(nfcSeeds, true, rows, true)}</div>
         </div>
       </section>
       <section class="standings-card divisions"><h3>Divisions</h3>
@@ -6390,13 +8481,18 @@ function renderTeamSeasonBreakdownModal(rows) {
 
 function gameSeasonType(game) {
   if (String(game.week).startsWith("Pre")) return "Preseason";
-  if (Number(game.week) >= 19 || String(game.week).toLowerCase().includes("playoff")) return "Post Season";
+  if (Number(game.week) >= 19 || String(game.week).toLowerCase().includes("playoff")) return "Playoffs";
   return "Regular Season";
 }
 
 function pickResultBadge(result) {
   if (!result) return `<span class="pick-grade pending">Pending</span>`;
   return `<span class="pick-grade ${result.toLowerCase()}">${esc(result)}</span>`;
+}
+
+function pickResultBadgeForChoice(pick, result) {
+  if (isNoPickChoice(pick)) return `<span class="pick-grade pending">No Pick</span>`;
+  return pickResultBadge(result);
 }
 
 function spreadTeamTokenMatches(teamToken, teamName) {
@@ -6411,13 +8507,24 @@ function spreadTeamTokenMatches(teamToken, teamName) {
   ]);
   if (aliases.has("ARI")) aliases.add("ARZ");
   if (aliases.has("ARZ")) aliases.add("ARI");
+  if (aliases.has("WAS")) aliases.add("WSH");
+  if (aliases.has("WSH")) aliases.add("WAS");
   if (aliases.has("LAR")) aliases.add("LA");
   if (aliases.has("LAC")) aliases.add("LA");
   return aliases.has(token);
 }
 
 function spreadPickContext(pick, game, action) {
-  if (!pick || action.awayScore === "" || action.homeScore === "") return null;
+  if (!pick || isNoPickChoice(pick) || action.awayScore === "" || action.homeScore === "") return null;
+  const pkMatch = String(pick).trim().match(/^(.+?)\s+PK$/i);
+  if (pkMatch) {
+    const teamToken = pkMatch[1].trim();
+    const team = spreadTeamTokenMatches(teamToken, game.visitor) ? game.visitor : spreadTeamTokenMatches(teamToken, game.home) ? game.home : "";
+    if (!team) return null;
+    const teamScore = team === game.visitor ? num(action.awayScore) : num(action.homeScore);
+    const oppScore = team === game.visitor ? num(action.homeScore) : num(action.awayScore);
+    return { team, sign: "PK", line: 0, adjusted: teamScore - oppScore };
+  }
   const match = String(pick).trim().match(/^(.+?)\s+([+-])\s*([\d.]+)/);
   if (!match) return null;
   const teamToken = match[1].trim();
@@ -6444,17 +8551,18 @@ function spreadCoverMargin(pick, game, action) {
 }
 
 function gradeTotalPick(pick, action) {
-  if (!pick || action.awayScore === "" || action.homeScore === "") return "";
-  const match = pick.match(/^([ou])([\d.]+)/i);
+  if (!pick || isNoPickChoice(pick) || action.awayScore === "" || action.homeScore === "") return "";
+  const match = String(pick).trim().match(/^(over|under|[ou])\s*([\d.]+)/i);
   if (!match) return "";
   const total = num(action.awayScore) + num(action.homeScore);
   const line = num(match[2]);
   if (total === line) return "Push";
-  return match[1].toLowerCase() === "o" ? (total > line ? "Win" : "Loss") : (total < line ? "Win" : "Loss");
+  return ["o", "over"].includes(match[1].toLowerCase()) ? (total > line ? "Win" : "Loss") : (total < line ? "Win" : "Loss");
 }
 
 function gradeMlPick(pick, action) {
-  if (!pick || !action.resultWinner) return "";
+  if (!pick || isNoPickChoice(pick) || !action.resultWinner) return "";
+  if (action.resultWinner === "Tie") return "Push";
   return pick === action.resultWinner ? "Win" : "Loss";
 }
 
@@ -6464,12 +8572,14 @@ function pickChoiceWithContext(label, context) {
 
 function spreadPickDisplay(pick, game, action) {
   if (!pick) return "-";
+  if (isNoPickChoice(pick)) return pickChoiceWithContext(NO_PICK_LABEL, "Excluded from stats");
   const margin = spreadCoverMargin(pick, game, action);
   return pickChoiceWithContext(pick, margin === null ? "" : `Cover ${margin > 0 ? "+" : ""}${fmt(margin, 1)}`);
 }
 
 function totalPickDisplay(pick, action) {
   if (!pick) return "-";
+  if (isNoPickChoice(pick)) return pickChoiceWithContext(NO_PICK_LABEL, "Excluded from stats");
   const total = action.awayScore !== "" && action.homeScore !== "" ? num(action.awayScore) + num(action.homeScore) : null;
   return pickChoiceWithContext(pick, total === null ? "" : `Total ${fmt(total, 0)}`);
 }
@@ -6481,6 +8591,23 @@ function pickStats(rows, field) {
   const pushes = graded.filter((item) => item === "Push").length;
   const decisions = wins + losses;
   return { wins, losses, pushes, pct: decisions ? wins / decisions : 0 };
+}
+
+function pickStatStyle(stat) {
+  const decisions = num(stat?.wins, 0) + num(stat?.losses, 0);
+  return decisions ? cfStyle(num(stat.pct, 0) * 100, 0, 100) : "";
+}
+
+function pickTeamCompact(name) {
+  if (!name) return "-";
+  const team = teamByName(name) || { team: name, teamAbbrev: teamAbbrevFor(name, name) };
+  return `<span class="pick-team-compact">${teamLogo(team.team, team.teamAbbrev)}<b>${esc(team.teamAbbrev || teamAbbrevFor(name, name))}</b></span>`;
+}
+
+function mlPickDisplay(pick) {
+  if (!pick) return "-";
+  if (isNoPickChoice(pick)) return pickChoiceWithContext(NO_PICK_LABEL, "Excluded from stats");
+  return pickTeamCompact(pick);
 }
 
 function renderPicksTracker() {
@@ -6497,31 +8624,49 @@ function renderPicksTracker() {
       totalResult: gradeTotalPick(action.total, action),
     };
   }).filter((row) => row.action.ml || row.action.spread || row.action.total || row.action.resultWinner || row.action.awayScore !== "" || row.action.homeScore !== "");
-  const groups = ["Preseason", "Regular Season", "Post Season"];
+  const groups = ["Preseason", "Regular Season", "Playoffs"];
   const allStats = ["ml", "spread", "total"].map((field) => ({ field, ...pickStats(rows, field) }));
-  const statCard = (label, stat) => `<div class="pick-stat"><span>${esc(label)}</span><strong>${fmt(stat.pct * 100, 1)}%</strong><em>${stat.wins}-${stat.losses}${stat.pushes ? `-${stat.pushes}` : ""}</em></div>`;
+  const currentPickWeek = scheduleWeekGroupKey(selectedSiteWeek());
+  const statCard = (label, stat) => `<div class="pick-stat" ${pickStatStyle(stat)}><span>${esc(label)}</span><strong>${fmt(stat.pct * 100, 1)}%</strong><em>${stat.wins}-${stat.losses}${stat.pushes ? `-${stat.pushes}` : ""}</em></div>`;
+  const pickRowsTable = (items) => `<div class="table-scroll picks-scroll">${table([
+    { label: "Week" }, { label: "Game" }, { label: "ML" }, { label: "ML Result" }, { label: "Spread" }, { label: "Spread Result" }, { label: "Total" }, { label: "Total Result" }, { label: "Final" },
+  ], items.map(({ game, action, mlResult, spreadResult, totalResult }) => `<tr>
+    <td>${esc(weekDisplay(game.week))}</td>
+    <td><span class="pick-game-compact">${pickTeamCompact(game.visitor)}<em>${normalizeTeamName(game.home) === normalizeTeamName(action.ml) ? "at" : "at"}</em>${pickTeamCompact(game.home)}</span></td>
+    <td>${mlPickDisplay(action.ml)}</td>
+    <td>${pickResultBadgeForChoice(action.ml, mlResult)}</td>
+    <td>${spreadPickDisplay(action.spread, game, action)}</td>
+    <td>${pickResultBadgeForChoice(action.spread, spreadResult)}</td>
+    <td>${totalPickDisplay(action.total, action)}</td>
+    <td>${pickResultBadgeForChoice(action.total, totalResult)}</td>
+    <td>${action.awayScore !== "" && action.homeScore !== "" ? `${esc(action.awayScore)}-${esc(action.homeScore)}` : "-"}</td>
+  </tr>`))}</div>`;
   return `<section class="panel picks-panel">
     <div class="toolbar"><div><h2>Picks Tracker</h2><p>Tracks Model Z picks from Season Schedule. Picks grade once the result winner and final score are entered or scanned.</p></div></div>
     <div class="pick-stats-row">${statCard("ML", allStats[0])}${statCard("Spread", allStats[1])}${statCard("Total", allStats[2])}</div>
     ${groups.map((group) => {
       const groupRows = rows.filter((row) => row.type === group);
       const groupStats = ["ml", "spread", "total"].map((field) => ({ field, ...pickStats(groupRows, field) }));
-      return `<section class="picks-group">
-        <div class="picks-group-head"><h3>${esc(group)}</h3><span>${groupRows.length} tracked games</span>${statCard("ML", groupStats[0])}${statCard("Spread", groupStats[1])}${statCard("Total", groupStats[2])}</div>
-        <div class="table-scroll picks-scroll">${table([
-          { label: "Week" }, { label: "Game" }, { label: "ML" }, { label: "ML Result" }, { label: "Spread" }, { label: "Spread Result" }, { label: "Total" }, { label: "Total Result" }, { label: "Final" },
-        ], groupRows.map(({ game, action, mlResult, spreadResult, totalResult }) => `<tr>
-          <td>${esc(weekDisplay(game.week))}</td>
-          <td>${teamCellByName(game.visitor)} at ${teamCellByName(game.home)}</td>
-          <td>${esc(action.ml ? teamByName(action.ml)?.teamAbbrev || action.ml : "-")}</td>
-          <td>${pickResultBadge(mlResult)}</td>
-          <td>${spreadPickDisplay(action.spread, game, action)}</td>
-          <td>${pickResultBadge(spreadResult)}</td>
-          <td>${totalPickDisplay(action.total, action)}</td>
-          <td>${pickResultBadge(totalResult)}</td>
-          <td>${action.awayScore !== "" && action.homeScore !== "" ? `${esc(action.awayScore)}-${esc(action.homeScore)}` : "-"}</td>
-        </tr>`))}</div>
-      </section>`;
+      const weekGroups = unique(groupRows.map((row) => String(row.game.week))).sort((a, b) => {
+        const pa = a.startsWith("Pre") ? -100 + Number(a.replace(/\D/g, "")) : Number(a.replace(/\D/g, ""));
+        const pb = b.startsWith("Pre") ? -100 + Number(b.replace(/\D/g, "")) : Number(b.replace(/\D/g, ""));
+        return pa - pb || a.localeCompare(b);
+      });
+      const groupHasCurrentWeek = groupRows.some((row) => scheduleWeekGroupKey(row.game.week) === currentPickWeek);
+      return `<details class="picks-group" ${groupHasCurrentWeek ? "open" : ""}>
+        <summary class="picks-group-head"><h3>${esc(group)}</h3><span>${groupRows.length} tracked games</span>${statCard("ML", groupStats[0])}${statCard("Spread", groupStats[1])}${statCard("Total", groupStats[2])}</summary>
+        <div class="picks-week-list">
+          ${weekGroups.map((week) => {
+            const weekRows = groupRows.filter((row) => String(row.game.week) === week);
+            const weekStats = ["ml", "spread", "total"].map((field) => ({ field, ...pickStats(weekRows, field) }));
+            const isCurrentWeek = scheduleWeekGroupKey(week) === currentPickWeek;
+            return `<details class="picks-week-group" ${isCurrentWeek ? "open" : ""}>
+              <summary><b>${esc(weekDisplay(week))}</b><span>${weekRows.length} games</span>${statCard("ML", weekStats[0])}${statCard("Spread", weekStats[1])}${statCard("Total", weekStats[2])}</summary>
+              ${pickRowsTable(weekRows)}
+            </details>`;
+          }).join("") || "<p class='note'>No picks tracked yet.</p>"}
+        </div>
+      </details>`;
     }).join("")}
   </section>`;
 }
@@ -7017,13 +9162,15 @@ async function scanFantasyProsAdp() {
     fantasyRowsCache.clear();
     const total = Object.values(window.FANTASYPROS_ADP.players || {}).reduce((sum, rows) => sum + (rows?.length || 0), 0);
     state.fantasyProsAdpScanStatus = "review";
-    state.fantasyProsAdpScanMessage = `Updated ${total} FantasyPros ADP rows across FullPPR, .5PPR, and NoPPR.`;
+    state.fantasyProsAdpScanMessage = window.FANTASYPROS_ADP.fromCache
+      ? `FantasyPros ADP cache loaded for ${total} rows. Refresh script could not reach FantasyPros, so existing ADP stayed in place.`
+      : `Updated ${total} FantasyPros ADP rows across FullPPR, .5PPR, and NoPPR.`;
   } catch (error) {
     const cached = window.FANTASYPROS_ADP;
     const total = Object.values(cached?.players || {}).reduce((sum, rows) => sum + (rows?.length || 0), 0);
     if (total) {
       state.fantasyProsAdpScanStatus = "review";
-      state.fantasyProsAdpScanMessage = `Using cached FantasyPros ADP for ${total} rows because the local scan server is not running. Open the local server URL or run refresh-fantasypros-adp.bat to refresh live.`;
+      state.fantasyProsAdpScanMessage = `FantasyPros ADP cache loaded for ${total} rows. Run refresh-fantasypros-adp.bat when you want a fresh pull.`;
       render();
       return;
     }
@@ -7051,18 +9198,26 @@ function fantasyProsAdpStatusNote() {
 async function scanDraftKingsOdds() {
   state.draftKingsScanStatus = "checking";
   state.draftKingsScanMessage = "Scanning ESPN DraftKings odds";
+  if (window.DRAFTKINGS_ODDS?.games?.length) {
+    storage.set(backupKeys.draftKingsOddsBackup, window.DRAFTKINGS_ODDS);
+  }
   render();
   try {
     const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/draftkings-odds-scan" : "/api/draftkings-odds-scan";
     const response = await fetch(apiUrl, { cache: "no-store" });
     if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
     window.DRAFTKINGS_ODDS = mergeDraftKingsOddsScan(await response.json(), window.DRAFTKINGS_ODDS);
+    if (window.DRAFTKINGS_ODDS?.games?.length) {
+      storage.set(backupKeys.draftKingsOddsBackup, window.DRAFTKINGS_ODDS);
+    }
     state.draftKingsScanStatus = "review";
-    state.draftKingsScanMessage = `Updated ${window.DRAFTKINGS_ODDS.freshGames || 0} DraftKings odds rows from ESPN; preserved ${window.DRAFTKINGS_ODDS.preservedPastGames || 0} past-game rows.`;
+    state.draftKingsScanMessage = window.DRAFTKINGS_ODDS.fromCache
+      ? `DraftKings live refresh failed, so cached odds loaded for ${window.DRAFTKINGS_ODDS.games?.length || 0} games. ${window.DRAFTKINGS_ODDS.refreshError || "Try again in a minute."}`
+      : `Updated ${window.DRAFTKINGS_ODDS.freshGames || 0} DraftKings odds rows from ESPN; preserved ${window.DRAFTKINGS_ODDS.preservedCompletedGames || 0} completed-game rows and ${window.DRAFTKINGS_ODDS.preservedPastGames || 0} past-game rows.`;
   } catch (error) {
     if (window.DRAFTKINGS_ODDS?.games?.length) {
       state.draftKingsScanStatus = "review";
-      state.draftKingsScanMessage = `Using cached DraftKings odds for ${window.DRAFTKINGS_ODDS.games.length} games because the local scan server is not running. Open the local server URL or run refresh-draftkings-odds.bat to refresh live.`;
+      state.draftKingsScanMessage = `Using cached DraftKings odds for ${window.DRAFTKINGS_ODDS.games.length} games. Live odds scan route was not reachable: ${error.message}`;
       render();
       return;
     }
@@ -7102,7 +9257,8 @@ function applyScannedScores(payload) {
       });
     if (!match) return;
     const winnerKey = scannedTeam(result.winner);
-    const resultWinner = winnerKey === scannedTeam(match.game.visitor)
+    const scannedTie = Number.isFinite(Number(result.awayScore)) && Number.isFinite(Number(result.homeScore)) && Number(result.awayScore) === Number(result.homeScore);
+    const resultWinner = scannedTie ? "Tie" : winnerKey === scannedTeam(match.game.visitor)
       ? match.game.visitor
       : winnerKey === scannedTeam(match.game.home)
         ? match.game.home
@@ -7128,12 +9284,14 @@ async function scanEspnScores() {
     window.ESPN_GAME_RESULTS = await response.json();
     const applied = applyScannedScores(window.ESPN_GAME_RESULTS);
     state.scoreScanStatus = "review";
-    state.scoreScanMessage = `Scanned ${window.ESPN_GAME_RESULTS.games?.length || 0} ESPN games and applied ${applied} completed results.`;
+    state.scoreScanMessage = window.ESPN_GAME_RESULTS.fromCache
+      ? `ESPN live refresh failed, so cached scores applied ${applied} completed results. ${window.ESPN_GAME_RESULTS.refreshError || "Try again in a minute."}`
+      : `Scanned ${window.ESPN_GAME_RESULTS.games?.length || 0} ESPN games live and applied ${applied} completed results.`;
   } catch (error) {
     if (window.ESPN_GAME_RESULTS?.games?.length) {
       const applied = applyScannedScores(window.ESPN_GAME_RESULTS);
       state.scoreScanStatus = "review";
-      state.scoreScanMessage = `Using cached ESPN scores and applied ${applied} completed results. Restart the local server or run refresh-espn-scores.bat to refresh live.`;
+      state.scoreScanMessage = `Using cached ESPN scores and applied ${applied} completed results. Live score scan route was not reachable: ${error.message}`;
       render();
       return;
     }
@@ -7306,11 +9464,12 @@ const weeklyQbSliderTips = {
   statRanks2025: "How much 2025 TeamRankings data affects context.",
   statRanks2026: "Ignored until real 2026 TeamRankings data loads.",
   last5: "How much recent production blends over season production.",
-  production2025: "How much 2025 production feeds production sliders.",
+  production2025: "How much 2025 production can move players away from neutral position/depth baselines. Low settings now act as a small override so matchup, script, talent, and context lead the score.",
   production2026: "Ignored until real 2026 game logs are loaded.",
   talent: "Your QB rating influence.",
   matchup: "Opponent vQB defensive matchup influence.",
   depth: "Depth chart and availability influence.",
+  positionalGap: "Compares this QB to the next active same-team QB behind him. A 5 rating-point gap is neutral; bigger gaps help, smaller gaps hurt. At 100%, max swing is +/-3 fantasy points.",
   oline: "Offensive line support influence.",
   ppg: "Model projected team scoring influence.",
   wr: "Weighted WR1-4 plus TE1/TE2 receiving support.",
@@ -7354,6 +9513,7 @@ function renderWeeklyQbFormulaControls(readOnly = false) {
         ${weeklyQbSlider("matchup", "Matchup", 0, 200, readOnly)}
         ${weeklyQbSlider("ppg", "Z's Projected PPG", 0, 200, readOnly)}
         ${weeklyQbSlider("depth", "Depth", 0, 200, readOnly)}
+        ${weeklyQbSlider("positionalGap", "Positional Gap", 0, 200, readOnly)}
         ${weeklyQbSlider("oline", "O-Line", 0, 200, readOnly)}
         ${weeklyQbSlider("wr", "Receiving Group", 0, 200, readOnly)}
       </div>
@@ -7378,6 +9538,7 @@ function renderWeeklyQbFormulaControls(readOnly = false) {
 function normalizeFantasyPositionLabel(label) {
   const text = String(label || "").trim();
   const upper = text.toUpperCase();
+  if (upper === "ALL PLAYERS" || upper === "ALL") return "All Players";
   if (["QB", "RB", "WR", "TE"].includes(upper)) return upper;
   if (upper === "HB") return "RB";
   if (upper === "DST" || upper === "DEF" || upper.includes("DEFENSE")) return "Defense";
@@ -7388,7 +9549,8 @@ function normalizeFantasyPositionLabel(label) {
 function fantasyRankPositions(kind) {
   const imported = Object.keys(fantasyRankBundle(kind)).map(normalizeFantasyPositionLabel);
   const core = ["QB", "RB", "WR", "TE", "Defense", "Kicker"];
-  return [...new Set([...core, ...imported].filter(Boolean))];
+  const positions = [...new Set([...core, ...imported].filter(Boolean))];
+  return kind === "season" ? ["All Players", ...positions] : positions;
 }
 
 function fantasyRankItem(kind, position) {
@@ -7493,9 +9655,457 @@ function applyFantasyScoreRangeToKey(rows, key, minScore, maxScore, rawLabel = "
   return rows;
 }
 
+function weeklyPositionalGapWeight(position) {
+  const normalized = normalizeFantasyPositionLabel(position);
+  if (normalized === "QB") {
+    const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
+    return Math.max(0, Math.min(2, num(weights.positionalGap, defaultWeeklyQbWeights.positionalGap) / 100));
+  }
+  if (["RB", "WR", "TE"].includes(normalized)) {
+    const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+    return Math.max(0, Math.min(2, num(weights.positionalGap, defaultWeeklySkillWeights.positionalGap) / 100));
+  }
+  return 0;
+}
+
+function fantasyPositionalGapInfo(row, position) {
+  const normalized = normalizeFantasyPositionLabel(position);
+  if (!["QB", "RB", "WR", "TE"].includes(normalized)) return null;
+  const week = row?.fantasyWeek || selectedSiteWeek();
+  const player = findPlayer(row?._playerKey) || state.players.find((candidate) => fantasyMergeKey(candidate.player) === fantasyMergeKey(row?.player) && groupPosition(candidate.position) === normalized && normalizeTeamName(candidate.team) === normalizeTeamName(row?.team));
+  if (!player || normalizeTeamName(player.team) === "Free Agent") return null;
+  const pool = state.players.filter((candidate) => {
+    if (!candidate || candidate === player) return false;
+    if (normalizeTeamName(candidate.team) !== normalizeTeamName(player.team)) return false;
+    if (groupPosition(candidate.position) !== normalized) return false;
+    if (normalizeTeamName(candidate.team) === "Free Agent") return false;
+    return !playerUnavailableLabel(candidate, week);
+  });
+  const ordered = depthOrderedPlayers([...(playerUnavailableLabel(player, week) ? [] : [player]), ...pool], week);
+  const index = ordered.findIndex((candidate) => sourceKey(candidate) === sourceKey(player) || fantasyMergeKey(candidate.player) === fantasyMergeKey(player.player));
+  const current = index >= 0 ? ordered[index] : player;
+  const next = index >= 0 ? ordered.slice(index + 1).find(Boolean) : null;
+  const currentRating = num(current?.rating, row?.rating);
+  const nextRating = next ? num(next.rating, currentRating - 5) : (num(row?.depth, current?.depth || 1) <= 1 ? currentRating - 10 : currentRating - 5);
+  const gap = Number((currentRating - nextRating).toFixed(1));
+  const raw = Math.max(-1, Math.min(1, (gap - 5) / 10));
+  const adjustment = Number((raw * 3 * weeklyPositionalGapWeight(normalized)).toFixed(1));
+  return {
+    gap,
+    adjustment,
+    nextName: next?.player || "",
+    nextRating: next ? num(next.rating, "") : "",
+  };
+}
+
+function applyWeeklyPositionalGapAdjustment(rows, position) {
+  const normalized = normalizeFantasyPositionLabel(position);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    const info = fantasyPositionalGapInfo(row, normalized);
+    row.extras["Positional Gap"] = info ? info.gap : "";
+    row.extras["Positional Gap Adj"] = info ? info.adjustment : 0;
+    row.extras["Next Depth Player"] = info?.nextName || "";
+    row.extras["Next Depth Rating"] = info?.nextRating ?? "";
+    if (!info || !Number.isFinite(Number(info.adjustment)) || !weeklyPositionalGapWeight(normalized)) return;
+    const adjust = (key) => {
+      row[key] = Number(Math.max(0, num(row[key], 0) + info.adjustment).toFixed(1));
+    };
+    if (normalized === "QB") adjust("score");
+    else {
+      adjust("fullPprScore");
+      adjust("halfPprScore");
+      adjust("standardScore");
+    }
+  });
+}
+
+function clampScore(value, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, Number(value)));
+}
+
+function rankGoodScore(rank, total = 32) {
+  const value = Number(rank);
+  if (!Number.isFinite(value)) return 50;
+  return clampScore(((total + 1 - value) / total) * 100);
+}
+
+function rankBadScore(rank, total = 32) {
+  return 100 - rankGoodScore(rank, total);
+}
+
+function linearScore(value, low, high, reverse = false) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || high === low) return 50;
+  const pct = clampScore((number - low) / (high - low), 0, 1);
+  return (reverse ? 1 - pct : pct) * 100;
+}
+
+function weeklySkillFinalProductionShare() {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const active2026Weight = hasActual2026Production() ? num(weights.production2026, 100) : 0;
+  return clampScore(Math.max(num(weights.production2025, 100), active2026Weight), 0, 100) / 100;
+}
+
+function weeklyQbFinalProductionShare() {
+  const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
+  const active2026Weight = hasActual2026Production() ? num(weights.production2026, 100) : 0;
+  return clampScore(Math.max(num(weights.production2025, 100), active2026Weight), 0, 100) / 100;
+}
+
+function weeklyDefenseHistoryShare() {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const activeSacks2026 = hasActual2026StatRanks() ? num(weights.sacks2026, 100) : 0;
+  const activeTakeaways2026 = hasActual2026StatRanks() ? num(weights.takeaways2026, 100) : 0;
+  const sacks = Math.max(num(weights.sacks2025, 100), activeSacks2026);
+  const takeaways = Math.max(num(weights.takeaways2025, 100), activeTakeaways2026);
+  return (clampScore((sacks + takeaways) / 2, 0, 100) / 100) * 0.45;
+}
+
+function weeklyKickerHistoryShare() {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const activeFourth2026 = hasActual2026StatRanks() ? num(weights.kickerFourthDowns2026, 100) : 0;
+  const fourthDowns = Math.max(num(weights.kickerFourthDowns2025, 100), activeFourth2026);
+  const longFg = num(weights.kickerLongFg, 100);
+  const fgVolume = num(weights.kickerFgVolume, 100);
+  return (clampScore((fourthDowns + longFg + fgVolume) / 3, 0, 100) / 100) * 0.4;
+}
+
+function weeklyQbContextValue(row) {
+  const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
+  const add = (items, value, key, baseWeight = 1) => {
+    const weight = Math.max(0, num(weights[key], defaultWeeklyQbWeights[key] ?? 100)) * baseWeight;
+    if (weight > 0 && Number.isFinite(Number(value))) items.push({ value: clampScore(value), weight });
+  };
+  const items = [];
+  const depth = Math.max(1, Math.min(6, num(row.depth, 6)));
+  const rating = num(row.rating, 75);
+  const matchRank = num(row.extras?.["Matchup Rating (Low is good)"], 16.5);
+  const olRank = num(row.extras?.["OL Rank"], 16.5);
+  const recRank = num(row.extras?.["Receiving Group Rank"] || row.extras?.["WR Group Rank"], 16.5);
+  const ppgRank = num(row.extras?.["PPG Rank"], 16.5);
+  const statVqbRank = num(row.extras?.["Stat vQB Rank"], 16.5);
+  const depthScores = [100, 55, 28, 12, 5, 2];
+  add(items, depthScores[depth - 1] ?? 8, "depth", 2.0);
+  add(items, linearScore(rating, 68, 100), "talent", 2.1);
+  add(items, rankGoodScore(matchRank, 32), "matchup", 1.15);
+  add(items, rankGoodScore(statVqbRank, 32), "statRanks", 0.65);
+  add(items, rankGoodScore(olRank, 32), "oline", 0.75);
+  add(items, rankGoodScore(recRank, 32), "wr", 0.85);
+  add(items, rankGoodScore(ppgRank, 32), "ppg", 0.8);
+  if (!items.length) return 50;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  const blended = totalWeight ? items.reduce((sum, item) => sum + (item.value * item.weight), 0) / totalWeight : 50;
+  const talentCeiling = 34 + (linearScore(rating, 68, 100) * 0.74);
+  const depthCeiling = [100, 65, 42, 24, 14, 8][depth - 1] ?? 20;
+  return clampScore(Math.min(blended, Math.min(100, (talentCeiling * 0.7) + (depthCeiling * 0.3) + 8)));
+}
+
+function weeklyQbProductionUsageValue(row, mode = "season") {
+  const prefix = mode === "last5" ? "!!LAST 5!!\n" : "";
+  const depth = Math.max(1, Math.min(6, num(row.depth, 6)));
+  const rating = num(row.rating, 75);
+  const passYards = num(row.extras?.[`${prefix}Typical Pass Yards`], row.extras?.["Typical Pass Yards"] ?? 225);
+  const passTds = num(row.extras?.[`${prefix}Typical Pass TDs`], row.extras?.["Typical Pass TDs"] ?? 1.6);
+  const rushAttempts = num(row.extras?.[`${prefix}Typical Rush Attempts`], row.extras?.["Typical Rush Attempts"] ?? 3);
+  const rushTds = num(row.extras?.[`${prefix}Typical Rush TDs`], row.extras?.["Typical Rush TDs"] ?? 0.2);
+  const depthPenalty = [0, -16, -28, -40, -50, -58][depth - 1] ?? -45;
+  return (passYards * 0.13) + (passTds * 19) + (rushAttempts * 1.8) + (rushTds * 28) + (linearScore(rating, 68, 100) * 0.22) + depthPenalty;
+}
+
+function applyWeeklyQbProductionRanges(rows) {
+  const range = weeklyFantasyScoreRanges.QB.all;
+  const seasonValues = rangedValuesFrom(rows, (row) => weeklyQbProductionUsageValue(row, "season"), range[0], range[1]);
+  const last5Values = rangedValuesFrom(rows, (row) => weeklyQbProductionUsageValue(row, "last5"), range[0], range[1]);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Raw Season Production Model"] = Number(weeklyQbProductionUsageValue(row, "season").toFixed(2));
+    row.extras["Raw Last 5 Production Model"] = Number(weeklyQbProductionUsageValue(row, "last5").toFixed(2));
+    row.seasonScore = seasonValues.get(row) ?? row.seasonScore;
+    row.last5Score = last5Values.get(row) ?? row.last5Score;
+  });
+  return rows;
+}
+
+function applyWeeklyQbFinalBlend(rows) {
+  const range = weeklyFantasyScoreRanges.QB.all;
+  const productionShare = weeklyQbFinalProductionShare();
+  const contextValues = new Map(rows.map((row) => [row, weeklyQbContextValue(row)]));
+  const rangedContext = rangedValuesFrom(rows, (row) => contextValues.get(row), range[0], range[1]);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Context Model Score"] = Number((contextValues.get(row) || 50).toFixed(1));
+    row.extras["Final Production Share"] = Number((productionShare * 100).toFixed(0));
+    row.extras["2025 Production Week Score"] = row.score;
+    row.score = Number(((num(rangedContext.get(row), row.score) * (1 - productionShare)) + (num(row.score, rangedContext.get(row)) * productionShare)).toFixed(1));
+  });
+  return rows;
+}
+
+function weeklySkillContextValue(row, position) {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const add = (items, value, key, baseWeight = 1) => {
+    const weight = Math.max(0, num(weights[key], defaultWeeklySkillWeights[key] ?? 100)) * baseWeight;
+    if (weight > 0 && Number.isFinite(Number(value))) items.push({ value: clampScore(value), weight });
+  };
+  const items = [];
+  const depth = Math.max(1, Math.min(6, num(row.depth, 6)));
+  const rating = num(row.rating, 75);
+  const margin = num(row.extras?.["Game Script"], 0);
+  const teamTotal = num(row.extras?.["Team Total"], 22);
+  const ppgRank = num(row.extras?.["PPG Rank"], 16.5);
+  const ypgRank = num(row.extras?.["Team YPG Rank"], 16.5);
+  const qbRank = num(row.extras?.["QB Rank"], 16.5);
+  const qbRating = num(row.extras?.["QB Rating"], 75);
+  const passTdRank = num(row.extras?.["Pass TDs Allowed Rank"], 16.5);
+  const rushTdRank = num(row.extras?.["Rush TDs Allowed Rank"], 16.5);
+  const depthScores = {
+    RB: [100, 70, 42, 20, 8, 3],
+    WR: [100, 84, 62, 34, 14, 5],
+    TE: [100, 62, 30, 12, 5, 2],
+  };
+  add(items, depthScores[position]?.[depth - 1] ?? 20, "depth", 1.85);
+  add(items, linearScore(rating, 70, 100), "talent", 2.25);
+  add(items, rankGoodScore(ppgRank, 32), "ppg", 0.65);
+  add(items, rankGoodScore(ypgRank, 32), "ppg", 0.35);
+  add(items, linearScore(teamTotal, 14, 34), "teamTotal", 0.65);
+
+  if (position === "RB") {
+    const oppRank = num(row.extras?.["Opp vRB Rank"], 16.5);
+    const olRank = num(row.extras?.["OL Rank"], 16.5);
+    add(items, rankGoodScore(oppRank, 32), "matchup", 1.0);
+    add(items, rankGoodScore(olRank, 32), "oline", 0.85);
+    add(items, rankGoodScore(rushTdRank, 32), "opponentTd", 0.7);
+    add(items, clampScore(50 + (margin * 2.0)), "gameScript", 0.65);
+  } else if (position === "WR") {
+    const oppRank = num(row.extras?.["Opp vWR Rank"], 16.5);
+    const cbRating = num(row.extras?.["CB Matchup Rating"], 84);
+    add(items, rankGoodScore(oppRank, 32), "matchup", 0.95);
+    add(items, linearScore(cbRating, 72, 99, true), "cbMatch", 1.05);
+    add(items, (rankGoodScore(qbRank, 32) + linearScore(qbRating, 70, 100)) / 2, "qb", 0.8);
+    add(items, rankGoodScore(passTdRank, 32), "opponentTd", 0.7);
+    add(items, clampScore(50 + (-margin * 1.7)), "gameScript", 0.55);
+  } else if (position === "TE") {
+    const oppRank = num(row.extras?.["Opp vTE Rank"], 16.5);
+    const oppRating = num(row.extras?.["Opp vTE Rating"], 84);
+    const olRank = num(row.extras?.["OL Rank"], 16.5);
+    add(items, (rankGoodScore(oppRank, 32) + linearScore(oppRating, 72, 99, true)) / 2, "matchup", 1.15);
+    add(items, (rankGoodScore(qbRank, 32) + linearScore(qbRating, 70, 100)) / 2, "qb", 1.0);
+    add(items, rankGoodScore(olRank, 32), "oline", 0.45);
+    add(items, rankGoodScore(passTdRank, 32), "opponentTd", 0.65);
+    add(items, clampScore(52 + (-margin * 1.8)), "gameScript", 0.9);
+  }
+  if (!items.length) return 50;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  const blended = totalWeight ? items.reduce((sum, item) => sum + (item.value * item.weight), 0) / totalWeight : 50;
+  const talentCeiling = 38 + (linearScore(rating, 70, 100) * 0.72);
+  const depthCeiling = {
+    RB: [100, 84, 66, 44, 26, 18],
+    WR: [100, 90, 72, 48, 28, 18],
+    TE: [100, 82, 58, 34, 22, 15],
+  }[position]?.[depth - 1] ?? 50;
+  const weightedCeiling = Math.min(100, (talentCeiling * 0.72) + (depthCeiling * 0.28) + 8);
+  return clampScore(Math.min(blended, weightedCeiling));
+}
+
+function rangedValuesFrom(rows, getter, minScore, maxScore) {
+  const values = rows.map((row) => Number(getter(row))).filter(Number.isFinite);
+  if (!values.length) return new Map();
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const out = new Map();
+  rows.forEach((row) => {
+    const raw = Number(getter(row));
+    const pct = Number.isFinite(raw) && high > low ? (raw - low) / (high - low) : 0.5;
+    out.set(row, Number((minScore + (clampScore(pct, 0, 1) * (maxScore - minScore))).toFixed(1)));
+  });
+  return out;
+}
+
+function weeklySkillProductionUsageValue(row, position, mode = "season") {
+  const prefix = mode === "last5" ? "!!LAST 5!!\n" : "";
+  const depth = Math.max(1, Math.min(6, num(row.depth, 6)));
+  const rating = num(row.rating, 75);
+  const snap = num(row.extras?.[`${prefix}Typical Snap %`], row.extras?.["Typical Snap %"] ?? 0);
+  const targets = num(row.extras?.[`${prefix}Typical Targets`], row.extras?.["Typical Targets"] ?? 0);
+  const rz = num(row.extras?.[`${prefix}Typical Red Zone Opportunities`], row.extras?.["Typical Red Zone Opportunities"] ?? 0);
+  const depthPenalty = {
+    RB: [0, -5, -13, -24, -34, -42],
+    WR: [0, -4, -12, -25, -36, -45],
+    TE: [0, -7, -19, -32, -42, -50],
+  }[position]?.[depth - 1] ?? -30;
+  const ratingPart = linearScore(rating, 70, 100) * 0.22;
+  if (position === "RB") {
+    const carries = num(row.extras?.Carries, 0);
+    const rushYds = num(row.extras?.["Rush Yds"], 0);
+    const rec = num(row.extras?.Receptions, targets * 0.65);
+    const recYds = num(row.extras?.["Rec Yds"], rec * 7);
+    return (snap * 0.26) + (targets * 4.6) + (rz * 12) + (carries * 1.2) + (rushYds * 0.13) + (recYds * 0.08) + ratingPart + depthPenalty;
+  }
+  if (position === "WR") {
+    return (snap * 0.32) + (targets * 7.6) + (rz * 16) + ratingPart + depthPenalty;
+  }
+  return (snap * 0.28) + (targets * 8.2) + (rz * 18) + ratingPart + depthPenalty;
+}
+
+function applyWeeklySkillProductionRanges(rows, position) {
+  if (!["RB", "WR", "TE"].includes(position)) return rows;
+  const ranges = weeklyFantasyScoreRanges[position] || weeklyFantasyScoreRanges.RB;
+  const seasonValues = rangedValuesFrom(rows, (row) => weeklySkillProductionUsageValue(row, position, "season"), ranges.full[0], ranges.full[1]);
+  const last5Values = rangedValuesFrom(rows, (row) => weeklySkillProductionUsageValue(row, position, "last5"), ranges.full[0], ranges.full[1]);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Raw Season Production Model"] = Number(weeklySkillProductionUsageValue(row, position, "season").toFixed(2));
+    row.extras["Raw Last 5 Production Model"] = Number(weeklySkillProductionUsageValue(row, position, "last5").toFixed(2));
+    row.seasonScore = seasonValues.get(row) ?? row.seasonScore;
+    row.last5Score = last5Values.get(row) ?? row.last5Score;
+  });
+  return rows;
+}
+
+function applyWeeklySkillFinalBlend(rows, position) {
+  if (!["RB", "WR", "TE"].includes(position)) return rows;
+  const ranges = weeklyFantasyScoreRanges[position] || weeklyFantasyScoreRanges.RB;
+  const productionShare = weeklySkillFinalProductionShare();
+  const contextValues = new Map(rows.map((row) => [row, weeklySkillContextValue(row, position)]));
+  const rangedFull = rangedValuesFrom(rows, (row) => contextValues.get(row), ranges.full[0], ranges.full[1]);
+  const rangedHalf = rangedValuesFrom(rows, (row) => contextValues.get(row), ranges.half[0], ranges.half[1]);
+  const rangedStandard = rangedValuesFrom(rows, (row) => contextValues.get(row), ranges.standard[0], ranges.standard[1]);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Context Model Score"] = Number((contextValues.get(row) || 50).toFixed(1));
+    row.extras["Final Production Share"] = Number((productionShare * 100).toFixed(0));
+    row.extras["2025 Production FullPPR"] = row.fullPprScore;
+    row.extras["2025 Production .5PPR"] = row.halfPprScore;
+    row.extras["2025 Production NoPPR"] = row.standardScore;
+    const blend = (contextValue, productionValue) => Number(((contextValue * (1 - productionShare)) + (num(productionValue, contextValue) * productionShare)).toFixed(1));
+    row.fullPprScore = blend(rangedFull.get(row), row.fullPprScore);
+    row.halfPprScore = blend(rangedHalf.get(row), row.halfPprScore);
+    row.standardScore = blend(rangedStandard.get(row), row.standardScore);
+  });
+  return rows;
+}
+
+function weeklyDefenseContextValue(row) {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const add = (items, value, key, baseWeight = 1) => {
+    const weight = Math.max(0, num(weights[key], defaultWeeklySkillWeights[key] ?? 100)) * baseWeight;
+    if (weight > 0 && Number.isFinite(Number(value))) items.push({ value: clampScore(value), weight });
+  };
+  const items = [];
+  add(items, linearScore(row.extras?.["Defense Rating"], 72, 98), "defRating", 1.35);
+  add(items, linearScore(row.extras?.["Team Pass Rush"], 72, 98), "passRush", 1.0);
+  add(items, linearScore(row.extras?.["Team Secondary"], 72, 98), "secondary", 0.9);
+  add(items, linearScore(row.extras?.["Opponent Off Rating"], 72, 98, true), "oppOffense", 1.05);
+  add(items, linearScore(row.extras?.["Opp QB Rating"], 68, 100, true), "oppQb", 1.0);
+  add(items, rankBadScore(row.extras?.["Opp PPG Rank"], 32), "oppPpg", 0.85);
+  add(items, linearScore(row.extras?.["Projected Points Allowed"], 13, 34, true), "oppPpg", 0.75);
+  if (!items.length) return 50;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  return totalWeight ? items.reduce((sum, item) => sum + (item.value * item.weight), 0) / totalWeight : 50;
+}
+
+function weeklyDefenseHistoryValue(row) {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const add = (items, value, key, baseWeight = 1) => {
+    const active2026Key = key.replace("2025", "2026");
+    const active2026Weight = hasActual2026StatRanks() ? num(weights[active2026Key], 100) : 0;
+    const weight = Math.max(num(weights[key], defaultWeeklySkillWeights[key] ?? 100), active2026Weight) * baseWeight;
+    if (weight > 0 && Number.isFinite(Number(value))) items.push({ value: clampScore(value), weight });
+  };
+  const items = [];
+  add(items, rankGoodScore(row.extras?.["Sacks Rank"], 32), "sacks2025", 1.0);
+  add(items, rankGoodScore(row.extras?.["Takeaways Rank"], 32), "takeaways2025", 1.0);
+  if (!items.length) return 50;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  return totalWeight ? items.reduce((sum, item) => sum + (item.value * item.weight), 0) / totalWeight : 50;
+}
+
+function applyWeeklyDefenseScoreRanges(rows) {
+  const range = [4.6, 8.8];
+  const historyShare = weeklyDefenseHistoryShare();
+  const contextValues = new Map(rows.map((row) => [row, weeklyDefenseContextValue(row)]));
+  const historyValues = new Map(rows.map((row) => [row, weeklyDefenseHistoryValue(row)]));
+  const rangedContext = rangedValuesFrom(rows, (row) => contextValues.get(row), range[0], range[1]);
+  const rangedHistory = rangedValuesFrom(rows, (row) => historyValues.get(row), range[0], range[1]);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Raw Week Score"] = row.score;
+    row.extras["Context Model Score"] = Number((contextValues.get(row) || 50).toFixed(1));
+    row.extras["Raw 2025 Production Model"] = Number((historyValues.get(row) || 50).toFixed(1));
+    row.extras["Final Production Share"] = Number((historyShare * 100).toFixed(0));
+    row.extras["2025 Production"] = rangedHistory.get(row) ?? row.score;
+    row.score = Number(((num(rangedContext.get(row), row.score) * (1 - historyShare)) + (num(rangedHistory.get(row), row.score) * historyShare)).toFixed(1));
+    row.seasonScore = row.extras["2025 Production"];
+    row.last5Score = row.score;
+    row.value = row.score;
+  });
+  return rows;
+}
+
+function weeklyKickerContextValue(row) {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const add = (items, value, key, baseWeight = 1) => {
+    const weight = Math.max(0, num(weights[key], defaultWeeklySkillWeights[key] ?? 100)) * baseWeight;
+    if (weight > 0 && Number.isFinite(Number(value))) items.push({ value: clampScore(value), weight });
+  };
+  const items = [];
+  add(items, linearScore(row.extras?.["Player Rating"], 62, 88), "kickerRating", 1.25);
+  add(items, rankGoodScore(row.extras?.["Team Offense Rank"], 32), "kickerOffense", 0.95);
+  add(items, linearScore(row.extras?.["Team Total"], 13, 34), "kickerOffense", 1.0);
+  add(items, rankGoodScore(row.extras?.["Team Total Rank"], 32), "kickerOffense", 0.7);
+  add(items, linearScore(row.extras?.["Stadium Rating"], -1, 3), "kickerStadium", 0.55);
+  add(items, linearScore(row.extras?.["4th Down Difficulty"], 1, 32, true), "kickerFourthDowns2025", 0.55);
+  if (!items.length) return 50;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  return totalWeight ? items.reduce((sum, item) => sum + (item.value * item.weight), 0) / totalWeight : 50;
+}
+
+function weeklyKickerHistoryValue(row) {
+  const weights = { ...defaultWeeklySkillWeights, ...state.weeklySkillWeights };
+  const add = (items, value, key, baseWeight = 1) => {
+    const active2026Key = key.replace("2025", "2026");
+    const active2026Weight = hasActual2026StatRanks() ? num(weights[active2026Key], 100) : 0;
+    const weight = Math.max(num(weights[key], defaultWeeklySkillWeights[key] ?? 100), active2026Weight) * baseWeight;
+    if (weight > 0 && Number.isFinite(Number(value))) items.push({ value: clampScore(value), weight });
+  };
+  const items = [];
+  add(items, linearScore(row.extras?.["50+ FGs"], 0, 4), "kickerLongFg", 0.8);
+  add(items, linearScore(row.extras?.["FG Volume"], 1.2, 4.2), "kickerFgVolume", 1.0);
+  add(items, linearScore(row.extras?.["4th Down Difficulty"], 1, 32, true), "kickerFourthDowns2025", 0.65);
+  if (!items.length) return 50;
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  return totalWeight ? items.reduce((sum, item) => sum + (item.value * item.weight), 0) / totalWeight : 50;
+}
+
+function applyWeeklyKickerScoreRanges(rows) {
+  const range = [5.9, 8.8];
+  const historyShare = weeklyKickerHistoryShare();
+  const contextValues = new Map(rows.map((row) => [row, weeklyKickerContextValue(row)]));
+  const historyValues = new Map(rows.map((row) => [row, weeklyKickerHistoryValue(row)]));
+  const rangedContext = rangedValuesFrom(rows, (row) => contextValues.get(row), range[0], range[1]);
+  const rangedHistory = rangedValuesFrom(rows, (row) => historyValues.get(row), range[0], range[1]);
+  rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Raw Week Score"] = row.score;
+    row.extras["Context Model Score"] = Number((contextValues.get(row) || 50).toFixed(1));
+    row.extras["Raw 2025 Production Model"] = Number((historyValues.get(row) || 50).toFixed(1));
+    row.extras["Final Production Share"] = Number((historyShare * 100).toFixed(0));
+    row.extras["2025 Production"] = rangedHistory.get(row) ?? row.score;
+    row.score = Number(((num(rangedContext.get(row), row.score) * (1 - historyShare)) + (num(rangedHistory.get(row), row.score) * historyShare)).toFixed(1));
+    row.seasonScore = row.extras["2025 Production"];
+    row.last5Score = row.score;
+    row.value = row.score;
+  });
+  return rows;
+}
+
 function applyFantasyScoreRange(rows, minScore, maxScore) {
   applyFantasyScoreRangeToKey(rows, "score", minScore, maxScore, "Raw Model Score");
   rows.forEach((row) => {
+    row.extras ||= {};
+    row.extras["Context Model Score"] = Number.isFinite(Number(row.extras["Raw Model Score"])) ? Number(row.extras["Raw Model Score"]) : row.score;
+    row.extras["Final Production Share"] = 0;
     row.seasonScore = row.score;
     row.last5Score = row.score;
     row.value = row.score;
@@ -7508,6 +10118,9 @@ function applyWeeklyQbFantasyRange(rows) {
   applyFantasyScoreRangeToKey(rows, "score", range[0], range[1], "Raw Week Score");
   applyFantasyScoreRangeToKey(rows, "seasonScore", range[0], range[1], "Raw Season Production");
   applyFantasyScoreRangeToKey(rows, "last5Score", range[0], range[1], "Raw Last 5 Production");
+  applyWeeklyQbProductionRanges(rows);
+  applyWeeklyQbFinalBlend(rows);
+  applyWeeklyPositionalGapAdjustment(rows, "QB");
   rows.forEach((row) => {
     row.value = Number.isFinite(Number(row.extras?.Salary)) && Number(row.extras.Salary) > 0 ? Number((row.score / Number(row.extras.Salary)).toFixed(3)) : row.score;
   });
@@ -7520,6 +10133,9 @@ function applyWeeklyPprFantasyRanges(rows, position) {
   applyFantasyScoreRangeToKey(rows, "standardScore", ranges.standard[0], ranges.standard[1], "Raw NoPPR");
   applyFantasyScoreRangeToKey(rows, "seasonScore", ranges.full[0], ranges.full[1], "Raw Season Production");
   applyFantasyScoreRangeToKey(rows, "last5Score", ranges.full[0], ranges.full[1], "Raw Last 5 Production");
+  applyWeeklySkillProductionRanges(rows, position);
+  applyWeeklySkillFinalBlend(rows, position);
+  applyWeeklyPositionalGapAdjustment(rows, position);
   rows.forEach((row) => {
     row.score = row.fullPprScore;
     row.value = row.score;
@@ -7682,12 +10298,17 @@ function hasActual2026StatRanks() {
   return season >= 2026 && Array.isArray(scan?.teams) && scan.teams.length >= 32;
 }
 
+function sliderSourceInfluence(value, fallback = 100) {
+  const pct = Math.max(0, Math.min(1, num(value, fallback) / 100));
+  return Math.pow(pct, 3.5);
+}
+
 function weeklyQbProductionWeight() {
   const weights = { ...defaultWeeklyQbWeights, ...state.weeklyQbWeights };
   const options = { ...defaultWeeklyQbOptions, ...state.weeklyQbOptions };
   if (!options.useProduction && state.weeklyQbWeights?.production2025 === undefined && state.weeklyQbWeights?.production2026 === undefined) return 0;
   const active2026Weight = hasActual2026Production() ? num(weights.production2026, 100) : 0;
-  return Math.max(0, Math.min(1, Math.max(num(weights.production2025, 100), active2026Weight) / 100));
+  return sliderSourceInfluence(Math.max(num(weights.production2025, 100), active2026Weight));
 }
 
 function weightedStatRankScore(statRank, ratingFallback, statWeight) {
@@ -7786,6 +10407,8 @@ function buildWeeklyQbRows(workbookRows, weekOverride = null) {
       "Receiving Group Rank": rankNumber(rankedTeamsByWr, (item) => item.score, wrRow),
       "WR Group Rating": Number.isFinite(Number(wrRating)) ? Number(wrRating.toFixed(3)) : "",
       "WR Group Rank": rankNumber(rankedTeamsByWr, (item) => item.score, wrRow),
+      "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
+      "Production Influence": Number((weeklyQbProductionWeight() * 100).toFixed(1)),
       "Typical Pass Yards": Number(statPack.season.passYards.toFixed(1)),
       "Typical Pass Yards Rounded Down": floorTo(statPack.season.passYards, 10),
       "Pass Yards Bonus Score": Number(((statPack.season.passYards / 100) * 2).toFixed(3)),
@@ -7860,6 +10483,15 @@ function positionDepthFactor(depth, position) {
   return curve[d - 1] ?? 0.12;
 }
 
+function weeklyRbNeutralUsage(depth) {
+  const d = Math.max(1, Math.min(4, num(depth, 3)));
+  return {
+    snapPct: [70, 58, 42, 26][d - 1],
+    targets: [3.8, 2.6, 1.4, 0.7][d - 1],
+    rz: [1.3, 0.8, 0.45, 0.2][d - 1],
+  };
+}
+
 function weeklySkillMatchupScore(position, opponentTeam) {
   if (!opponentTeam) return 84;
   if (position === "RB") return averageFinite([teamPositionScore(opponentTeam, "IDL"), teamPositionScore(opponentTeam, "LB Only")], 84);
@@ -7917,7 +10549,7 @@ function weeklySkillProductionWeight() {
   const options = weeklySkillOptions();
   if (!options.useProduction && state.weeklySkillWeights?.production2025 === undefined && state.weeklySkillWeights?.production2026 === undefined) return 0;
   const active2026Weight = hasActual2026Production() ? num(weights.production2026, 100) : 0;
-  return Math.max(0, Math.min(1, Math.max(num(weights.production2025, 100), active2026Weight) / 100));
+  return sliderSourceInfluence(Math.max(num(weights.production2025, 100), active2026Weight));
 }
 
 function weeklySkillLast5Blend(mode = "blend") {
@@ -7932,6 +10564,10 @@ function weeklySkillProductionValue(value, fallback) {
   return fallback + ((num(value, fallback) - fallback) * productionWeight);
 }
 
+function weeklyProductionInfluencePct() {
+  return Number((weeklySkillProductionWeight() * 100).toFixed(1));
+}
+
 function weeklyGameForTeam(teamName, week = selectedSiteWeek()) {
   const teamKey = normalizeScheduleTeam(teamName);
   return scheduleGames().find((item) => scheduleWeekMatches(item, week) && (normalizeScheduleTeam(item.visitor) === teamKey || normalizeScheduleTeam(item.home) === teamKey)) || null;
@@ -7944,6 +10580,16 @@ function weeklyTeamImpliedTotal(teamName, opponent = "", week = selectedSiteWeek
   const teamKey = normalizeScheduleTeam(teamName);
   const isHome = normalizeScheduleTeam(game.home) === teamKey;
   const value = isHome ? projection.home : projection.visitor;
+  return Number.isFinite(Number(value)) ? Number(Number(value).toFixed(1)) : "";
+}
+
+function weeklyProjectedPointsAllowed(teamName, week = selectedSiteWeek()) {
+  const game = weeklyGameForTeam(teamName, week);
+  if (!game) return "";
+  const projection = scheduleProjection(game);
+  const teamKey = normalizeScheduleTeam(teamName);
+  const isHome = normalizeScheduleTeam(game.home) === teamKey;
+  const value = isHome ? projection.visitor : projection.home;
   return Number.isFinite(Number(value)) ? Number(Number(value).toFixed(1)) : "";
 }
 
@@ -8021,10 +10667,14 @@ function weeklyRbScoreBreakdown(row, mode = "blend") {
   const ypgRank = num(row.extras["Team YPG Rank"], 16.5);
   const ppgRank = num(row.extras["PPG Rank"], 16.5);
   const wLast5 = weeklySkillLast5Blend(mode);
-  const snapPct = ((1 - wLast5) * weeklySkillProductionValue(row.extras["Typical Snap %"], 70)) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], weeklySkillProductionValue(row.extras["Typical Snap %"], 70)));
-  const targetsEffBase = ((1 - wLast5) * weeklySkillProductionValue(row.extras["Typical Targets"], 3.8)) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], weeklySkillProductionValue(row.extras["Typical Targets"], 3.8)));
-  const rzEffBase = ((1 - wLast5) * weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.3)) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.3)));
-  const playOK = (row.team === "Free Agent" || depthN <= 0 || depthN === 100 || injFlag || oppRank === 100) ? 0 : 1;
+  const neutral = weeklyRbNeutralUsage(dBkt);
+  const seasonSnap = weeklySkillProductionValue(row.extras["Typical Snap %"], neutral.snapPct);
+  const seasonTargets = weeklySkillProductionValue(row.extras["Typical Targets"], neutral.targets);
+  const seasonRz = weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], neutral.rz);
+  const snapPct = ((1 - wLast5) * seasonSnap) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], seasonSnap));
+  const targetsEffBase = ((1 - wLast5) * seasonTargets) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], seasonTargets));
+  const rzEffBase = ((1 - wLast5) * seasonRz) + (wLast5 * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], seasonRz));
+  const playOK = (isFreeAgentTeam(row.team) || depthN <= 0 || depthN === 100 || injFlag || oppRank === 100) ? 0 : 1;
   const depthF = Math.max(0.55, 1 - scaleTerm(0.08 * depthStep, "depth"));
   const jF = Math.max(0.75, Math.min(1.25, 0.9 + scaleTerm(0.3 * (rating - 75) / 25, "talent")));
   const matchF = Math.max(0.82, Math.min(1.18, 1 + scaleTerm((16.5 - oppRank) / 95, "matchup")));
@@ -8072,7 +10722,7 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
   const statRankWeight = weeklySkillStatRankWeight();
   const rankedTeamYpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offYardsRank, team.offenseAverage, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamPpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offPointsRank, team.offenseRating, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
-  const rows = players.filter((player) => player.team !== "Free Agent").map((player) => {
+  const rows = players.filter((player) => !isFreeAgentTeam(player.team)).map((player) => {
     const workbook = workbookRowByName(workbookRows, player.player) || {};
     const team = teamByName(player.team);
     const opponent = scheduleOpponent(player.team, week);
@@ -8091,6 +10741,7 @@ function buildWeeklyRbRows(workbookRows, weekOverride = null) {
       "Game Script": weeklyGameScriptValue(player.team, week),
       "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Rush TDs Allowed Rank": teamRankingsByTeam(opponent)?.rushTdAllowedRank || "",
+      "Production Influence": weeklyProductionInfluencePct(),
       "Typical Snap %": Number(num(stats.season.snapPct, 0).toFixed(1)),
       "Typical Targets": Number(num(stats.season.targets, 0).toFixed(2)),
       "Typical Red Zone Opportunities": Number(num(stats.season.rz, 0).toFixed(2)),
@@ -8182,10 +10833,14 @@ function weeklyReceiverStatPack(player, position, workbook = {}) {
     snapPct: num(wb("Typical Snap %"), base.snapPct),
     rz: num(wb("Typical Red Zone Opportunities"), Number.isFinite(Number(clayRz)) ? clayRz : base.rz),
   };
+  const rawLast5Targets = wb("!!LAST 5!!\nTypical Targets") || wb("!!Last 5!!\nTypical Targets");
+  const rawLast5Snap = wb("!!LAST 5!!\nTypical Snap %") || wb("!!Last 5!!\nTypical Snap %");
+  const rawLast5Rz = wb("!!LAST 5!!\nTypical Red Zone Opportunities") || wb("!!Last 5!!\nTypical Red Zone Opportunities");
+  const hasLast5Sample = [rawLast5Targets, rawLast5Snap, rawLast5Rz].some((value) => Number(value) > 0);
   const last5 = {
-    targets: num(wb("!!LAST 5!!\nTypical Targets") || wb("!!Last 5!!\nTypical Targets"), season.targets),
-    snapPct: num(wb("!!LAST 5!!\nTypical Snap %") || wb("!!Last 5!!\nTypical Snap %"), season.snapPct),
-    rz: num(wb("!!LAST 5!!\nTypical Red Zone Opportunities") || wb("!!Last 5!!\nTypical Red Zone Opportunities"), season.rz),
+    targets: hasLast5Sample ? num(rawLast5Targets, season.targets) : season.targets,
+    snapPct: hasLast5Sample ? num(rawLast5Snap, season.snapPct) : season.snapPct,
+    rz: hasLast5Sample ? num(rawLast5Rz, season.rz) : season.rz,
   };
   return { season, last5, base, clay, usedClay: Boolean(clay && (!Number.isFinite(Number(wb("Typical Targets"))) || !Number.isFinite(Number(wb("Typical Red Zone Opportunities"))))) };
 }
@@ -8207,10 +10862,14 @@ function weeklyWrScoreBreakdown(row, mode = "blend") {
   const cbDepthRate = num(row.extras["CB Matchup Rating"], matchVal);
   const passTDRank = num(row.extras["Pass TDs Allowed Rank"], 16.5);
   const wRec = weeklySkillLast5Blend(mode);
-  const targets = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Targets"], 8)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], weeklySkillProductionValue(row.extras["Typical Targets"], 8)));
-  const snapPct = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Snap %"], 90)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], weeklySkillProductionValue(row.extras["Typical Snap %"], 90)));
-  const rzBase = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.2)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], 1.2)));
-  const playOK = (row.team === "Free Agent" || depthN <= 0 || depthN === 100 || injFlag || oppWr === 100 || matchVal === 100) ? 0 : 1;
+  const neutral = receiverBaseUsage("WR", dBkt);
+  const seasonTargets = weeklySkillProductionValue(row.extras["Typical Targets"], neutral.targets);
+  const seasonSnap = weeklySkillProductionValue(row.extras["Typical Snap %"], neutral.snapPct);
+  const seasonRz = weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], neutral.rz);
+  const targets = ((1 - wRec) * seasonTargets) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], seasonTargets));
+  const snapPct = ((1 - wRec) * seasonSnap) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], seasonSnap));
+  const rzBase = ((1 - wRec) * seasonRz) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], seasonRz));
+  const playOK = (isFreeAgentTeam(row.team) || depthN <= 0 || depthN === 100 || injFlag || oppWr === 100 || matchVal === 100) ? 0 : 1;
   const depthF = Math.max(0.45, 1 - scaleTerm(0.1 * (dBkt - 1), "depth"));
   const qbF = (Math.max(0.85, Math.min(1.15, 1 + scaleTerm((qbRat - 75) / 180, "qb"))) * Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - qbRank) / 170, "qb")))) ** 0.5;
   const matchF = Math.max(0.72, Math.min(1.38, 1 + scaleTerm((50 - matchVal) / 70, "matchup")));
@@ -8249,10 +10908,14 @@ function weeklyTeScoreBreakdown(row, mode = "blend") {
   const olRank = num(row.extras["OL Rank"], 16.5);
   const ppgRank = num(row.extras["PPG Rank"], 16.5);
   const wRec = weeklySkillLast5Blend(mode);
-  const targets = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Targets"], receiverBaseUsage("TE", dBkt).targets)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], weeklySkillProductionValue(row.extras["Typical Targets"], receiverBaseUsage("TE", dBkt).targets)));
-  const snapPct = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Snap %"], receiverBaseUsage("TE", dBkt).snapPct)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], weeklySkillProductionValue(row.extras["Typical Snap %"], receiverBaseUsage("TE", dBkt).snapPct)));
-  const rzBase = ((1 - wRec) * weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], receiverBaseUsage("TE", dBkt).rz)) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], receiverBaseUsage("TE", dBkt).rz)));
-  const playOK = row.team === "Free Agent" || depthN <= 0 || depthN === 100 || injFlag ? 0 : 1;
+  const neutral = receiverBaseUsage("TE", dBkt);
+  const seasonTargets = weeklySkillProductionValue(row.extras["Typical Targets"], neutral.targets);
+  const seasonSnap = weeklySkillProductionValue(row.extras["Typical Snap %"], neutral.snapPct);
+  const seasonRz = weeklySkillProductionValue(row.extras["Typical Red Zone Opportunities"], neutral.rz);
+  const targets = ((1 - wRec) * seasonTargets) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Targets"], seasonTargets));
+  const snapPct = ((1 - wRec) * seasonSnap) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Snap %"], seasonSnap));
+  const rzBase = ((1 - wRec) * seasonRz) + (wRec * weeklySkillProductionValue(row.extras["!!LAST 5!!\nTypical Red Zone Opportunities"], seasonRz));
+  const playOK = isFreeAgentTeam(row.team) || depthN <= 0 || depthN === 100 || injFlag ? 0 : 1;
   const depthF = Math.max(0.5, 1 - scaleTerm(0.12 * (dBkt - 1), "depth"));
   const qbF = (Math.max(0.85, Math.min(1.15, 1 + scaleTerm((qbRat - 75) / 190, "qb"))) * Math.max(0.9, Math.min(1.1, 1 + scaleTerm((16.5 - qbRank) / 180, "qb")))) ** 0.5;
   const posF = (Math.max(0.86, Math.min(1.14, 1 + scaleTerm((16.5 - oppTE) / 140, "matchup"))) * Math.max(0.88, Math.min(1.12, 1 + scaleTerm((84 - matchVal) / 260, "matchup")))) ** 0.5;
@@ -8285,7 +10948,7 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
   const rankedTeamYpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offYardsRank, team.offenseAverage, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamPpg = teams.map((team) => ({ team, score: weightedStatRankScore(teamRankingsByTeam(team.team)?.offPointsRank, team.offenseRating, statRankWeight) })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedPassTdAllowed = teams.map((team) => ({ team, score: teamRankingsByTeam(team.team)?.passTdAllowedRank })).filter((row) => Number.isFinite(Number(row.score)));
-  const rows = players.filter((player) => player.team !== "Free Agent").map((player) => {
+  const rows = players.filter((player) => !isFreeAgentTeam(player.team)).map((player) => {
     const workbook = workbookRowByName(workbookRows, player.player) || {};
     const team = teamByName(player.team);
     const opponent = scheduleOpponent(player.team, week);
@@ -8314,6 +10977,7 @@ function buildWeeklyReceiverRows(position, workbookRows, weekOverride = null) {
       "Game Script": weeklyGameScriptValue(player.team, week),
       "Team Total": weeklyTeamImpliedTotal(player.team, opponent, week),
       "Team PPG": Number(num(team?.offenseRating, 84).toFixed(1)),
+      "Production Influence": weeklyProductionInfluencePct(),
       "Typical Snap %": Number(num(stats.season.snapPct, 0).toFixed(1)),
       "Typical Targets": Number(num(stats.season.targets, 0).toFixed(2)),
       "Typical Red Zone Opportunities": Number(num(stats.season.rz, 0).toFixed(2)),
@@ -8443,6 +11107,16 @@ function maddenKickerForTeam(teamName) {
     .find((row) => normalizeTeamName(row.team) === normalized) || null;
 }
 
+const manualKickerOverrides = {
+  "New Orleans Saints": { player: "Daniel Carlson", rating: 77 },
+};
+
+function manualKickerForTeam(teamName) {
+  const normalized = normalizeTeamName(teamName);
+  const entry = Object.entries(manualKickerOverrides).find(([team]) => normalizeTeamName(team) === normalized)?.[1];
+  return entry ? { player: entry.player, team: normalized, position: "K", rating: entry.rating } : null;
+}
+
 function htmlToText(html) {
   const element = document.createElement("div");
   element.innerHTML = String(html || "");
@@ -8476,6 +11150,8 @@ function ourladsKickerForTeam(teamName) {
 
 function depthKickerForTeam(teamName) {
   const normalized = normalizeTeamName(teamName);
+  const manual = manualKickerForTeam(normalized);
+  if (manual) return manual;
   return (state.players || []).filter((player) => normalizeTeamName(player.team) === normalized && ["K", "PK"].includes(String(player.position || "").toUpperCase()))
     .sort((a, b) => num(a.depth, 99) - num(b.depth, 99) || num(b.rating, 0) - num(a.rating, 0))[0] || null;
 }
@@ -8543,6 +11219,7 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
         "Takeaways Rank": Number.isFinite(Number(ranks?.takeawaysRank)) ? ranks.takeawaysRank : "",
         "Takeaways/G": Number.isFinite(Number(ranks?.takeawaysRankValue)) ? Number(ranks.takeawaysRankValue) : ranks?.takeawaysRankValue || "",
         "Opp PPG Rank": Number.isFinite(Number(opponentRanks?.offPointsRank)) ? opponentRanks.offPointsRank : "",
+        "Projected Points Allowed": weeklyProjectedPointsAllowed(team.team, week),
         "Stat Source": ranks?.sacksRank || ranks?.takeawaysRank ? "TeamRankings + ratings" : "Ratings fallback",
       },
     };
@@ -8553,7 +11230,7 @@ function buildWeeklyDefenseRows(workbookRows, weekOverride = null) {
     row.value = generatedScore;
     return row;
   });
-  applyFantasyScoreRange(rows, 4.6, 8.8);
+  applyWeeklyDefenseScoreRanges(rows);
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -8569,6 +11246,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
   const rankedOffense = teams.map((team) => ({ team, score: team.offenseAverage })).filter((row) => Number.isFinite(Number(row.score)));
   const rankedTeamTotals = teams.map((team) => ({ team, score: scheduleTeamProjectionScore(team, teamByName(scheduleOpponent(team.team, week)), scheduleActiveMode({ week }), 0, week) })).filter((row) => Number.isFinite(Number(row.score)));
   const rows = (state.data?.teams || []).map((team) => {
+    const manualKicker = manualKickerForTeam(team.team);
     const madden = maddenKickerForTeam(team.team);
     const depthKicker = depthKickerForTeam(team.team);
     const ourladsKicker = ourladsKickerForTeam(team.team);
@@ -8579,7 +11257,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     const opponentTeam = teamByName(opponent);
     const stadiumInfo = kickerStadiumRatingForTeamWeek(team.team, week);
     const stadiumRating = num(stadiumInfo?.rating, 0);
-    const rating = Number.isFinite(Number(madden?.ovr)) ? Number(madden.ovr) : num(depthKicker?.rating, num(workbook.rating, 68));
+    const rating = num(manualKicker?.rating, Number.isFinite(Number(madden?.ovr)) ? Number(madden.ovr) : num(depthKicker?.rating, num(workbook.rating, 68)));
     const longFg = num(fantasyDetailValue(workbook, "50+ FGs"), Math.max(0, (rating - 70) / 6));
     const teamTotal = scheduleTeamProjectionScore(team, opponentTeam, mode, 0, week);
     const offenseRank = rankNumber(rankedOffense, (item) => item.score, { team, score: team.offenseAverage }) || 16.5;
@@ -8600,7 +11278,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     const row = {
       ...workbook,
       position: "Kicker",
-      player: displayPersonName(madden?.player || depthKicker?.player || ourladsKicker?.player || workbook.player || `${team.teamAbbrev || team.team} Kicker`),
+      player: displayPersonName(manualKicker?.player || madden?.player || depthKicker?.player || ourladsKicker?.player || workbook.player || `${team.teamAbbrev || team.team} Kicker`),
       team: team.team,
       opponent,
       rating,
@@ -8620,7 +11298,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
         "Stadium": stadiumInfo?.stadium || "",
         "Neutral Site": stadiumInfo?.neutral ? "Yes" : "",
         "Team Offense": Number(num(team.offenseAverage, 84).toFixed(1)),
-        "Stat Source": madden ? "Madden + TeamRankings" : depthKicker ? "Depth chart + TeamRankings" : ourladsKicker ? "OurLads PK + TeamRankings" : "Fallback + TeamRankings",
+        "Stat Source": manualKicker ? "Manual kicker + TeamRankings" : madden ? "Madden + TeamRankings" : depthKicker ? "Depth chart + TeamRankings" : ourladsKicker ? "OurLads PK + TeamRankings" : "Fallback + TeamRankings",
       },
     };
     const generatedScore = Number(Math.max(0, score).toFixed(1));
@@ -8630,7 +11308,7 @@ function buildWeeklyKickerRows(workbookRows, weekOverride = null) {
     row.value = generatedScore;
     return row;
   });
-  applyFantasyScoreRange(rows, 5.9, 8.8);
+  applyWeeklyKickerScoreRanges(rows);
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -8695,15 +11373,16 @@ function fantasyProsAdpFor(row, scoringKey) {
   const rows = fantasyProsAdpRows(scoringKey);
   const playerKey = fantasyMergeKey(row.player || row.team);
   const position = row.position === "Kicker" ? "K" : row.position;
+  const wantedPosition = fantasyProsPositionKey(position);
   if (row.position === "Defense") {
     const abbrev = teamAbbrevFor(row.team, row.team);
     return rows.find((item) => item.position === "Defense" && (normalizeTeamName(item.team) === normalizeTeamName(abbrev) || fantasyMergeKey(item.player) === fantasyMergeKey(row.team)))
       || rows.find((item) => item.position === "Defense" && normalizeTeamName(item.team) === normalizeTeamName(row.team))
       || null;
   }
-  return rows.find((item) => fantasyMergeKey(item.player) === playerKey && fantasyAdpTeamMatches(item, row.team))
-    || rows.find((item) => fantasyMergeKey(item.player) === playerKey && (!position || String(item.position || "").toUpperCase() === String(position || "").toUpperCase()))
-    || rows.find((item) => fantasyMergeKey(item.player) === playerKey)
+  const sameNameAndPos = rows.filter((item) => fantasyMergeKey(item.player) === playerKey && fantasyProsPositionKey(item.position) === wantedPosition);
+  return sameNameAndPos.find((item) => fantasyAdpTeamMatches(item, row.team))
+    || sameNameAndPos[0]
     || null;
 }
 
@@ -8898,6 +11577,8 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
         productionValues: [],
         bonusValues: [],
         contextValues: [],
+        positionalGapValues: [],
+        positionalGapAdjustments: [],
         contextParts: {},
         extras: { ...(row.extras || {}) },
       };
@@ -8913,6 +11594,8 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
       const productionValue = seasonProductionValueFor(row, position);
       const bonusValue = seasonBonusValueFor(row, position);
       const contextValue = seasonTeamContextValueFor(row, position);
+      const positionalGap = fantasyDetailValue(row, "Positional Gap");
+      const positionalGapAdj = fantasyDetailValue(row, "Positional Gap Adj");
       if (Number.isFinite(Number(difficulty))) {
         current.difficultyRanks.push(Number(difficulty));
         if (week >= 15) current.playoffDifficultyRanks.push(Number(difficulty));
@@ -8922,6 +11605,8 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
       if (Number.isFinite(Number(productionValue))) current.productionValues.push(Number(productionValue));
       if (Number.isFinite(Number(bonusValue))) current.bonusValues.push(Number(bonusValue));
       if (Number.isFinite(Number(contextValue))) current.contextValues.push(Number(contextValue));
+      if (Number.isFinite(Number(positionalGap))) current.positionalGapValues.push(Number(positionalGap));
+      if (Number.isFinite(Number(positionalGapAdj))) current.positionalGapAdjustments.push(Number(positionalGapAdj));
       fantasyTeamContextLabels(position).forEach((label) => {
         const value = fantasyDetailValue(row, label);
         if (!Number.isFinite(Number(value))) return;
@@ -8952,6 +11637,11 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
     row.standardScore = rounded(row.standardScore);
     row.halfPprScore = rounded(row.halfPprScore);
     row.fullPprScore = rounded(row.fullPprScore);
+    if (!["RB", "WR", "TE"].includes(position)) {
+      row.standardScore = row.score;
+      row.halfPprScore = row.score;
+      row.fullPprScore = row.score;
+    }
     row.adp = adp;
     row.avgScore = row.weeksPlayed ? Number((row.score / row.weeksPlayed).toFixed(1)) : "";
     row.standardAvg = row.weeksPlayed ? Number((row.standardScore / row.weeksPlayed).toFixed(1)) : "";
@@ -8962,6 +11652,8 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
     const avgProduction = averageFinite(row.productionValues, "");
     const avgBonuses = averageFinite(row.bonusValues, "");
     const avgContext = averageFinite(row.contextValues, "");
+    const avgPositionalGap = averageFinite(row.positionalGapValues, "");
+    const avgPositionalGapAdj = averageFinite(row.positionalGapAdjustments, "");
     const avgContextParts = Object.fromEntries(Object.entries(row.contextParts || {}).map(([label, values]) => {
       const value = averageFinite(values, "");
       return [fantasyTeamContextAvgLabel(label), Number.isFinite(Number(value)) ? Number(Number(value).toFixed(1)) : ""];
@@ -8978,6 +11670,8 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
       "Avg Production": Number.isFinite(Number(avgProduction)) ? Number(Number(avgProduction).toFixed(1)) : "",
       "Avg Bonuses": Number.isFinite(Number(avgBonuses)) ? Number(Number(avgBonuses).toFixed(1)) : "",
       "Avg Team Context": Number.isFinite(Number(avgContext)) ? Number(Number(avgContext).toFixed(1)) : "",
+      "Avg Positional Gap": Number.isFinite(Number(avgPositionalGap)) ? Number(Number(avgPositionalGap).toFixed(1)) : "",
+      "Avg Positional Gap Adj": Number.isFinite(Number(avgPositionalGapAdj)) ? Number(Number(avgPositionalGapAdj).toFixed(1)) : "",
       "FullPPR Total": row.fullPprScore,
       "FullPPR Avg": row.fullPprAvg,
       "FullPPR ADP": Number.isFinite(Number(fullAdp?.adp)) ? Number(fullAdp.adp) : "",
@@ -8999,6 +11693,18 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
     };
     return row;
   });
+  const rankTeamContext = (label, row, highIsGood = false) => {
+    const byTeam = new Map();
+    rows.forEach((item) => {
+      const value = fantasyDetailValue(item, label);
+      if (!Number.isFinite(Number(value))) return;
+      const key = normalizeTeamName(item.team);
+      if (!key || byTeam.has(key)) return;
+      byTeam.set(key, { team: key, value: Number(value) });
+    });
+    const teamRow = byTeam.get(normalizeTeamName(row.team));
+    return teamRow ? rankNumber([...byTeam.values()], (item) => item.value, teamRow, highIsGood) : "";
+  };
   rows.forEach((row) => {
     row.rank = rankNumber(rows, (item) => item.score, row);
     row.scoreRank = row.rank;
@@ -9010,7 +11716,10 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
       const avgLabel = fantasyTeamContextAvgLabel(label);
       const rankLabel = `${avgLabel} Rank`;
       const highIsGood = ["Game Script", "Team Total", "Team Pass Rush", "Team Secondary", "Kicker Stadium Tier"].includes(label);
-      row.extras[rankLabel] = rankNumber(rows, (item) => fantasyDetailValue(item, avgLabel), row, highIsGood);
+      const teamLevel = /OL|YPG|PPG|Game Script|Team Total|Defense|Pass Rush|Secondary|Opp QB|Opp PPG|Offense|4th Down|Stadium/.test(avgLabel);
+      row.extras[rankLabel] = teamLevel
+        ? rankTeamContext(avgLabel, row, highIsGood)
+        : rankNumber(rows, (item) => fantasyDetailValue(item, avgLabel), row, highIsGood);
     });
     row.extras["FullPPR Value"] = Number.isFinite(Number(row.extras["FullPPR ADP Rank"])) ? Number((row.extras["FullPPR ADP Rank"] - row.extras["FullPPR Rank"]).toFixed(1)) : "";
     row.extras[".5PPR Value"] = Number.isFinite(Number(row.extras[".5PPR ADP Rank"])) ? Number((row.extras[".5PPR ADP Rank"] - row.extras[".5PPR Rank"]).toFixed(1)) : "";
@@ -9024,6 +11733,31 @@ function buildSeasonFantasyRows(position, seasonRows = []) {
 function fantasyBoardRows(kind, position, workbookRows) {
   const normalized = normalizeFantasyPositionLabel(position);
   if (kind === "weekly") return weeklyFantasyPlayerPool(normalized, workbookRows);
+  if (normalized === "All Players") {
+    const cacheKey = [
+      "season",
+      "all",
+      dataRevision,
+      state.players.length,
+      JSON.stringify(state.weeklyQbWeights),
+      JSON.stringify(state.weeklyQbOptions),
+      JSON.stringify(state.weeklySkillWeights),
+      JSON.stringify(state.weeklySkillOptions),
+      hasActual2026Production() ? "prod26" : "prod25",
+      hasActual2026StatRanks() ? "stat26" : "stat25",
+    ].join("|");
+    if (fantasyRowsCache.has(cacheKey)) return fantasyRowsCache.get(cacheKey);
+    const rows = ["QB", "RB", "WR", "TE", "Defense", "Kicker"].flatMap((pos) => buildSeasonFantasyRows(pos, fantasyRankItem("season", pos)?.rows || []));
+    rows.forEach((row) => {
+      row.overallFantasyRank = rankNumber(rows, (item) => {
+        if (["RB", "WR", "TE"].includes(item.position)) return item.fullPprScore;
+        return item.score;
+      }, row);
+      row.rank = row.overallFantasyRank;
+      row.scoreRank = row.overallFantasyRank;
+    });
+    return setFantasyRowsCache(cacheKey, rows);
+  }
   const cacheKey = [
     "season",
     normalized,
@@ -9046,7 +11780,13 @@ function fantasySortValue(row, key) {
   if (key === "team") return String(row.team || "");
   if (key === "opponent") return String(row.opponent || "");
   if (key === "fantasyStar") return state.fantasyFavorites.includes(fantasyFavoriteKey(row)) ? 1 : 0;
-  if (String(key || "").startsWith("extra:")) return fantasyDetailValue(row, String(key).slice(6));
+  if (String(key || "").startsWith("extra:")) {
+    const label = String(key).slice(6);
+    const value = fantasyDetailValue(row, label);
+    if (/\bValue\b/i.test(label) && /PPR|ADP/i.test(label)) return value !== "" && Number.isFinite(Number(value)) ? Number(value) : -9999;
+    if (/\bADP\b/i.test(label)) return Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : 9999;
+    return value;
+  }
   if (key === "rank") return num(row.rank, 9999);
   if (String(key || "").startsWith("seasonWeek:")) {
     const week = String(key).slice(11);
@@ -9056,7 +11796,7 @@ function fantasySortValue(row, key) {
   if (key === "scoreRank") return num(row.scoreRank, 9999);
   if (key === "seasonRank") return num(row.seasonRank, 9999);
   if (key === "last5Rank") return num(row.last5Rank, 9999);
-  if (key === "adp") return num(row.adp, 9999);
+  if (key === "adp") return Number.isFinite(Number(row.adp)) && Number(row.adp) > 0 ? Number(row.adp) : 9999;
   if (key === "value") return num(row.value, -9999);
   if (key === "rating") return num(row.rating, -9999);
   if (key === "depth") return num(row.depth, 9999);
@@ -9202,8 +11942,8 @@ function fantasyColumnTip(label, key) {
     "extra:Avg Opp PPG Rank Rank": "Rank of season opponent-PPG context among DSTs.",
     "extra:Avg Team Offense Rank": "Season average team offense rank used for kickers.",
     "extra:Avg Team Offense Rank Rank": "Rank of season kicker offense context.",
-    "extra:Avg Team Total Rank": "Season average projected team-total rank used for kickers.",
-    "extra:Avg Team Total Rank Rank": "Rank of season kicker team-total context.",
+    "extra:Avg Team Total Rank": "Season average projected team points rank.",
+    "extra:Avg Team Total Rank Rank": "Rank of season team-total context against 32 teams.",
     "extra:Avg 4th Down Difficulty": "Season average 4th-down aggression penalty for kickers.",
     "extra:Avg 4th Down Difficulty Rank": "Rank of season 4th-down difficulty among kickers.",
     "extra:Avg Kicker Stadium Tier": "Season average game-venue kicking rating.",
@@ -9262,7 +12002,7 @@ function fantasyColumnTip(label, key) {
     "extra:Player Rating": "Kicker rating from Madden, depth chart, or fallback.",
     "extra:Team Offense Rank": "Rank of team offense rating; better teams create more kicks.",
     "extra:Team Total": "Model projected points for this kicker's team.",
-    "extra:Team Total Rank": "Rank of projected team points; lower is better.",
+    "extra:Team Total Rank": "Rank of projected team points against 32 teams.",
     "extra:4th Down Difficulty": "Higher means more 4th-down attempts hurting FG chances.",
     "extra:4th Down Attempts Rank": "TeamRankings 4th-down attempts rank; lower is worse for kickers.",
     "extra:4th Down Attempts/G": "Actual 4th-down attempts per game; more can reduce FG chances.",
@@ -9367,12 +12107,15 @@ function fantasyCompareCell(row) {
 
 function fantasyColumns(kind, position, view) {
   if (kind === "season") {
-    const usesPpr = ["RB", "WR", "TE"].includes(position);
+    const isAllPlayers = position === "All Players";
+    const usesPpr = isAllPlayers || ["RB", "WR", "TE"].includes(position);
     const playerLabel = position === "Defense" ? "Team" : "Player";
     const base = [
+      fantasyColumn("Draft", "draftAction", "draft-action-col", { group: "Draft", noSort: true, positions: state.draftAssistantMode ? undefined : [] }),
       fantasyColumn("", "fantasyStar", "compare-col", { group: "Player", noSort: true }),
       fantasyColumn("Rk", "rank", "rank-col cf", { group: "Player", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn(playerLabel, "name", "sticky-name", { group: "Player", sortDir: "asc" }),
+      fantasyColumn("Pos", "position", "rank-col", { group: "Player", sortDir: "asc", positions: isAllPlayers ? ["All Players"] : [] }),
       fantasyColumn("Team", "team", "", { group: "Player", sortDir: "asc", positions: position === "Defense" ? [] : undefined }),
     ].filter((col) => !col.positions || col.positions.includes(position));
     const scoreColumns = usesPpr ? [
@@ -9411,10 +12154,10 @@ function fantasyColumns(kind, position, view) {
       ...adpColumns,
       fantasyColumn("Rating", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc", positions: position === "Defense" ? [] : undefined }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: position === "Defense" ? [] : undefined }),
+      fantasyColumn("Avg Gap Adj", "extra:Avg Positional Gap Adj", "num cf", { group: "Talent", heat: true, sortDir: "desc", positions: ["QB", "RB", "WR", "TE"], tip: "Average weekly adjustment from Positional Gap. Positive means the player has a clearer same-team role; negative means a close or stronger player behind him is pressuring the role." }),
       ...seasonContextColumns(position),
       fantasyColumn("Avg Production", "extra:Avg Production", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Avg Bonus", "extra:Avg Bonuses", "num cf", { group: "Bonuses", heat: true, sortDir: "desc" }),
-      fantasyColumn("Weeks", "extra:Weeks Counted", "num rank-col", { group: "Schedule", digits: 0, sortDir: "desc" }),
       ...Array.from({ length: 17 }, (_, index) => seasonWeekColumn(index + 1)),
     ].filter((col) => !col.positions || col.positions.includes(position));
   }
@@ -9488,10 +12231,15 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Gap", "extra:Positional Gap", "num cf", { group: "Talent", heat: true, sortDir: "desc", tip: "Rating gap to the next active same-team QB behind him. 5 is neutral; bigger helps, smaller hurts." }),
+      fantasyColumn("Gap Adj", "extra:Positional Gap Adj", "num cf", { group: "Talent", heat: true, sortDir: "desc", tip: "Fantasy-point adjustment from Positional Gap after your slider is applied." }),
+      fantasyColumn("Next QB", "extra:Next Depth Player", "", { group: "Talent", sortDir: "asc", tip: "Next active same-team QB used for the Positional Gap check." }),
       fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("PPG Rank", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Rec Rank", "extra:Receiving Group Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, sortDir: "desc" }),
+      fantasyColumn("2025 Production", "seasonScore", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Current 2025 production model feeding this weekly projection." }),
+      fantasyColumn("2026 Production", "extra:2026 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Reserved for 2026 scanned production once games are available." }),
       fantasyColumn("PYds", "extra:Typical Pass Yards", "num cf", { group: "Production", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("PTD", "extra:Typical Pass TDs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Rush Att", "extra:Typical Rush Attempts", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -9528,12 +12276,18 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Gap", "extra:Positional Gap", "num cf", { group: "Talent", heat: true, sortDir: "desc", tip: "Rating gap to the next active same-team RB behind him. 5 is neutral; bigger helps, smaller hurts." }),
+      fantasyColumn("Gap Adj", "extra:Positional Gap Adj", "num cf", { group: "Talent", heat: true, sortDir: "desc", tip: "Fantasy-point adjustment from Positional Gap after your slider is applied." }),
+      fantasyColumn("Next RB", "extra:Next Depth Player", "", { group: "Talent", sortDir: "asc", tip: "Next active same-team RB used for the Positional Gap check." }),
       fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("YPG Rank", "extra:Team YPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("PPG Rank", "extra:PPG Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Game Script", "extra:Game Script", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
       fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
       fantasyColumn("Rush TD Rank", "extra:Rush TDs Allowed Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, sortDir: "desc" }),
+      fantasyColumn("2025 Production", "seasonScore", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Current 2025 usage and production feeding this weekly projection." }),
+      fantasyColumn("2026 Production", "extra:2026 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Reserved for 2026 scanned production once games are available." }),
       fantasyColumn("Snap %", "extra:Typical Snap %", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Targets", "extra:Typical Targets", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("RZone", "extra:Typical Red Zone Opportunities", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -9572,6 +12326,9 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Player Rt", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Player Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
+      fantasyColumn("Gap", "extra:Positional Gap", "num cf", { group: "Talent", heat: true, sortDir: "desc", tip: "Rating gap to the next active same-team player behind him at this position. 5 is neutral; bigger helps, smaller hurts." }),
+      fantasyColumn("Gap Adj", "extra:Positional Gap Adj", "num cf", { group: "Talent", heat: true, sortDir: "desc", tip: "Fantasy-point adjustment from Positional Gap after your slider is applied." }),
+      fantasyColumn("Next", "extra:Next Depth Player", "", { group: "Talent", sortDir: "asc", tip: "Next active same-team player used for the Positional Gap check." }),
       fantasyColumn("QB Rt", "extra:QB Rating", "num cf", { group: "Team Context", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("QB Rank", "extra:QB Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, sortDir: "asc" }),
       fantasyColumn("OL Rank", "extra:OL Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["TE"], sortDir: "asc" }),
@@ -9580,6 +12337,9 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Pass TD Rank", "extra:Pass TDs Allowed Rank", "num cf rank-col", { group: "Team Context", heat: true, digits: 0, reverse: true, positions: ["WR"], sortDir: "asc" }),
       fantasyColumn("Game Script", "extra:Game Script", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
       fantasyColumn("Team Total", "extra:Team Total", "num cf", { group: "Team Context", heat: true, sortDir: "desc" }),
+      fantasyColumn("Games", "extra:Games Played", "num rank-col", { group: "Production", digits: 0, sortDir: "desc" }),
+      fantasyColumn("2025 Production", "seasonScore", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Current 2025 usage and production feeding this weekly projection." }),
+      fantasyColumn("2026 Production", "extra:2026 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Reserved for 2026 scanned production once games are available." }),
       fantasyColumn("Snap %", "extra:Typical Snap %", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("Targets", "extra:Typical Targets", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("RZone", "extra:Typical Red Zone Opportunities", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
@@ -9607,6 +12367,8 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("Opp QB Rank", "extra:Opp QB Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Opp Off", "extra:Opponent Off Rating", "num cf", { group: "Opponent", heat: true, reverse: true, sortDir: "asc" }),
       fantasyColumn("Opp PPG Rank", "extra:Opp PPG Rank", "num cf rank-col", { group: "Opponent", heat: true, digits: 0, sortDir: "desc" }),
+      fantasyColumn("2025 Production", "extra:2025 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Sacks and takeaways history only. It is capped so rating, matchup, and opponent difficulty still drive the Week Score." }),
+      fantasyColumn("2026 Production", "extra:2026 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Reserved for 2026 scanned defensive production once games are available." }),
       fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
     ];
   }
@@ -9626,6 +12388,8 @@ function fantasyColumns(kind, position, view) {
       fantasyColumn("4th/G", "extra:4th Down Attempts/G", "num cf", { group: "Team Context", heat: true, reverse: true, sortDir: "asc" }),
       fantasyColumn("50+ FGs", "extra:50+ FGs", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
       fantasyColumn("FG Vol", "extra:FG Volume", "num cf", { group: "Production", heat: true, sortDir: "desc" }),
+      fantasyColumn("2025 Production", "extra:2025 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Long-FG, FG-volume, and fourth-down history only. It is capped so rating, team total, and stadium still drive the Week Score." }),
+      fantasyColumn("2026 Production", "extra:2026 Production", "num cf", { group: "Production", heat: true, sortDir: "desc", tip: "Reserved for 2026 scanned kicker production once games are available." }),
       fantasyColumn("Stadium", "extra:Kicker Stadium Tier", "num cf rank-col", { group: "Environment", heat: true, digits: 0, sortDir: "desc" }),
       fantasyColumn("Raw", "extra:Raw Model Score", "num cf", { group: "Source", heat: true, sortDir: "desc" }),
       fantasyColumn("Source", "extra:Stat Source", "", { group: "Source", sortDir: "asc" }),
@@ -9642,6 +12406,7 @@ function fantasyColumns(kind, position, view) {
     fantasyColumn("Rating", "rating", "num cf", { group: "Talent", heat: true, digits: 0, sortDir: "desc" }),
     fantasyColumn("Rating Rank", "extra:Player Rating Rank", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: ["RB", "WR", "TE"] }),
     fantasyColumn("Depth", "depth", "num cf rank-col", { group: "Talent", heat: true, digits: 0, reverse: true, sortDir: "asc", positions: ["RB", "WR", "TE"] }),
+    fantasyColumn("Gap Adj", "extra:Positional Gap Adj", "num cf", { group: "Talent", heat: true, sortDir: "desc", positions: ["QB", "RB", "WR", "TE"] }),
     fantasyColumn("Matchup", "extra:Matchup Rating", "num cf", { group: "Matchup", heat: true, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
     fantasyColumn("Match Rank", "extra:Matchup Rank", "num cf rank-col", { group: "Matchup", heat: true, digits: 0, reverse: true, positions: ["RB", "WR", "TE"], sortDir: "asc" }),
     fantasyColumn("Team Context", "extra:Team Context", "num cf", { group: "Team Context", heat: true, positions: ["RB", "WR", "TE"], sortDir: "desc" }),
@@ -9653,9 +12418,11 @@ function fantasyColumns(kind, position, view) {
 }
 
 function fantasyValue(row, key, position) {
+  if (key === "draftAction") return draftAssistantCell(row);
   if (key === "compareSelect") return fantasyCompareCell(row);
   if (key === "fantasyStar") return fantasyStarCell(row);
   if (key === "name") return fantasyRowName(row, position);
+  if (key === "position") return `<span class="pos-chip ${positionChipClass(row.position)}">${esc(row.position === "Defense" ? "DST" : row.position === "Kicker" ? "K" : row.position || "-")}</span>`;
   if (key === "team") return row.team ? teamCellFull(row.team) : "-";
   if (key === "opponent") return row.opponent ? teamCellFull(row.opponent) : "-";
   if (key === "seasonContext") {
@@ -9830,7 +12597,7 @@ function fantasyTd(row, column, allRows, position, index = -1, groupStart = fals
   const marker = fantasyClayMarker(row, column.key);
   const freezeClass = `${index === 0 ? " frozen-compare" : ""}${index === 1 ? " frozen-rank" : ""}${index === 2 && column.key === "name" ? " frozen-name" : ""}`;
   const groupClass = ` ${fantasyGroupClass(column.group)}${groupStart ? " group-start" : ""}${column.boundaryAfter ? " pair-end" : ""}`;
-  if (column.key === "compareSelect" || column.key === "fantasyStar" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "seasonSchedule" || String(column.key || "").startsWith("seasonWeek:") || column.key === "compactDetails") {
+  if (column.key === "draftAction" || column.key === "compareSelect" || column.key === "fantasyStar" || column.key === "name" || column.key === "team" || column.key === "opponent" || column.key === "position" || column.key === "seasonContext" || column.key === "seasonWeeks" || column.key === "seasonSchedule" || String(column.key || "").startsWith("seasonWeek:") || column.key === "compactDetails") {
     return `<td class="${column.cls || ""}${freezeClass}${groupClass}">${value || "-"}</td>`;
   }
   const values = heatValues.get(column.key) || allRows.map((item) => fantasyValue(item, column.key, position));
@@ -9996,9 +12763,10 @@ const weeklySkillSliderTips = {
   statRanks2025: "How much 2025 TeamRankings data affects context.",
   statRanks2026: "Ignored until real 2026 TeamRankings data loads.",
   last5: "How much recent production blends over season production.",
-  production2025: "How much 2025 production feeds usage stats.",
+  production2025: "How much 2025 production can move players away from neutral position/depth baselines. Low settings now act as a small override so matchup, script, talent, and context lead the score.",
   production2026: "Ignored until real 2026 game logs are loaded.",
   depth: "Depth chart role and availability.",
+  positionalGap: "Compares this player to the next active same-team player behind him at the same fantasy position. A 5 rating-point gap is neutral; bigger gaps help, smaller gaps hurt. At 100%, max swing is +/-3 fantasy points.",
   matchup: "Opponent position strength.",
   talent: "Your player rating.",
   oline: "Blocking help from line.",
@@ -10074,6 +12842,7 @@ function renderWeeklySkillFormulaControls(position, readOnly = false) {
     ["kickerStadium", "Stadium"],
   ] : [
     ["depth", "Depth"],
+    ["positionalGap", "Positional Gap"],
     ["matchup", "Opponent"],
     ["talent", "Talent"],
     ["ppg", "Z's Projected PPG"],
@@ -10552,6 +13321,165 @@ function fantasyApplyFilters(rows, position, teamFilter, depthFilter) {
   });
 }
 
+function renderDraftAssistantPanel(rows) {
+  if (!state.draftAssistantMode) return "";
+  const leagues = ensureFantasyTeams();
+  const selected = draftAssistantLeague();
+  const leagueOptions = leagues.map((league) => [league.id, `${league.name} / ${league.league || "League"}`]);
+  const selectedPrefix = selected ? `${selected.id}|` : "";
+  const picks = Object.entries(state.draftAssistantPicks || {})
+    .filter(([key]) => !selectedPrefix || key.startsWith(selectedPrefix))
+    .map(([, value]) => value);
+  const drafted = picks.filter((value) => value === "drafted").length;
+  const mine = picks.filter((value) => value === "mine").length;
+  const roster = selected ? (selected.teamRows || []).filter((row) => row.playerName).slice(0, 14) : [];
+  return `<section class="draft-assistant-panel">
+    <div class="draft-assistant-head">
+      <div><b>Draft Assistant Mode</b><span>${rows.length} shown / ${drafted} drafted / ${mine} mine for this fantasy team</span></div>
+      <div class="draft-assistant-controls">
+        ${optionSelect("draft-assistant-league", selected?.id || "", leagueOptions)}
+        <button id="draft-assistant-show-drafted" class="mini-action ${state.draftAssistantShowDrafted ? "primary" : ""}">${state.draftAssistantShowDrafted ? "Hide Drafted" : "View Drafted"}</button>
+      </div>
+    </div>
+    <div class="draft-mini-roster">
+      ${roster.length ? roster.map((row) => `<span class="pos-${esc(positionChipClass(row.position))}"><b>${esc(row.slot || row.position)}</b>${esc(row.playerName)} <em>${esc(teamAbbrevFor(row.team, row.team))}</em></span>`).join("") : "<span>No players marked My Team yet.</span>"}
+    </div>
+  </section>`;
+}
+
+function propProbabilityFromExpected(value) {
+  const lambda = Math.max(0, num(value, 0));
+  return `${Math.max(1, Math.min(95, Math.round((1 - Math.exp(-lambda)) * 100)))}%`;
+}
+
+function weeklyPropWatchProps(row, position) {
+  if (position === "QB") {
+    const passTds = num(fantasyDetailValue(row, "Typical Pass TDs"), 0);
+    const rushAttempts = num(fantasyDetailValue(row, "Typical Rush Attempts"), 0);
+    const rushTds = num(fantasyDetailValue(row, "Typical Rush TDs"), 0);
+    const rushYards = num(fantasyDetailValue(row, "Typical Rush Yards"), rushAttempts * 4.8);
+    return [
+      ["Pass Yds", fantasyDisplay(fantasyDetailValue(row, "Typical Pass Yards"), 0)],
+      ["Pass TD", propProbabilityFromExpected(passTds)],
+      ["Rush Yds", fantasyDisplay(rushYards, 0)],
+      ["Rush TD", propProbabilityFromExpected(rushTds)],
+    ];
+  }
+  if (position === "RB") {
+    const totalTds = num(fantasyDetailValue(row, "TDs"), 0);
+    const rec = num(fantasyDetailValue(row, "Receptions"), 0);
+    const recShare = Math.max(0.15, Math.min(0.45, rec / 10));
+    return [
+      ["Rush Yds", fantasyDisplay(fantasyDetailValue(row, "Rush Yds"), 0)],
+      ["Rush TD", propProbabilityFromExpected(totalTds * (1 - recShare))],
+      ["Rec Yds", fantasyDisplay(fantasyDetailValue(row, "Rec Yds"), 0)],
+      ["Rec TD", propProbabilityFromExpected(totalTds * recShare)],
+    ];
+  }
+  if (position === "WR" || position === "TE") {
+    return [
+      ["Rec Yds", fantasyDisplay(fantasyDetailValue(row, "Rec Yds"), 0)],
+      ["Rec TD", propProbabilityFromExpected(fantasyDetailValue(row, "TDs"))],
+    ];
+  }
+  return [];
+}
+
+function weeklyPropWatchAdvantage(row, position) {
+  const pieces = [];
+  const teamTotal = num(fantasyDetailValue(row, "Team Total"), 0);
+  const script = num(fantasyDetailValue(row, "Game Script"), 0);
+  if (position === "QB") {
+    const vqb = num(fantasyDetailValue(row, "Matchup Rating (Low is good)"), 16.5);
+    const stat = num(fantasyDetailValue(row, "Stat vQB Rank"), 16.5);
+    if (vqb <= 10) pieces.push(`vQB #${fantasyDisplay(vqb, 0)}`);
+    if (stat <= 10) pieces.push(`Pass D #${fantasyDisplay(stat, 0)}`);
+    if (teamTotal >= 24) pieces.push(`${fantasyDisplay(teamTotal, 1)} team total`);
+    if (num(fantasyDetailValue(row, "Typical Rush Attempts"), 0) >= 4) pieces.push("rush floor");
+    return pieces;
+  }
+  if (position === "RB") {
+    const vrb = num(fantasyDetailValue(row, "Opp vRB Rank"), 16.5);
+    const tdRank = num(fantasyDetailValue(row, "Rush TDs Allowed Rank"), 16.5);
+    if (vrb <= 10) pieces.push(`vRB #${fantasyDisplay(vrb, 0)}`);
+    if (script >= 3) pieces.push(`lead script +${fantasyDisplay(script, 1)}`);
+    if (tdRank <= 10) pieces.push(`rush TD #${fantasyDisplay(tdRank, 0)}`);
+    if (teamTotal >= 23) pieces.push(`${fantasyDisplay(teamTotal, 1)} team total`);
+    return pieces;
+  }
+  if (position === "WR" || position === "TE") {
+    const matchup = position === "WR" ? num(fantasyDetailValue(row, "Opp vWR Rank"), 16.5) : num(fantasyDetailValue(row, "Opp vTE Rank"), 16.5);
+    const cb = fantasyDetailValue(row, "CB Matchup Player");
+    const cbRating = fantasyDetailValue(row, "CB Matchup Rating");
+    const qbRating = num(fantasyDetailValue(row, "QB Rating"), 0);
+    if (matchup <= 10) pieces.push(`${position === "WR" ? "vWR" : "vTE"} #${fantasyDisplay(matchup, 0)}`);
+    if (position === "WR" && cb) pieces.push(`${cb}${Number.isFinite(Number(cbRating)) ? ` ${fantasyDisplay(cbRating, 0)}` : ""}`);
+    if (script <= -3) pieces.push(`pass script ${fantasyDisplay(script, 1)}`);
+    if (qbRating >= 84) pieces.push(`QB ${fantasyDisplay(qbRating, 0)}`);
+    if (teamTotal >= 23) pieces.push(`${fantasyDisplay(teamTotal, 1)} team total`);
+    return pieces;
+  }
+  return pieces;
+}
+
+function weeklyPropWatchScore(row, position, advantages) {
+  const rank = num(row.scoreRank || row.rank, 999);
+  const scoreEdge = Math.max(0, 40 - rank);
+  const totalEdge = Math.max(0, num(fantasyDetailValue(row, "Team Total"), 0) - 20) * 2;
+  const volume = position === "QB"
+    ? (num(fantasyDetailValue(row, "Typical Pass Yards"), 0) / 18) + (num(fantasyDetailValue(row, "Typical Rush Attempts"), 0) * 1.2)
+    : position === "RB"
+      ? (num(fantasyDetailValue(row, "Rush Yds"), 0) / 5) + (num(fantasyDetailValue(row, "Rec Yds"), 0) / 8)
+      : (num(fantasyDetailValue(row, "Rec Yds"), 0) / 6) + (num(fantasyDetailValue(row, "Receptions"), 0) * 1.2);
+  return scoreEdge + totalEdge + volume + (advantages.length * 5);
+}
+
+function weeklyPropWatchRows(rows, position) {
+  if (!["QB", "RB", "WR", "TE"].includes(position)) return [];
+  return rows
+    .filter((row) => isFantasyRowAvailable(row) && row.opponent && num(row.scoreRank || row.rank, 999) <= 36)
+    .map((row) => {
+      const advantages = weeklyPropWatchAdvantage(row, position);
+      return {
+        row,
+        advantages,
+        props: weeklyPropWatchProps(row, position),
+        watchScore: weeklyPropWatchScore(row, position, advantages),
+      };
+    })
+    .filter((item) => item.advantages.length && item.props.some(([, value]) => value !== "" && value !== "-"))
+    .sort((a, b) => b.watchScore - a.watchScore || num(a.row.scoreRank || a.row.rank, 999) - num(b.row.scoreRank || b.row.rank, 999))
+    .slice(0, 5);
+}
+
+function renderWeeklyPropWatch(rows, position) {
+  if (!["QB", "RB", "WR", "TE"].includes(position)) return "";
+  const items = weeklyPropWatchRows(rows, position);
+  return `
+    <section class="prop-watch-panel ${state.weeklyPropWatchOpen ? "" : "collapsed"}">
+      <div class="prop-watch-head">
+        <div>
+          <h3>Players to Watch</h3>
+          <p>Prop angles from this week's matchup, projected volume, team total, and current fantasy score inputs.</p>
+        </div>
+        <button id="weekly-prop-watch-toggle" class="mini-action">${state.weeklyPropWatchOpen ? "Hide" : `Show (${items.length})`}</button>
+      </div>
+      ${state.weeklyPropWatchOpen ? `
+        ${items.length ? `<div class="prop-watch-grid">${items.map(({ row, advantages, props }) => `
+          <article class="prop-watch-card">
+            <div class="prop-watch-player">
+              ${playerAvatar(findPlayer(row._playerKey) || row)}
+              <div><button class="player-open prop-watch-name" data-player-key="${esc(row._playerKey || "")}">${esc(row.player || row.team)}</button><span>${teamLogo(row.team, teamAbbrevFor(row.team))}${esc(teamAbbrevFor(row.team, row.team))} ${esc(position)} vs ${teamLogo(row.opponent, teamAbbrevFor(row.opponent))}${esc(teamAbbrevFor(row.opponent, row.opponent))}</span></div>
+            </div>
+            <div class="prop-watch-edge">${advantages.map((piece) => `<span>${esc(piece)}</span>`).join("")}</div>
+            <div class="prop-watch-props">${props.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</div>
+          </article>
+        `).join("")}</div>` : `<p class="empty-cell">No strong ${esc(position)} prop-matchup angles in the current filtered view.</p>`}
+      ` : ""}
+    </section>
+  `;
+}
+
 function renderFantasyRanks(kind) {
   const isWeekly = kind === "weekly";
   const positionKey = isWeekly ? "weeklyFantasyPosition" : "seasonFantasyPosition";
@@ -10581,7 +13509,10 @@ function renderFantasyRanks(kind) {
     state[directionKey] = isWeekly ? "desc" : "asc";
   }
   const limits = [50, 75, 100, 150, 250, 500];
-  const sourceRows = fantasyBoardRows(kind, state[positionKey], item.rows || []);
+  let sourceRows = fantasyBoardRows(kind, state[positionKey], item.rows || []);
+  if (!isWeekly && state.draftAssistantMode && !state.draftAssistantShowDrafted) {
+    sourceRows = sourceRows.filter((row) => !state.draftAssistantPicks?.[draftAssistantScopedKey(row)]);
+  }
   const teamOptions = fantasyTeamFilterOptions(sourceRows);
   if (!teamOptions.some(([value]) => value === state[teamFilterKey])) state[teamFilterKey] = "All Teams";
   const depthOptions = fantasyDepthFilterOptions(state[positionKey]);
@@ -10589,7 +13520,11 @@ function renderFantasyRanks(kind) {
   const compareSet = new Set(state.weeklyFantasyCompareKeys);
   const comparedRows = isWeekly && state.weeklyFantasyCompareOnly ? sourceRows.filter((row) => compareSet.has(fantasyCompareKey(row))) : sourceRows;
   const filteredByControls = fantasyApplyFilters(comparedRows, state[positionKey], state[teamFilterKey], state[depthFilterKey]);
-  const filtered = filteredByControls.filter((row) => !state.query || [row.player, row.team, row.opponent, row.position, Object.values(row.extras || {}).join(" ")].join(" ").toLowerCase().includes(state.query));
+  const seasonSearch = !isWeekly ? String(state.seasonFantasySearch || "").trim().toLowerCase() : "";
+  const filtered = filteredByControls.filter((row) => {
+    const haystack = [row.player, row.team, row.opponent, row.position, Object.values(row.extras || {}).join(" ")].join(" ").toLowerCase();
+    return (!state.query || haystack.includes(state.query.toLowerCase())) && (!seasonSearch || haystack.includes(seasonSearch));
+  });
   const rows = fantasySortedRows(filtered, state[sortKey], state[directionKey]).slice(0, Number(state[limitKey]));
   state._activeFantasyRows = filtered;
   const weekLabel = isWeekly ? esc(siteWeekLabel()) : "";
@@ -10618,6 +13553,55 @@ function renderFantasyRanks(kind) {
     document.querySelector("#scan-snaps-stats")?.addEventListener("click", scanSnapsStats);
     document.querySelector("#scan-weekly-sources")?.addEventListener("click", scanWeeklyFantasySources);
     document.querySelector("#scan-fantasypros-adp")?.addEventListener("click", scanFantasyProsAdp);
+    document.querySelector("#season-controls-toggle")?.addEventListener("click", () => {
+      state.seasonFantasyControlsHidden = !state.seasonFantasyControlsHidden;
+      storage.set("nflz-season-fantasy-controls-hidden", state.seasonFantasyControlsHidden);
+      render();
+    });
+    document.querySelector("#weekly-controls-toggle")?.addEventListener("click", () => {
+      state.weeklyFantasyControlsHidden = !state.weeklyFantasyControlsHidden;
+      storage.set("nflz-weekly-fantasy-controls-hidden", state.weeklyFantasyControlsHidden);
+      render();
+    });
+    document.querySelector("#weekly-prop-watch-toggle")?.addEventListener("click", () => {
+      state.weeklyPropWatchOpen = !state.weeklyPropWatchOpen;
+      storage.set("nflz-weekly-prop-watch-open", state.weeklyPropWatchOpen);
+      render();
+    });
+    document.querySelector("#draft-assistant-toggle")?.addEventListener("click", () => {
+      state.draftAssistantMode = !state.draftAssistantMode;
+      storage.set("nflz-draft-assistant-mode", state.draftAssistantMode);
+      render();
+    });
+    document.querySelector("#draft-assistant-league")?.addEventListener("change", (event) => {
+      state.draftAssistantLeagueId = event.target.value;
+      storage.set("nflz-draft-assistant-league-id", state.draftAssistantLeagueId);
+      render();
+    });
+    document.querySelector("#draft-assistant-show-drafted")?.addEventListener("click", () => {
+      state.draftAssistantShowDrafted = !state.draftAssistantShowDrafted;
+      storage.set("nflz-draft-assistant-show-drafted", state.draftAssistantShowDrafted);
+      render();
+    });
+    document.querySelector("#season-fantasy-search")?.addEventListener("input", (event) => {
+      state.seasonFantasySearch = event.target.value;
+      render();
+      setTimeout(() => {
+        const input = document.querySelector("#season-fantasy-search");
+        input?.focus();
+        input?.setSelectionRange(input.value.length, input.value.length);
+      });
+    });
+    document.querySelectorAll("[data-draft-mark]").forEach((button) => button.addEventListener("click", () => {
+      const row = (state._activeFantasyRows || []).find((item) => draftAssistantScopedKey(item) === button.dataset.draftKey);
+      const status = button.dataset.draftMark;
+      if (status) markDraftAssistantRow(row, status);
+      else {
+        delete state.draftAssistantPicks[button.dataset.draftKey];
+        saveDraftAssistantPicks();
+      }
+      render();
+    }));
     document.querySelector("#snaps-stats-search")?.addEventListener("input", (event) => {
       state.snapsStatsQuery = event.target.value;
       render();
@@ -10654,6 +13638,10 @@ function renderFantasyRanks(kind) {
           ${isWeekly ? `<button id="scan-snaps-stats" class="mini-action" ${state.snapsStatsScanStatus === "checking" ? "disabled" : ""}>Scan Snaps & Stats</button>` : ""}
           ${isWeekly ? `<button id="scan-weekly-sources" class="mini-action" ${state.teamRankingsScanStatus === "checking" || state.snapsStatsScanStatus === "checking" ? "disabled" : ""}>Run Both Scans</button>` : ""}
           ${!isWeekly ? `<button id="scan-fantasypros-adp" class="mini-action primary" ${state.fantasyProsAdpScanStatus === "checking" ? "disabled" : ""}>Scan ADP</button>` : ""}
+          ${!isWeekly ? `<button id="draft-assistant-toggle" class="mini-action ${state.draftAssistantMode ? "primary" : ""}">${state.draftAssistantMode ? "Draft Mode On" : "Draft Assistant"}</button>` : ""}
+          ${!isWeekly ? `<button id="season-controls-toggle" class="mini-action">${state.seasonFantasyControlsHidden ? "Show Sliders" : "Hide Sliders"}</button>` : ""}
+          ${isWeekly ? `<button id="weekly-controls-toggle" class="mini-action">${state.weeklyFantasyControlsHidden ? "Show Sliders" : "Hide Sliders"}</button>` : ""}
+          ${!isWeekly ? `<input id="season-fantasy-search" class="inline-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search players" value="${esc(state.seasonFantasySearch || "")}" />` : ""}
           ${isWeekly ? `<button id="weekly-compare-only" class="mini-action ${state.weeklyFantasyCompareOnly ? "primary" : ""}" ${state.weeklyFantasyCompareKeys.length ? "" : "disabled"}>${state.weeklyFantasyCompareOnly ? "Show All" : `Selected Only (${state.weeklyFantasyCompareKeys.length})`}</button>` : ""}
           ${isWeekly ? `<button id="weekly-compare-clear" class="mini-action" ${state.weeklyFantasyCompareKeys.length ? "" : "disabled"}>Clear Compare</button>` : ""}
           ${fantasyPositionSelect(kind, state[positionKey], positions)}
@@ -10665,10 +13653,11 @@ function renderFantasyRanks(kind) {
         </div>
       </div>
       ${isWeekly ? `<div class="scan-strip">${teamRankingsStatusNote()}${snapsStatsStatusNote()}</div>` : `<div class="scan-strip">${fantasyProsAdpStatusNote()}</div>`}
-      ${isWeeklyQb ? renderWeeklyQbFormulaControls(false) : ""}
-      ${isWeekly ? renderWeeklySkillFormulaControls(state[positionKey], false) : ""}
-      ${!isWeekly && state[positionKey] === "QB" ? renderWeeklyQbFormulaControls(true) : ""}
-      ${!isWeekly && ["RB", "WR", "TE", "Defense", "Kicker"].includes(state[positionKey]) ? renderWeeklySkillFormulaControls(state[positionKey], true) : ""}
+      ${isWeekly && !state.weeklyFantasyControlsHidden && isWeeklyQb ? renderWeeklyQbFormulaControls(false) : ""}
+      ${isWeekly && !state.weeklyFantasyControlsHidden ? renderWeeklySkillFormulaControls(state[positionKey], false) : ""}
+      ${!isWeekly && !state.seasonFantasyControlsHidden && state[positionKey] === "QB" ? renderWeeklyQbFormulaControls(true) : ""}
+      ${!isWeekly && !state.seasonFantasyControlsHidden && ["RB", "WR", "TE", "Defense", "Kicker"].includes(state[positionKey]) ? renderWeeklySkillFormulaControls(state[positionKey], true) : ""}
+      ${!isWeekly ? renderDraftAssistantPanel(rows) : ""}
       <div class="table-scroll fantasy-rank-scroll">
         ${fantasyRankTable(columns, rows, filtered, state[positionKey], state[sortKey], state[directionKey])}
       </div>
@@ -10785,23 +13774,25 @@ const fantasyTeamDepthTags = ["Starter", "Flex", "Bench", "IR", "Prospect"];
 const fantasyTeamColors = ["#e8f3ff", "#edf8ee", "#fff4df", "#f2edff", "#ffecef", "#eef3f8"];
 const fantasyScoringOptions = [["full", "Full PPR"], ["half", ".5 PPR"], ["standard", "No PPR"]];
 const fantasyTeamFactorGroups = {
-  QB: ["OL Rank", "PPG Rank", "Receiving Group Rank"],
-  RB: ["OL Rank", "Team YPG Rank", "PPG Rank", "Game Script", "Team Total"],
-  "WR/TE": ["QB Rank", "CB Matchup Rating", "CB Matchup Player", "PPG Rank", "Team YPG Rank", "Game Script", "Team Total"],
-  DST: ["Defense Rank", "Sacks Rank", "Takeaways Rank", "Opp PPG Rank"],
+  QB: ["OL Rank", "Receiving Group Rank", "Team Total"],
+  RB: ["OL Rank", "Game Script", "Team Total"],
+  "WR/TE": ["CB Matchup Player", "CB Matchup Rating", "Game Script", "QB Rating", "Team Total"],
+  DST: ["Defense Rank", "Projected Points Allowed", "Sacks Rank", "Takeaways Rank"],
   K: ["Team Offense Rank", "Team Total Rank", "4th Down Difficulty", "Kicker Stadium Tier"],
 };
 const fantasyTeamFactorLabels = {
   "OL Rank": "OL",
   "PPG Rank": "PPG",
-  "Receiving Group Rank": "Rec",
+  "Receiving Group Rank": "REC",
   "Team YPG Rank": "YPG",
   "Game Script": "Script",
-  "Team Total": "Total",
+  "Team Total": "GM Total",
+  "Projected Points Allowed": "Pts Allowed",
+  "QB Rating": "QB Rtg",
   "QB Rank": "QB",
-  "CB Matchup Rating": "CB Rt",
-  "CB Matchup Player": "CB",
-  "Defense Rank": "Def",
+  "CB Matchup Rating": "Match Rtg",
+  "CB Matchup Player": "Match",
+  "Defense Rank": "Def Rtg",
   "Sacks Rank": "Sacks",
   "Takeaways Rank": "Take",
   "Opp PPG Rank": "Opp PPG",
@@ -10817,10 +13808,12 @@ const fantasyTeamFactorTips = {
   "Team YPG Rank": "Team yardage environment rank.",
   "Game Script": "Projected lead helps RB rush, deficit helps pass volume.",
   "Team Total": "Projected team points for this matchup.",
+  "Projected Points Allowed": "Projected points allowed by this DST in the matchup.",
+  "QB Rating": "Projected QB strength supporting WR/TE scoring.",
   "QB Rank": "Team QB strength feeding receivers.",
   "CB Matchup Rating": "Projected CB matchup rating by WR depth.",
   "CB Matchup Player": "Projected CB matchup by WR depth.",
-  "Defense Rank": "Team defensive rating rank.",
+  "Defense Rank": "Defensive rating rank used in DST scoring.",
   "Sacks Rank": "Sacks per game rank from TeamRankings.",
   "Takeaways Rank": "Takeaways per game rank from TeamRankings.",
   "Opp PPG Rank": "Opponent scoring difficulty for DST.",
@@ -10849,7 +13842,12 @@ function fantasyPositionFromSlot(slot) {
 }
 
 function nextFantasySlot(rows, position) {
-  const depths = rows.filter((row) => row.position === position)
+  const samePosition = rows.filter((row) => row.position === position);
+  for (let depth = 1; depth <= 30; depth += 1) {
+    const row = samePosition.find((item) => String(item.slot || "").toUpperCase() === `${position}${depth}`);
+    if (row && !String(row.playerName || "").trim()) return `${position}${depth}`;
+  }
+  const depths = samePosition
     .map((row) => fantasySlotDepth(row.slot, 0))
     .filter((value) => Number.isFinite(value));
   return `${position}${Math.max(0, ...depths) + 1}`;
@@ -10898,10 +13896,12 @@ function fantasyLineupDefaultRows() {
 function defaultFantasyTeams() {
   return [{
     id: uid("league"),
-    name: "Fantasy Team 1",
+    name: "I Got 5 On It",
     site: "Site",
+    siteLink: "",
     league: "League Name",
     scoring: "full",
+    detailsOpen: false,
     hiddenFactors: [],
     color: fantasyTeamColors[0],
     activeView: "team",
@@ -10915,12 +13915,18 @@ function ensureFantasyTeams() {
     savedFantasyTeams = { leagues: defaultFantasyTeams() };
     storage.set("nflz-my-fantasy-teams", savedFantasyTeams);
   }
+  if (!savedFantasyTeams.leagues.some((league) => String(league.name || "").trim().toLowerCase() === "i got 5 on it")) {
+    savedFantasyTeams.leagues.unshift(defaultFantasyTeams()[0]);
+    storage.set("nflz-my-fantasy-teams", savedFantasyTeams);
+  }
   savedFantasyTeams.leagues.forEach((league, index) => {
     league.id ||= uid("league");
     league.name ||= `Fantasy Team ${index + 1}`;
     league.site ||= "Site";
+    league.siteLink ||= "";
     league.league ||= "League Name";
     league.scoring ||= "full";
+    league.detailsOpen ||= false;
     league.hiddenFactors ||= [];
     league.color ||= fantasyTeamColors[index % fantasyTeamColors.length];
     league.activeView ||= "team";
@@ -10933,6 +13939,105 @@ function ensureFantasyTeams() {
 
 function saveFantasyTeams() {
   storage.set("nflz-my-fantasy-teams", savedFantasyTeams);
+}
+
+function draftAssistantKey(row) {
+  return `${normalizeFantasyPositionLabel(row?.position)}|${fantasyCompareKey(row)}`;
+}
+
+function draftAssistantLeague() {
+  const leagues = ensureFantasyTeams();
+  return leagues.find((league) => league.id === state.draftAssistantLeagueId) || leagues[0] || null;
+}
+
+function draftAssistantScopedKey(row) {
+  const league = draftAssistantLeague();
+  return `${league?.id || "default"}|${draftAssistantKey(row)}`;
+}
+
+function saveDraftAssistantPicks() {
+  storage.set("nflz-draft-assistant-picks", state.draftAssistantPicks || {});
+}
+
+function draftAssistantRowFromFantasyRow(row) {
+  const player = findFantasyTeamPlayer(row);
+  if (!player) return null;
+  const position = player._fantasyDefense
+    ? "Defense"
+    : row.position === "K"
+      ? "Kicker"
+      : normalizeFantasyPositionLabel(groupPosition(player.position) || row.position);
+  return {
+    position,
+    team: player.team || row.team || "",
+    player: player._fantasyDefense ? (player.team || row.team || "") : (player.player || row.playerName || ""),
+    _playerKey: player._fantasyDefense || player._fantasyKicker ? "" : sourceKey(player),
+  };
+}
+
+function unmarkDraftAssistantForFantasyRow(league, row) {
+  if (!league || !row) return;
+  const draftRow = draftAssistantRowFromFantasyRow(row);
+  if (!draftRow) return;
+  const key = `${league.id}|${draftAssistantKey(draftRow)}`;
+  if (state.draftAssistantPicks?.[key] === "mine") {
+    delete state.draftAssistantPicks[key];
+    saveDraftAssistantPicks();
+  }
+}
+
+function clearFantasyRowPlayer(league, view, row) {
+  if (!league || !row) return;
+  unmarkDraftAssistantForFantasyRow(league, row);
+  const otherRows = fantasyCounterpartRows(league, view);
+  const linked = row.linkedRowId ? otherRows?.find((item) => item.id === row.linkedRowId) : null;
+  [row, linked].filter(Boolean).forEach((item) => {
+    unmarkDraftAssistantForFantasyRow(league, item);
+    item.playerKey = "";
+    item.playerName = "";
+    item.team = "";
+  });
+}
+
+function addSeasonRowToFantasyTeam(row) {
+  const league = draftAssistantLeague();
+  if (!league || !row) return;
+  const position = row.position === "Defense" ? "DST" : row.position === "Kicker" ? "K" : normalizeFantasyPositionLabel(row.position);
+  const playerName = row.position === "Defense" ? `${teamAbbrevFor(row.team)} DST` : row.player;
+  const already = (league.teamRows || []).some((item) => fantasyMergeKey(item.playerName) === fantasyMergeKey(playerName) && normalizeTeamName(item.team) === normalizeTeamName(row.team));
+  if (!already) {
+    const slot = nextFantasySlot(league.teamRows || [], position);
+    const openRow = (league.teamRows || []).find((item) => item.position === position && item.slot === slot && !item.playerName);
+    const patch = {
+      position,
+      slot,
+      tag: "Bench",
+      playerKey: row._playerKey || "",
+      playerName,
+      team: row.team,
+    };
+    if (openRow) Object.assign(openRow, patch);
+    else league.teamRows.push({ id: uid("fantasy-row"), ...patch });
+  }
+  normalizeFantasyTeamRows(league);
+  saveFantasyTeams();
+}
+
+function markDraftAssistantRow(row, status) {
+  if (!row) return;
+  state.draftAssistantPicks = { ...(state.draftAssistantPicks || {}), [draftAssistantScopedKey(row)]: status };
+  if (status === "mine") addSeasonRowToFantasyTeam(row);
+  saveDraftAssistantPicks();
+}
+
+function draftAssistantCell(row) {
+  const scopedKey = draftAssistantScopedKey(row);
+  const status = state.draftAssistantPicks?.[scopedKey] || "";
+  return `<span class="draft-actions">
+    <button class="${status === "drafted" ? "active" : ""}" data-draft-mark="drafted" data-draft-key="${esc(scopedKey)}" title="Hide as drafted in this fantasy team draft">Drafted</button>
+    <button class="${status === "mine" ? "active mine" : ""}" data-draft-mark="mine" data-draft-key="${esc(scopedKey)}" title="Add to my selected fantasy team">My Team</button>
+    ${status ? `<button data-draft-mark="" data-draft-key="${esc(scopedKey)}" title="Clear draft mark">Clear</button>` : ""}
+  </span>`;
 }
 
 function fantasyTeamWeek() {
@@ -10957,10 +14062,31 @@ function fantasyPositionClass(position) {
 
 function fantasyPositionForPlayer(player) {
   if (!player) return "";
+  if (player._fantasyKicker) return "K";
   const group = groupPosition(player.position);
   if (group === "Defense") return "DST";
   if (group === "Kicker") return "K";
   return group || player.position;
+}
+
+function fantasyKickerOptions() {
+  const weekly = fantasyWeeklyRowsFor("Kicker").map((row) => ({
+    player: row.player,
+    team: row.team,
+    position: "Kicker",
+    teamAbbrev: teamAbbrevFor(row.team, row.team),
+    rating: row.rating,
+    depth: 1,
+    _fantasyKicker: true,
+  }));
+  const depth = state.players.filter((player) => normalizeFantasyPositionLabel(player.position) === "Kicker");
+  const seen = new Set();
+  return [...weekly, ...depth].filter((player) => {
+    const key = `${fantasyMergeKey(player.player)}|${normalizeTeamName(player.team)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function fantasyPlayersForSlot(position) {
@@ -10969,9 +14095,9 @@ function fantasyPlayersForSlot(position) {
     return state.players.filter((player) => ["RB", "WR", "TE"].includes(groupPosition(player.position)) || position === "Any");
   }
   if (position === "DST") {
-    return (state.data?.teams || []).map((team) => ({ player: `${team.teamAbbrev || teamAbbrevFor(team.team)} DST`, team: team.team, position: "Defense", teamAbbrev: team.teamAbbrev || teamAbbrevFor(team.team), rating: team.defenseAverage, depth: 1, _fantasyDefense: true }));
+      return (state.data?.teams || []).map((team) => ({ player: `${team.teamAbbrev || teamAbbrevFor(team.team)} DST`, team: team.team, position: "Defense", teamAbbrev: team.teamAbbrev || teamAbbrevFor(team.team), rating: team.defenseAverage, depth: 1, _fantasyDefense: true }));
   }
-  if (position === "K") return state.players.filter((player) => normalizeFantasyPositionLabel(player.position) === "Kicker");
+  if (position === "K") return fantasyKickerOptions();
   return state.players.filter((player) => normalizeFantasyPositionLabel(groupPosition(player.position) || player.position) === wanted);
 }
 
@@ -10979,9 +14105,15 @@ function findFantasyDefenseTeam(name, fallbackTeam = "") {
   const raw = String(name || fallbackTeam || "").replace(/\bD\/?ST\b|\bDST\b|\bDefense\b/gi, "").trim();
   if (!raw) return null;
   const teams = state.data?.teams || [];
+  const rawKey = fantasyMergeKey(raw);
+  const rawUpper = raw.toUpperCase();
+  const abbrevs = state.data?.meta?.teamAbbrevs || {};
+  const byAbbrev = teams.find((team) => String(abbrevs[team.team] || teamAbbrevFor(team.team, "")).toUpperCase() === rawUpper);
+  if (byAbbrev) return byAbbrev;
   return teamByName(raw)
-    || teams.find((team) => normalizeTeamName(team.teamAbbrev) === normalizeTeamName(raw))
-    || teams.find((team) => fantasyMergeKey(team.team).includes(fantasyMergeKey(raw)) || fantasyMergeKey(raw).includes(fantasyMergeKey(team.team)))
+    || teams.find((team) => normalizeTeamName(abbrevs[team.team] || team.teamAbbrev) === normalizeTeamName(raw))
+    || teams.find((team) => fantasyMergeKey(team.team) === rawKey)
+    || (rawKey.length > 3 ? teams.find((team) => fantasyMergeKey(team.team).includes(rawKey) || rawKey.includes(fantasyMergeKey(team.team))) : null)
     || null;
 }
 
@@ -11005,6 +14137,13 @@ function findFantasyTeamPlayer(row) {
     const team = findFantasyDefenseTeam(row.playerName, row.team);
     return team ? { player: `${team.teamAbbrev || teamAbbrevFor(team.team)} DST`, team: team.team, position: "Defense", teamAbbrev: team.teamAbbrev || teamAbbrevFor(team.team), rating: team.defenseAverage, depth: 1, _fantasyDefense: true } : null;
   }
+  if (row.position === "K") {
+    const key = fantasyMergeKey(row.playerName);
+    const pool = fantasyKickerOptions();
+    return pool.find((player) => fantasyMergeKey(player.player) === key && (!row.team || normalizeTeamName(player.team) === normalizeTeamName(row.team)))
+      || pool.find((player) => fantasyMergeKey(player.player) === key)
+      || null;
+  }
   const keyed = row.playerKey ? findPlayer(row.playerKey) : null;
   if (keyed && (!row.playerName || fantasyMergeKey(keyed.player) === fantasyMergeKey(row.playerName))) return keyed;
   return findFantasyPlayerForRowName(row.playerName, row);
@@ -11021,6 +14160,50 @@ function fantasyProjectionForPlayer(player, position) {
   const rows = fantasyWeeklyRowsFor(normalized);
   if (normalized === "Defense") return rows.find((row) => normalizeTeamName(row.team) === normalizeTeamName(player.team)) || null;
   return rows.find((row) => row._playerKey === sourceKey(player) || fantasyMergeKey(row.player) === fantasyMergeKey(player.player)) || null;
+}
+
+function fantasyProjectionForRosterRow(rosterRow, player, position, scoring = "full") {
+  if (!rosterRow?.playerName && !player) return null;
+  const normalized = position === "DST" || player?._fantasyDefense
+    ? "Defense"
+    : position === "K"
+      ? "Kicker"
+      : normalizeFantasyPositionLabel(groupPosition(player?.position) || position || rosterRow?.position);
+  const rows = fantasyWeeklyRowsFor(normalized);
+  if (normalized === "Defense") {
+    const teamName = player?.team || rosterRow?.team || rosterRow?.playerName;
+    return rows.find((row) => normalizeTeamName(row.team) === normalizeTeamName(teamName))
+      || rows.find((row) => fantasyMergeKey(row.player || row.team) === fantasyMergeKey(rosterRow?.playerName))
+      || null;
+  }
+  const visibleNameKey = fantasyMergeKey(rosterRow?.playerName || "");
+  const playerNameKey = fantasyMergeKey(player?.player || "");
+  const playerKey = player ? sourceKey(player) : "";
+  const candidates = rows.filter((rankRow) => {
+    const rankNameKey = fantasyMergeKey(rankRow.player);
+    return (playerKey && rankRow._playerKey === playerKey)
+      || (visibleNameKey && rankNameKey === visibleNameKey)
+      || (playerNameKey && rankNameKey === playerNameKey);
+  });
+  if (!candidates.length) return player ? fantasyProjectionForPlayer(player, normalized) : null;
+  const scoreRank = (rankRow) => {
+    const value = Number(fantasyScoreRankForScoring(rankRow, normalized, scoring));
+    return Number.isFinite(value) ? value : 9999;
+  };
+  const scoreValue = (rankRow) => {
+    const value = Number(fantasyScoreForScoring(rankRow, normalized, scoring));
+    return Number.isFinite(value) ? value : -9999;
+  };
+  const sorted = [...candidates].sort((a, b) => scoreRank(a) - scoreRank(b) || scoreValue(b) - scoreValue(a));
+  if (rosterRow?.team) {
+    const teamMatch = sorted.find((rankRow) => normalizeTeamName(rankRow.team) === normalizeTeamName(rosterRow.team));
+    if (teamMatch) return teamMatch;
+  }
+  if (player?.team) {
+    const playerTeamMatch = sorted.find((rankRow) => normalizeTeamName(rankRow.team) === normalizeTeamName(player.team));
+    if (playerTeamMatch && (!visibleNameKey || fantasyMergeKey(playerTeamMatch.player) === visibleNameKey || sorted.length === 1)) return playerTeamMatch;
+  }
+  return sorted[0];
 }
 
 function fantasyPrimaryScoreRank(row, position) {
@@ -11083,19 +14266,40 @@ function fantasySourceStyle(position, key, value, reverse = false) {
   return cfStyle(value, Math.min(...values), Math.max(...values), reverse);
 }
 
+function fantasyRankColorMax(position) {
+  const normalized = position === "DST" ? "Defense" : position === "K" ? "Kicker" : normalizeFantasyPositionLabel(position);
+  return {
+    QB: 30,
+    RB: 50,
+    WR: 75,
+    TE: 30,
+    Defense: 32,
+    Kicker: 32,
+  }[normalized] || 32;
+}
+
+function myFantasySourceStyle(position, key, value, reverse = false) {
+  if (!Number.isFinite(Number(value))) return "";
+  const rankLike = String(key || "").toLowerCase().includes("rank")
+    || String(key || "").toLowerCase().includes("scorerank")
+    || key === "usage";
+  if (rankLike) return cfStyle(value, 1, fantasyRankColorMax(position), true);
+  return fantasySourceStyle(position, key, value, reverse);
+}
+
 function fantasyContextChips(row, position) {
   if (!row) return "";
   const labels = position === "QB"
-    ? ["OL Rank", "PPG Rank", "Receiving Group Rank"]
+    ? ["OL Rank", "Receiving Group Rank", "Team Total"]
     : position === "RB"
-      ? ["OL Rank", "YPG Rank", "PPG Rank", "Game Script", "Team Total"]
+      ? ["OL Rank", "Game Script", "Team Total"]
       : position === "DST"
-        ? ["Defense Rank", "Sacks Rank", "Takeaways Rank", "Opp PPG Rank"]
+        ? ["Defense Rank", "Projected Points Allowed", "Sacks Rank", "Takeaways Rank"]
         : position === "K"
           ? ["Team Offense Rank", "Team Total Rank", "4th Down Difficulty", "Kicker Stadium Tier"]
           : position === "WR"
-            ? ["QB Rank", "CB Matchup Rating", "CB Matchup Player", "PPG Rank", "YPG Rank", "Game Script", "Team Total"]
-            : ["QB Rank", "PPG Rank", "YPG Rank", "Game Script", "Team Total"];
+            ? ["CB Matchup Player", "CB Matchup Rating", "Game Script", "QB Rating", "Team Total"]
+            : ["Game Script", "QB Rating", "Team Total"];
   return labels.map((label) => {
     const fixed = label === "YPG Rank" ? "Team YPG Rank" : label;
     const value = fantasyDetailValue(row, fixed);
@@ -11108,9 +14312,11 @@ function fantasyContextChips(row, position) {
       "WR Group Rank": "WRs",
       "YPG Rank": "YPG",
       "QB Rank": "QB",
-      "CB Matchup Rating": "CB",
-      "CB Matchup Player": "CB",
+      "QB Rating": "QB Rtg",
+      "CB Matchup Rating": "Match Rtg",
+      "CB Matchup Player": "Match",
       "Defense Rank": "DEF",
+      "Projected Points Allowed": "Pts Allowed",
       "Sacks Rank": "Sacks",
       "Takeaways Rank": "Take",
       "Opp PPG Rank": "Opp PPG",
@@ -11130,6 +14336,12 @@ function fantasyTeamAllFactors() {
 function fantasyTeamVisibleFactors(league) {
   const hidden = new Set(league?.hiddenFactors || []);
   return fantasyTeamAllFactors().filter((factor) => !hidden.has(factor));
+}
+
+function fantasyTeamVisibleFactorsForPosition(league, position) {
+  const group = fantasyTeamFactorGroupForPosition(position);
+  const hidden = new Set(league?.hiddenFactors || []);
+  return (fantasyTeamFactorGroups[group] || []).filter((factor) => !hidden.has(factor));
 }
 
 function fantasyTeamFactorGroupForPosition(position) {
@@ -11152,19 +14364,81 @@ function fantasyTeamFactorValue(row, position, factor) {
 }
 
 function fantasyTeamFactorReverse(factor) {
-  return /rank/i.test(factor) || ["4th Down Difficulty", "CB Matchup Rating"].includes(factor);
+  return /rank/i.test(factor) || ["4th Down Difficulty", "CB Matchup Rating", "Projected Points Allowed"].includes(factor);
 }
 
 function fantasyTeamFactorHeader(league, factor) {
   const label = fantasyTeamFactorLabels[factor] || factor;
-  return `<th class="my-fantasy-factor-head" title="${esc(fantasyTeamFactorTips[factor] || factor)}"><button type="button" data-fantasy-hide-factor="${esc(factor)}" data-league-id="${esc(league.id)}" title="Hide ${esc(label)}">x</button><span>${esc(label)}</span></th>`;
+  return `<th class="my-fantasy-factor-head" title="${esc(fantasyTeamFactorTips[factor] || factor)}"><button type="button" data-fantasy-hide-factor="${esc(factor)}" data-league-id="${esc(league.id)}" title="Hide ${esc(label)}">x</button><span>${myFantasyHeaderLabel(label)}</span></th>`;
 }
 
 function fantasyTeamFactorCell(row, position, factor) {
   const value = fantasyTeamFactorValue(row, position, factor);
-  const style = Number.isFinite(Number(value)) ? fantasySourceStyle(position, `extra:${factor}`, value, fantasyTeamFactorReverse(factor)) : "";
-  const digits = Number.isFinite(Number(value)) && Math.abs(Number(value)) < 10 ? 1 : 0;
-  return `<td class="num my-fantasy-factor-cell" ${style}>${esc(fantasyDisplay(value, digits))}</td>`;
+  const numeric = Number.isFinite(Number(value));
+  const style = numeric ? myFantasySourceStyle(position, `extra:${factor}`, value, fantasyTeamFactorReverse(factor)) : "";
+  const rankLike = /rank/i.test(factor);
+  const digits = rankLike ? 0 : numeric && Math.abs(Number(value)) < 10 ? 1 : 0;
+  return `<td class="${numeric ? "num" : "text"} my-fantasy-factor-cell" ${style}>${esc(fantasyDisplay(value, digits))}</td>`;
+}
+
+function myFantasyHeaderLabel(label) {
+  const text = String(label || "");
+  const custom = {
+    "Full PPR Rank": "Full<br>PPR Rank",
+    ".5 PPR Rank": ".5<br>PPR Rank",
+    "No PPR Rank": "No<br>PPR Rank",
+    "Usage Rank": "Usage<br>Rank",
+    "GM Total": "GM<br>Total",
+    "Pts Allowed": "Pts<br>Allowed",
+    "Match Rtg": "Match<br>Rtg",
+    "Def Rtg": "Def<br>Rtg",
+    "QB Rtg": "QB<br>Rtg",
+    "Total Rk": "Total<br>Rk",
+  }[text];
+  if (custom) return custom;
+  if (text.includes(" ")) {
+    const parts = text.split(/\s+/);
+    const mid = Math.ceil(parts.length / 2);
+    return `${esc(parts.slice(0, mid).join(" "))}<br>${esc(parts.slice(mid).join(" "))}`;
+  }
+  return esc(text);
+}
+
+function fantasyRosterAvatar(player) {
+  if (player?._fantasyDefense) return teamLogoOnly(player.team, "team-logo fantasy-team-logo");
+  return player ? playerAvatar(player) : playerAvatar({ player: "?" });
+}
+
+function myFantasyTeamLogoCell(teamName) {
+  return `<span class="my-fantasy-logo-cell">${teamLogoOnly(teamName, "team-logo fantasy-team-logo")}</span>`;
+}
+
+function fantasyTeamPositionSections(rows) {
+  const sections = [];
+  rows.forEach((row) => {
+    const player = findFantasyTeamPlayer(row);
+    const position = fantasyRowDisplayPosition(row, player) || row.position || "Any";
+    let section = sections.find((item) => item.position === position);
+    if (!section) {
+      section = { position, rows: [] };
+      sections.push(section);
+    }
+    section.rows.push(row);
+  });
+  return sections.sort((a, b) => fantasyTeamPositionRank(a.position) - fantasyTeamPositionRank(b.position));
+}
+
+function fantasyTeamSectionTable(league, view, section, scoringLabel) {
+  const factors = fantasyTeamVisibleFactorsForPosition(league, section.position);
+  const spans = fantasyPositionSpans(section.rows);
+  return `
+    <div class="my-fantasy-position-section ${fantasyPositionClass(section.position)}">
+      <table class="my-fantasy-table">
+        <thead><tr><th>Pos</th><th>Slot</th><th>Tag</th><th>Player</th><th>Team</th><th>Opp</th><th>${myFantasyHeaderLabel(`${scoringLabel} Rank`)}</th><th>vPOS</th><th>${myFantasyHeaderLabel("Usage Rank")}</th><th>${myFantasyHeaderLabel(scoringLabel)}</th>${factors.map((factor) => fantasyTeamFactorHeader(league, factor)).join("")}<th></th></tr></thead>
+        <tbody>${section.rows.map((row, index) => fantasyTeamRow(league, view, row, index, section.rows, spans.get(row.id), factors)).join("")}</tbody>
+      </table>
+    </div>
+  `;
 }
 
 function fantasyRowDatalistId(leagueId, view, rowId) {
@@ -11249,24 +14523,28 @@ function fantasyPositionSpans(rows) {
 }
 
 function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefined, factors = []) {
-  const player = findFantasyTeamPlayer(row);
-  const position = fantasyRowDisplayPosition(row, player);
-  const projection = fantasyProjectionForPlayer(player, position);
   const scoring = fantasyTeamScoring(league);
+  const matchedPlayer = findFantasyTeamPlayer(row);
+  let position = fantasyRowDisplayPosition(row, matchedPlayer);
+  const projection = fantasyProjectionForRosterRow(row, matchedPlayer, position, scoring);
+  const projectionPlayer = projection?._playerKey ? findPlayer(projection._playerKey) : null;
+  const player = projectionPlayer || matchedPlayer;
+  position = fantasyRowDisplayPosition(row, player);
   const primaryRank = fantasyScoreRankForScoring(projection, position, scoring);
   const primaryScore = fantasyScoreForScoring(projection, position, scoring);
   const opponent = projection?.opponent ? teamAbbrevFor(projection.opponent, projection.opponent) : "";
-  const team = player?.team ? teamAbbrevFor(player.team, player.teamAbbrev || player.team) : "";
+  const teamSource = projection?.team || player?.team || "";
+  const team = teamSource ? teamAbbrevFor(teamSource, player?.teamAbbrev || teamSource) : "";
   const vposLabel = position === "QB" ? "Matchup Rating (Low is good)" : position === "RB" ? "Opp vRB Rank" : position === "WR" ? "Opp vWR Rank" : position === "TE" ? "Opp vTE Rank" : position === "DST" ? "Opponent Off Rank" : "Team Offense Rank";
   const vpos = projection ? fantasyDetailValue(projection, vposLabel) : "";
   const datalistId = fantasyRowDatalistId(league.id, view, row.id);
   const options = fantasyPlayersForSlot(row.position).slice(0, 700);
   const rowClass = row.tag === "Flex" ? "flex" : String(row.tag || "").toLowerCase();
-  const scoreStyle = projection ? fantasySourceStyle(position, `score:${scoring}`, primaryScore, false) : "";
-  const rankStyle = projection ? fantasySourceStyle(position, `scoreRank:${scoring}`, primaryRank, true) : "";
-  const vposStyle = projection ? fantasySourceStyle(position, `extra:${vposLabel}`, vpos, true) : "";
+  const scoreStyle = projection ? myFantasySourceStyle(position, `score:${scoring}`, primaryScore, false) : "";
+  const rankStyle = projection ? myFantasySourceStyle(position, `scoreRank:${scoring}`, primaryRank, true) : "";
+  const vposStyle = projection ? myFantasySourceStyle(position, `extra:${vposLabel}`, vpos, true) : "";
   const usage = fantasyUsageRank(projection);
-  const usageStyle = projection ? fantasySourceStyle(position, "usage", usage, true) : "";
+  const usageStyle = projection ? myFantasySourceStyle(position, "usage", usage, true) : "";
   const posCell = spanInfo === undefined
     ? `<td class="pos-rail ${fantasyPositionClass(position)}">${index === 0 || visibleRows[index - 1]?.position !== row.position ? esc(position) : ""}</td>`
     : spanInfo ? `<td class="pos-rail ${fantasyPositionClass(position)}" rowspan="${spanInfo.span}">${esc(spanInfo.label)}</td>` : "";
@@ -11278,14 +14556,15 @@ function fantasyTeamRow(league, view, row, index, visibleRows, spanInfo = undefi
       </td>
       <td class="fantasy-roster-player">
         <div class="fantasy-player-input-wrap">
-          ${player ? playerAvatar(player) : playerAvatar({ player: "?" })}
+          ${fantasyRosterAvatar(player)}
           <input list="${datalistId}" data-fantasy-field="playerName" data-league-id="${esc(league.id)}" data-view="${esc(view)}" data-row-id="${esc(row.id)}" value="${esc(row.playerName || player?.player || "")}" placeholder="Type player name" />
-          ${player && !player._fantasyDefense ? `<button type="button" class="fantasy-player-card-open player-open" data-player-key="${esc(sourceKey(player))}" title="Open player card">Card</button>` : ""}
+          ${player && !player._fantasyDefense && !player._fantasyKicker ? `<button type="button" class="fantasy-player-card-open player-open" data-player-key="${esc(sourceKey(player))}" title="Open player card">Card</button>` : ""}
+          ${player?._fantasyDefense ? `<button type="button" class="fantasy-player-card-open defense-card-open" data-defense-team="${esc(player.team)}" title="Open defensive team card">Card</button>` : ""}
           <datalist id="${datalistId}">${options.map((item) => `<option value="${esc(item.player)}">${esc(`${item.player} - ${teamAbbrevFor(item.team, item.teamAbbrev || item.team)} ${fantasyPositionForPlayer(item)}`)}</option>`).join("")}</datalist>
         </div>
       </td>
-      <td>${esc(team || "-")}</td>
-      <td>${esc(opponent || "-")}</td>
+      <td>${teamSource ? myFantasyTeamLogoCell(teamSource) : "-"}</td>
+      <td>${projection?.opponent ? myFantasyTeamLogoCell(projection.opponent) : "-"}</td>
       <td class="num" ${rankStyle}>${esc(fantasyDisplay(primaryRank, 0))}</td>
       <td class="num" ${vposStyle}>${esc(fantasyDisplay(vpos, 0))}</td>
       <td class="num" ${usageStyle}>${esc(fantasyDisplay(usage, 0))}</td>
@@ -11300,36 +14579,75 @@ function renderFantasyLeagueCard(league) {
   const view = league.activeView || "team";
   const rows = view === "lineup" ? league.lineupRows : league.teamRows;
   const grouped = view === "team" ? [...rows].sort(fantasyTeamRowSort) : rows;
-  const spans = fantasyPositionSpans(grouped);
-  const visibleFactors = fantasyTeamVisibleFactors(league);
   const hiddenFactors = fantasyTeamAllFactors().filter((factor) => (league.hiddenFactors || []).includes(factor));
   const scoringLabel = fantasyScoringOptions.find(([value]) => value === fantasyTeamScoring(league))?.[1] || "Full PPR";
+  const sections = fantasyTeamPositionSections(grouped);
   return `
-    <article class="my-fantasy-card" style="--league-bg:${esc(league.color || "#e8f3ff")}">
+    <article class="my-fantasy-card" data-league-id="${esc(league.id)}" style="--league-bg:${esc(league.color || "#e8f3ff")}">
       <div class="depth-team-head my-fantasy-head">
         <h3><input data-fantasy-league-field="name" data-league-id="${esc(league.id)}" value="${esc(league.name)}" /></h3>
         <div class="league-meta">
-          <input data-fantasy-league-field="league" data-league-id="${esc(league.id)}" value="${esc(league.league)}" />
-          <input data-fantasy-league-field="site" data-league-id="${esc(league.id)}" value="${esc(league.site)}" />
+          <span class="league-pill">${esc(league.league || "League")}</span>
+          ${league.siteLink ? `<a class="league-pill link" href="${esc(league.siteLink)}" target="_blank" rel="noreferrer">${esc(league.site || "Open Site")}</a>` : `<span class="league-pill">${esc(league.site || "Site")}</span>`}
           ${optionSelect(`scoring-${league.id}`, fantasyTeamScoring(league), fantasyScoringOptions).replace("<select", `<select data-fantasy-league-field="scoring" data-league-id="${esc(league.id)}" title="Fantasy scoring format for this team"`)}
           <input type="color" data-fantasy-league-field="color" data-league-id="${esc(league.id)}" value="${esc(league.color || "#e8f3ff")}" />
+          <button class="mini-action" type="button" data-fantasy-details-toggle="${esc(league.id)}">League Details</button>
         </div>
       </div>
+      ${league.detailsOpen ? `<div class="league-details-panel">
+        <label>Team Name <input data-fantasy-league-field="name" data-league-id="${esc(league.id)}" value="${esc(league.name)}" /></label>
+        <label>League Name <input data-fantasy-league-field="league" data-league-id="${esc(league.id)}" value="${esc(league.league)}" /></label>
+        <label>Site <input data-fantasy-league-field="site" data-league-id="${esc(league.id)}" value="${esc(league.site)}" /></label>
+        <label>Site Link <input data-fantasy-league-field="siteLink" data-league-id="${esc(league.id)}" value="${esc(league.siteLink || "")}" placeholder="https://..." /></label>
+      </div>` : ""}
       <div class="my-fantasy-view-tabs">
         <button class="${view === "team" ? "active" : ""}" data-fantasy-view="team" data-league-id="${esc(league.id)}">Team View</button>
         <button class="${view === "lineup" ? "active" : ""}" data-fantasy-view="lineup" data-league-id="${esc(league.id)}">Lineup View</button>
-        ${optionSelect(`add-position-${league.id}`, "RB", [["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["DST", "DST"], ["K", "K"], ["Bench", "Bench"], ["IR", "IR"], ...(view === "lineup" ? [["FLEX", "FLEX"]] : [])]).replace("<select", `<select class="fantasy-add-position" data-league-id="${esc(league.id)}" data-view="${esc(view)}"`)}
+        ${optionSelect(`add-position-${league.id}`, league.addPositions?.[view] || "RB", [["QB", "QB"], ["RB", "RB"], ["WR", "WR"], ["TE", "TE"], ["DST", "DST"], ["K", "K"], ["Bench", "Bench"], ["IR", "IR"], ...(view === "lineup" ? [["FLEX", "FLEX"]] : [])]).replace("<select", `<select class="fantasy-add-position" data-league-id="${esc(league.id)}" data-view="${esc(view)}"`)}
         <button class="mini-action" data-fantasy-add-row="${esc(league.id)}" data-view="${esc(view)}">Add Row</button>
         ${hiddenFactors.length ? `${optionSelect(`factor-${league.id}`, hiddenFactors[0], hiddenFactors.map((factor) => [factor, fantasyTeamFactorLabels[factor] || factor])).replace("<select", `<select class="fantasy-add-factor" data-league-id="${esc(league.id)}"`)}<button type="button" class="mini-action" data-fantasy-add-factor="${esc(league.id)}">Add Factor</button>` : `<span class="depth-check-note">All factors shown</span>`}
       </div>
       <div class="table-scroll my-fantasy-scroll">
-        <table class="my-fantasy-table">
-          <thead><tr><th>Pos</th><th>Slot</th><th>Tag</th><th>Player</th><th>Team</th><th>Opp</th><th>${esc(scoringLabel)} Rank</th><th>vPOS</th><th>Usage Rank</th><th>${esc(scoringLabel)}</th>${visibleFactors.map((factor) => fantasyTeamFactorHeader(league, factor)).join("")}<th></th></tr></thead>
-          <tbody>${grouped.map((row, index) => fantasyTeamRow(league, view, row, index, grouped, spans.get(row.id), visibleFactors)).join("")}</tbody>
-        </table>
+        ${sections.map((section) => fantasyTeamSectionTable(league, view, section, scoringLabel)).join("")}
       </div>
     </article>
   `;
+}
+
+function captureMyFantasyScroll(leagueId = "", view = "") {
+  const pageX = window.scrollX;
+  const pageY = window.scrollY;
+  const selector = leagueId ? `.my-fantasy-card[data-league-id="${CSS.escape(leagueId)}"]` : ".my-fantasy-card";
+  const card = document.querySelector(selector);
+  const scroller = card?.querySelector(".my-fantasy-scroll") || null;
+  const scrollTop = scroller?.scrollTop || 0;
+  const scrollLeft = scroller?.scrollLeft || 0;
+  const active = document.activeElement?.matches?.("[data-fantasy-field]")
+    ? {
+        field: document.activeElement.dataset.fantasyField,
+        leagueId: document.activeElement.dataset.leagueId,
+        rowId: document.activeElement.dataset.rowId,
+        view: document.activeElement.dataset.view || view,
+      }
+    : null;
+  return () => requestAnimationFrame(() => requestAnimationFrame(() => {
+    window.scrollTo(pageX, pageY);
+    const nextCard = document.querySelector(selector);
+    const nextScroller = nextCard?.querySelector(".my-fantasy-scroll");
+    if (nextScroller) {
+      nextScroller.scrollTop = scrollTop;
+      nextScroller.scrollLeft = scrollLeft;
+    }
+    if (active) {
+      document.querySelector(`[data-fantasy-field="${CSS.escape(active.field)}"][data-league-id="${CSS.escape(active.leagueId)}"][data-view="${CSS.escape(active.view)}"][data-row-id="${CSS.escape(active.rowId)}"]`)?.focus?.({ preventScroll: true });
+    }
+  }));
+}
+
+function renderMyFantasyStable(leagueId = "", view = "") {
+  const restore = captureMyFantasyScroll(leagueId, view);
+  render();
+  restore();
 }
 
 function wireMyFantasyTeams() {
@@ -11343,6 +14661,11 @@ function wireMyFantasyTeams() {
     storage.set("nflz-my-fantasy-league-view", state.myFantasyLeagueView);
     render();
   });
+  document.querySelectorAll("[data-my-fantasy-columns]").forEach((button) => button.addEventListener("click", () => {
+    state.myFantasyColumns = Math.max(1, Math.min(3, Number(button.dataset.myFantasyColumns) || 3));
+    storage.set("nflz-my-fantasy-columns", state.myFantasyColumns);
+    render();
+  }));
   document.querySelector("#my-fantasy-add-league")?.addEventListener("click", () => {
     const leagues = ensureFantasyTeams();
     leagues.push({ ...defaultFantasyTeams()[0], id: uid("league"), name: `Fantasy Team ${leagues.length + 1}`, color: fantasyTeamColors[leagues.length % fantasyTeamColors.length] });
@@ -11365,6 +14688,13 @@ function wireMyFantasyTeams() {
     saveFantasyTeams();
     render();
   }));
+  document.querySelectorAll("[data-fantasy-details-toggle]").forEach((button) => button.addEventListener("click", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === button.dataset.fantasyDetailsToggle);
+    if (!league) return;
+    league.detailsOpen = !league.detailsOpen;
+    saveFantasyTeams();
+    render();
+  }));
   document.querySelectorAll("[data-fantasy-hide-factor]").forEach((button) => button.addEventListener("click", () => {
     const league = ensureFantasyTeams().find((item) => item.id === button.dataset.leagueId);
     if (!league) return;
@@ -11380,18 +14710,36 @@ function wireMyFantasyTeams() {
     saveFantasyTeams();
     render();
   }));
+  document.querySelectorAll(".fantasy-add-position").forEach((selectEl) => selectEl.addEventListener("change", () => {
+    const league = ensureFantasyTeams().find((item) => item.id === selectEl.dataset.leagueId);
+    if (!league) return;
+    league.addPositions = { ...(league.addPositions || {}), [selectEl.dataset.view || "team"]: selectEl.value };
+    saveFantasyTeams();
+  }));
   document.querySelectorAll("[data-fantasy-field]").forEach((input) => {
     input.addEventListener("change", () => {
       const league = ensureFantasyTeams().find((item) => item.id === input.dataset.leagueId);
       const rows = input.dataset.view === "lineup" ? league?.lineupRows : league?.teamRows;
       const row = rows?.find((item) => item.id === input.dataset.rowId);
       if (!row) return;
+      const oldRow = { ...row };
+      if (input.dataset.fantasyField === "playerName" && !String(input.value || "").trim()) {
+        clearFantasyRowPlayer(league, input.dataset.view, oldRow);
+        clearFantasyRowPlayer(league, input.dataset.view, row);
+        normalizeFantasyTeamRows(league);
+        saveFantasyTeams();
+        renderMyFantasyStable(league.id, input.dataset.view);
+        return;
+      }
       row[input.dataset.fantasyField] = input.value;
       if (input.dataset.view === "team" && input.dataset.fantasyField === "slot") {
         const slotPosition = fantasyPositionFromSlot(input.value);
         if (slotPosition) row.position = slotPosition;
       }
       if (input.dataset.fantasyField === "playerName") {
+        if (oldRow.playerName && fantasyMergeKey(oldRow.playerName) !== fantasyMergeKey(input.value)) {
+          unmarkDraftAssistantForFantasyRow(league, oldRow);
+        }
         if (row.position === "DST") {
           const team = findFantasyDefenseTeam(input.value, row.team);
           row.playerKey = "";
@@ -11408,13 +14756,14 @@ function wireMyFantasyTeams() {
       syncFantasyRowToOtherView(league, input.dataset.view, row);
       normalizeFantasyTeamRows(league);
       saveFantasyTeams();
-      render();
+      renderMyFantasyStable(league.id, input.dataset.view);
     });
   });
   document.querySelectorAll("[data-fantasy-add-row]").forEach((button) => button.addEventListener("click", () => {
     const league = ensureFantasyTeams().find((item) => item.id === button.dataset.fantasyAddRow);
     const view = button.dataset.view;
     const position = document.querySelector(`.fantasy-add-position[data-league-id="${CSS.escape(league.id)}"][data-view="${CSS.escape(view)}"]`)?.value || "RB";
+    league.addPositions = { ...(league.addPositions || {}), [view]: position };
     const rows = view === "lineup" ? league.lineupRows : league.teamRows;
     const basePosition = position === "Bench" || position === "IR" ? "Any" : position;
     const teamPosition = basePosition === "Any" || basePosition === "FLEX" ? "RB" : basePosition;
@@ -11431,13 +14780,15 @@ function wireMyFantasyTeams() {
     otherRows.push(other);
     normalizeFantasyTeamRows(league);
     saveFantasyTeams();
-    render();
+    renderMyFantasyStable(league.id, view);
   }));
   document.querySelectorAll("[data-fantasy-delete-row]").forEach((button) => button.addEventListener("click", () => {
     const league = ensureFantasyTeams().find((item) => item.id === button.dataset.leagueId);
     const key = button.dataset.fantasyDeleteRow;
     if (!league) return;
     const prop = button.dataset.view === "lineup" ? "lineupRows" : "teamRows";
+    const row = league[prop].find((item) => item.id === key);
+    clearFantasyRowPlayer(league, button.dataset.view, row);
     league[prop] = league[prop].filter((row) => row.id !== key);
     saveFantasyTeams();
     render();
@@ -11450,7 +14801,43 @@ function wireMyFantasyTeams() {
     state.selectedPlayerKey = sourceKey(player);
     render();
   }));
+  document.querySelectorAll(".defense-card-open").forEach((button) => button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    state.selectedDefenseTeamCard = button.dataset.defenseTeam || "";
+    render();
+  }));
+  document.querySelector("#defense-card-close")?.addEventListener("click", () => {
+    state.selectedDefenseTeamCard = "";
+    render();
+  });
   wirePlayerModalControls();
+}
+
+function renderDefenseTeamCardModal() {
+  const teamName = state.selectedDefenseTeamCard;
+  if (!teamName) return "";
+  const team = teamByName(teamName);
+  const groups = ["IDL", "EDGE", "LB", "CB", "S"];
+  const rows = groups.map((group) => {
+    const players = depthOrderedPlayers(state.players.filter((player) =>
+      normalizeTeamName(player.team) === normalizeTeamName(teamName)
+      && groupPosition(player.position) === group
+      && isPlayerAvailable(player)
+    )).slice(0, group === "S" ? 2 : 3);
+    return `<section><h4>${esc(group)}</h4>${players.map((player, index) => `<button class="season-top-player player-open" data-player-key="${esc(sourceKey(player))}"><b>${group}${index + 1}</b>${playerAvatar(player)}<span>${esc(player.player)}</span>${ratingBadge(player.rating)}</button>`).join("") || "<p class='note'>No available players</p>"}</section>`;
+  }).join("");
+  return `<div class="modal">
+    <div class="modal-card defense-team-card-modal">
+      <button id="defense-card-close" class="modal-close" title="Close">x</button>
+      <div class="player-hero enhanced">
+        <div class="player-team-watermark">${teamLogo(team?.team || teamName, team?.teamAbbrev || teamName)}</div>
+        <div class="player-hero-copy"><h2>${teamLogo(team?.team || teamName, team?.teamAbbrev || teamName)}${esc(teamName)} DST</h2><p><span>Starting defense snapshot</span></p></div>
+        <div class="player-hero-rating player-hero-rating-large">${ratingBadge(team?.defenseAverage || "")}<span>Def Rating</span></div>
+      </div>
+      <div class="defense-team-grid">${rows}</div>
+    </div>
+  </div>`;
 }
 
 function renderStartSit() {
@@ -11459,6 +14846,7 @@ function renderStartSit() {
   const leagueOptions = [["all", "All Leagues"], ...leagues.map((league) => [league.id, league.name])];
   const visible = state.myFantasyLeagueView === "all" ? leagues : leagues.filter((league) => league.id === state.myFantasyLeagueView);
   if (!visible.length) state.myFantasyLeagueView = "all";
+  const columnOptions = [1, 2, 3].map((count) => `<button type="button" class="mini-action ${state.myFantasyColumns === count ? "active" : ""}" data-my-fantasy-columns="${count}" title="Show ${count} fantasy team${count === 1 ? "" : "s"} across">${count}</button>`).join("");
   setTimeout(() => {
     wireMyFantasyTeams();
     wireFantasyScroll();
@@ -11473,10 +14861,13 @@ function renderStartSit() {
         <div class="filters">
           ${optionSelect("my-fantasy-week", state.myFantasyWeek, weekOptions)}
           ${optionSelect("my-fantasy-league-view", state.myFantasyLeagueView, leagueOptions)}
+          <span class="my-fantasy-columns-toggle" title="Fantasy teams per row"><b>Across</b>${columnOptions}</span>
+          <a class="mini-action primary fantasypros-assistant-link" href="https://www.fantasypros.com/nfl/myplaybook/start-sit-assistant.php" target="_blank" rel="noreferrer" title="FantasyPros Lineup Assistant"><img src="assets/fantasypros-fullcolor-light-bg.svg" alt="FantasyPros Lineup Assistant" /></a>
           <button id="my-fantasy-add-league" class="mini-action primary">Add Fantasy Team</button>
         </div>
       </div>
-      <div class="my-fantasy-grid">${visible.map(renderFantasyLeagueCard).join("")}</div>
+      <div class="my-fantasy-grid columns-${esc(state.myFantasyColumns)}" style="--my-fantasy-columns:${esc(state.myFantasyColumns)}">${visible.map(renderFantasyLeagueCard).join("")}</div>
+      ${renderDefenseTeamCardModal()}
       ${renderPlayerModal()}
     </section>
   `;
@@ -12136,6 +15527,136 @@ function disableMobileTextAssist(root = document) {
   });
 }
 
+function isAuthenticated() {
+  return state.authMode === "admin" || state.authMode === "visitor";
+}
+
+function isAdminMode() {
+  return state.authMode === "admin";
+}
+
+function isVisitorMode() {
+  return state.authMode === "visitor";
+}
+
+function renderLoginGate() {
+  return `
+    <section class="auth-shell">
+      <div class="auth-card">
+        <div class="auth-mark">Z</div>
+        <div>
+          <p class="eyebrow">NFL Model Z IQ</p>
+          <h2>Password Protected</h2>
+          <p class="note">Choose Admin for full editing, or Visitor to browse the whole site without changing saved details.</p>
+        </div>
+        <div class="auth-login-grid">
+          <form id="admin-login-form" class="auth-login-option">
+            <strong>Login as Admin</strong>
+            <label for="admin-password">Admin password</label>
+            <input id="admin-password" type="password" autocomplete="current-password" />
+            <button type="submit">Login as Admin</button>
+          </form>
+          <div class="auth-login-option visitor">
+            <strong>Login as Visitor</strong>
+            <p>Read-only access. You can view pages, filters, cards, and reports, but edits and scans are locked.</p>
+            <button id="visitor-login" type="button">Login as Visitor</button>
+          </div>
+        </div>
+        ${state.authError ? `<p class="auth-error">${esc(state.authError)}</p>` : ""}
+      </div>
+    </section>
+  `;
+}
+
+function wireLoginGate() {
+  const passwordInput = content.querySelector("#admin-password");
+  content.querySelector("#admin-login-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (passwordInput?.value === ADMIN_PASSWORD) {
+      state.authMode = "admin";
+      state.authError = "";
+      storage.set(AUTH_MODE_KEY, state.authMode);
+      render();
+      return;
+    }
+    state.authError = "That admin password did not match.";
+    render();
+  });
+  content.querySelector("#visitor-login")?.addEventListener("click", () => {
+    state.authMode = "visitor";
+    state.authError = "";
+    storage.set(AUTH_MODE_KEY, state.authMode);
+    render();
+  });
+  passwordInput?.focus();
+}
+
+function renderAuthBanner() {
+  const visitor = isVisitorMode();
+  return `
+    <section class="auth-banner ${visitor ? "visitor" : "admin"}">
+      <div>
+        <strong>${visitor ? "Visitor Mode" : "Admin Mode"}</strong>
+        <span>${visitor ? "Read-only: changes, scans, imports, and saves are locked." : "Full editing is unlocked."}</span>
+      </div>
+      <button type="button" data-auth-logout>Logout</button>
+    </section>
+  `;
+}
+
+function logoutAuthMode() {
+  state.authMode = "";
+  state.authError = "";
+  storage.set(AUTH_MODE_KEY, "");
+  document.body.classList.remove("visitor-mode", "admin-mode");
+  render();
+}
+
+function isLikelyMutationButton(button) {
+  const text = `${button.id || ""} ${button.className || ""} ${Object.keys(button.dataset || {}).join(" ")} ${button.textContent || ""}`.toLowerCase();
+  const safe = /(^|\s|-)page(\s|-|$)|show|hide|view|open|close|back|details|compare|rules|watch|logout|copy|expand|collapse|fantasy rankings screen/.test(text);
+  if (safe) return false;
+  return /scan|apply|save|add|delete|remove|clear|reset|set default|fill|run|detect|undo|nudge|mark|draft|import|load best|change status|lock|unlock|move|submit|paste|use match/.test(text);
+}
+
+function readOnlyMutationElement(target) {
+  if (!isVisitorMode()) return null;
+  const el = target?.closest?.("input, select, textarea, button, [contenteditable='true']");
+  if (!el || el.closest(".auth-banner")) return null;
+  if (el.matches("#search, [type='search']")) return null;
+  if (el.matches(".game-pick-select, .game-score-input")) return el;
+  if (el.matches("[data-player-key].injury-status, [data-player-key].injury-week")) return el;
+  if (el.matches("[data-quick-player-field], [data-quick-player-rating], [data-bulk-field], [data-fantasy-field], [data-fantasy-league-field]")) return el;
+  if (el.matches("[data-schedule-weight], [data-preseason-depth], [data-regular-depth], [data-qb-weight], [data-skill-weight], [data-matchup-weight]")) return el;
+  if (el.matches("[data-draft-mark], [data-depth-lock-key], [data-pick-result], [data-pick-field]")) return el;
+  if (el.matches(".backup-btn, #import-backup-file")) return el;
+  if (el.matches(".depth-apply-one, .depth-use-match, .depth-add-missing, .depth-remove-candidate, .depth-ignore-one, .depth-alter-name")) return el;
+  if (el.matches(".injury-review-clear, .injury-review-change, .injury-review-apply-status, .injury-review-apply-all")) return el;
+  if (el.closest(".quick-player-editor, .quick-player-actions, .bulk-changes, .league-details-panel, .draft-actions")) return el;
+  if (el.closest(".player-card-edit, .player-edit-row") && !el.matches("button[data-player-key]")) return el;
+  if (el.tagName === "BUTTON" && isLikelyMutationButton(el)) return el;
+  return null;
+}
+
+function applyVisitorReadOnly(root = document) {
+  if (!isVisitorMode()) return;
+  root.querySelectorAll("button, input, select, textarea, [contenteditable='true']").forEach((el) => {
+    if (!readOnlyMutationElement(el)) return;
+    if ("disabled" in el) el.disabled = true;
+    el.classList.add("read-only-disabled");
+    if (!el.title) el.title = "Visitor mode is read-only.";
+  });
+}
+
+function blockVisitorMutation(event) {
+  const blocked = readOnlyMutationElement(event.target);
+  if (!blocked) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation?.();
+  blocked.blur?.();
+}
+
 function render() {
   window.nflzSetFantasyPosition = setFantasyRankPosition;
   let page = pages.find(([id]) => id === state.page);
@@ -12146,10 +15667,19 @@ function render() {
   if (state.page !== "gameSim" && (activeGameSims.length || Object.keys(gameSimTimers).length)) stopAllGameSims();
   title.textContent = page[1];
   renderNav();
+  document.body.classList.toggle("auth-locked", !isAuthenticated());
+  document.body.classList.toggle("visitor-mode", isVisitorMode());
+  document.body.classList.toggle("admin-mode", isAdminMode());
+  if (!isAuthenticated()) {
+    content.innerHTML = renderLoginGate();
+    wireLoginGate();
+    return;
+  }
   const views = {
     home: renderHome,
     live: renderLive,
     depth: renderDepth,
+    injuries: renderInjuryReport,
     top30: renderTop30,
     schedule: renderSchedule,
     picks: renderPicksTracker,
@@ -12165,9 +15695,12 @@ function render() {
     gameSim: renderGameSimulator,
     qb: renderQb,
   };
-  content.innerHTML = views[state.page]();
+  content.innerHTML = `${renderAuthBanner()}${views[state.page]()}`;
   disableMobileTextAssist(content);
   disableMobileTextAssist(document.querySelector(".topbar") || document);
+  content.querySelector("[data-auth-logout]")?.addEventListener("click", logoutAuthMode);
+  applyVisitorReadOnly(content);
+  applyVisitorReadOnly(document.querySelector(".topbar") || document);
   content.querySelector("#weekly-fantasy-position")?.addEventListener("input", (event) => setFantasyRankPosition("weekly", event.target.value));
   content.querySelector("#weekly-fantasy-position")?.addEventListener("change", (event) => setFantasyRankPosition("weekly", event.target.value));
   content.querySelector("#season-fantasy-position")?.addEventListener("input", (event) => setFantasyRankPosition("season", event.target.value));
@@ -12187,6 +15720,11 @@ search.addEventListener("input", (event) => {
   clearTimeout(globalSearchTimer);
   globalSearchTimer = setTimeout(render, 90);
 });
+
+document.addEventListener?.("click", blockVisitorMutation, true);
+document.addEventListener?.("input", blockVisitorMutation, true);
+document.addEventListener?.("change", blockVisitorMutation, true);
+document.addEventListener?.("submit", blockVisitorMutation, true);
 
 function handleFantasyPositionEvent(event) {
   const selectEl = event.target.closest?.("[data-fantasy-position-kind]");
@@ -12239,10 +15777,20 @@ load.then((data) => {
   state.data = data;
   const staleFreeAgentFixes = repairStaleOurLadsFreeAgentOverrides(data);
   const knownRosterFixes = repairKnownRosterExceptions(data);
+  const requestedRatingFixes = applyRequestedRatingFixes(data);
   state.players = applyOverrides(data.players);
+  const preseasonWeek3OddsFixes = applyPreseasonWeek3ManualOddsFixes();
+  const ramsChargersOddsFixes = ensureRamsChargersPreseasonWeek3OddsLine();
+  const defensiveMismatchFixes = applyDefensiveMaddenMismatchFixes();
+  const defensiveQuotaFixes = applyDefensiveQuotaNormalization();
   const repairNotes = [];
   if (staleFreeAgentFixes) repairNotes.push(`${staleFreeAgentFixes} stale OurLads Free Agent override${staleFreeAgentFixes === 1 ? "" : "s"}`);
   if (knownRosterFixes) repairNotes.push(`${knownRosterFixes} known roster exception${knownRosterFixes === 1 ? "" : "s"}`);
+  if (requestedRatingFixes) repairNotes.push(`${requestedRatingFixes} requested rating update${requestedRatingFixes === 1 ? "" : "s"}`);
+  if (preseasonWeek3OddsFixes) repairNotes.push(`${preseasonWeek3OddsFixes} Preseason Week 3 manual odds line${preseasonWeek3OddsFixes === 1 ? "" : "s"}`);
+  if (ramsChargersOddsFixes) repairNotes.push("the LAR/LAC Preseason Week 3 odds line");
+  if (defensiveMismatchFixes) repairNotes.push(`${defensiveMismatchFixes} defensive Madden/PFF mismatch update${defensiveMismatchFixes === 1 ? "" : "s"}`);
+  if (defensiveQuotaFixes) repairNotes.push(`${defensiveQuotaFixes} defensive quota normalization update${defensiveQuotaFixes === 1 ? "" : "s"}`);
   if (repairNotes.length) state.depthCheckNotice = `Repaired ${repairNotes.join(" and ")} from saved depth chart data.`;
   render();
 }).catch(() => {
