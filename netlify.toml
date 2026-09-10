@@ -4,6 +4,9 @@
 
   functions = "netlify/functions"
 
+[functions]
+  included_files = ["draftkings-odds.js", "espn-injury-check-results.js"]
+
 [[redirects]]
   from = "/api/:scan"
   to = "/.netlify/functions/:scan"

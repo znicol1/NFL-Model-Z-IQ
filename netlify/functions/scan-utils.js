@@ -126,7 +126,14 @@ function draftKingsRow(game, odds) {
 }
 
 function parseWindowAssignmentFile(relativePath, windowName) {
-  const filePath = path.join(__dirname, "..", "..", relativePath);
+  const candidates = [
+    path.join(process.cwd(), relativePath),
+    path.join(__dirname, "..", "..", relativePath),
+    path.join(__dirname, relativePath),
+    path.join(__dirname, path.basename(relativePath)),
+  ];
+  const filePath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!filePath) throw new Error(`${relativePath} not found in function bundle`);
   const text = fs.readFileSync(filePath, "utf8");
   const prefix = `window.${windowName} =`;
   const start = text.indexOf(prefix);
