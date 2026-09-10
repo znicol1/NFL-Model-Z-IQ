@@ -2,8 +2,14 @@
   publish = "."
   command = ""
 
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/:scan"
+  to = "/.netlify/functions/:scan"
+  status = 200
+
 [[headers]]
   for = "/*"
   [headers.values]
     X-Content-Type-Options = "nosniff"
-

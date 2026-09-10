@@ -390,6 +390,7 @@ const state = {
   scheduleControlsOpen: storage.get("nflz-schedule-controls-open", false),
   scheduleRulesOpen: storage.get("nflz-schedule-rules-open", false),
   schedulePropWatchOpen: storage.get("nflz-schedule-prop-watch-open", {}),
+  schedulePropWatchDrawerKey: "",
   schedulePositionWeights: { ...defaultSchedulePositionWeights, ...storage.get("nflz-schedule-position-weights", {}) },
   preseasonDepthMultipliers: { ...defaultPreseasonDepthMultipliers, ...storage.get("nflz-preseason-depth-multipliers", {}) },
   regularDepthMultipliers: { ...defaultRegularDepthMultipliers, ...storage.get("nflz-regular-depth-multipliers", {}) },
@@ -1539,6 +1540,19 @@ function selectedSiteWeek() {
 function siteWeekLabel() {
   const week = selectedSiteWeek();
   return week ? weekOptionLabel(week) : "Week not set";
+}
+
+function syncCurrentViewDefault() {
+  const autoWeek = autoSiteWeek();
+  if (!autoWeek || state.siteWeek === "auto") return;
+  const todayKey = new Date().toDateString();
+  if (storage.get("nflz-current-view-sync-date", "") === todayKey) return;
+  if (weekSortValue(state.siteWeek) >= weekSortValue(autoWeek)) return;
+  state.siteWeek = "auto";
+  state.scheduleWeek = autoWeek;
+  selectedWeekCache = { siteWeek: "", dateKey: "", value: "" };
+  storage.set("nflz-site-week", "auto");
+  storage.set("nflz-current-view-sync-date", todayKey);
 }
 
 function pill(value, cls = "") {
@@ -3212,14 +3226,12 @@ async function runInjuryCheck() {
   state.injuryCheck = {
     ...state.injuryCheck,
     status: "checking",
-    error: "Trying the live ESPN injury scan. If this local link is running as a static server, the page will use the cached ESPN injury file instead.",
+    error: "Trying ESPN injury scan routes. If live parsing is unavailable, the latest bundled injury cache will still load.",
   };
   render();
   try {
-    const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/espn-injury-check-scan" : "/api/espn-injury-check-scan";
-    const response = await fetch(apiUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
-    window.ESPN_INJURY_CHECK = await response.json();
+    const { payload, url } = await fetchScanJson("espn-injury-check-scan");
+    window.ESPN_INJURY_CHECK = payload;
     if (!window.ESPN_INJURY_CHECK?.results) throw new Error("ESPN injury scan returned no review rows.");
     const clearedStale = clearStaleInjuryStatusesFromLatestScan(window.ESPN_INJURY_CHECK.results);
     const pending = unresolvedInjuryCheckResults(window.ESPN_INJURY_CHECK.results).map((item) => ({ ...item }));
@@ -3228,7 +3240,7 @@ async function runInjuryCheck() {
       results: pending,
       error: window.ESPN_INJURY_CHECK.fromCache
         ? `ESPN live refresh failed, so cached injuries loaded. ${window.ESPN_INJURY_CHECK.refreshError || "Try again in a minute."}`
-        : `Live ESPN scan finished: ${window.ESPN_INJURY_CHECK.espnRows || 0} ESPN rows checked, ${pending.length} players need review.${clearedStale ? ` Cleared ${clearedStale} stale injury tag${clearedStale === 1 ? "" : "s"} for players no longer on the report.` : ""}`,
+        : `ESPN injury scan finished through ${url.includes("netlify") ? "Netlify" : "local"}: ${window.ESPN_INJURY_CHECK.espnRows || 0} ESPN rows checked, ${pending.length} players need review.${clearedStale ? ` Cleared ${clearedStale} stale injury tag${clearedStale === 1 ? "" : "s"} for players no longer on the report.` : ""}`,
       source: "codex",
       fetchedAt: window.ESPN_INJURY_CHECK.fetchedAt,
     };
@@ -7942,19 +7954,38 @@ function schedulePropWatchRows(game) {
 }
 
 function renderSchedulePropWatch(game, gameKey) {
-  const open = Boolean(state.schedulePropWatchOpen?.[gameKey]);
-  const items = open ? schedulePropWatchRows(game) : [];
   return `
-    <section class="prop-watch-panel schedule-prop-watch ${open ? "" : "collapsed"}">
+    <section class="prop-watch-panel schedule-prop-watch collapsed">
       <div class="prop-watch-head">
         <div>
           <h3>Players to Watch</h3>
-          <p>${open ? (items.length ? "Prop angles from this matchup." : "No strong prop angles found.") : "Expand for matchup-based prop angles."}</p>
+          <p>Open side view for matchup-based prop angles.</p>
         </div>
-        <button class="mini-action schedule-prop-watch-toggle" data-schedule-prop-watch="${esc(gameKey)}">${open ? "Hide" : "Show"}</button>
+        <button class="mini-action schedule-prop-watch-toggle" data-schedule-prop-watch="${esc(gameKey)}">Open</button>
       </div>
-      ${open ? `
-        ${items.length ? `<div class="prop-watch-grid schedule-prop-watch-grid">${items.map(({ row, position, advantages, props }) => `
+    </section>
+  `;
+}
+
+function renderSchedulePropWatchDrawer(visibleGames = []) {
+  const key = state.schedulePropWatchDrawerKey;
+  if (!key) return "";
+  const lookupGames = visibleGames.length ? visibleGames : scheduleGames();
+  const row = lookupGames
+    .map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) }))
+    .find((item) => item.key === key);
+  if (!row) return "";
+  const items = schedulePropWatchRows(row.game);
+  return `
+    <aside class="schedule-prop-drawer" role="dialog" aria-label="Players to Watch">
+      <div class="prop-watch-head">
+        <div>
+          <h3>Players to Watch</h3>
+          <p>${esc(teamAbbrevFor(row.game.visitor, row.game.visitor))} at ${esc(teamAbbrevFor(row.game.home, row.game.home))} - ${esc(weekDisplay(row.game.week || ""))}</p>
+        </div>
+        <button class="mini-action schedule-prop-watch-close" type="button">Close</button>
+      </div>
+      ${items.length ? `<div class="prop-watch-grid schedule-prop-watch-grid">${items.map(({ row, position, advantages, props }) => `
           <article class="prop-watch-card">
             <div class="prop-watch-player">
               ${playerAvatar(findPlayer(row._playerKey) || row)}
@@ -7964,8 +7995,7 @@ function renderSchedulePropWatch(game, gameKey) {
             <div class="prop-watch-props">${props.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</div>
           </article>
         `).join("")}</div>` : `<p class="empty-cell">No strong QB/RB/WR/TE prop-matchup angles for this game.</p>`}
-      ` : ""}
-    </section>
+    </aside>
   `;
 }
 
@@ -8122,11 +8152,13 @@ function renderSchedule() {
     document.querySelectorAll(".schedule-prop-watch-toggle").forEach((button) => button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      const key = button.dataset.schedulePropWatch;
-      state.schedulePropWatchOpen = { ...(state.schedulePropWatchOpen || {}), [key]: !state.schedulePropWatchOpen?.[key] };
-      storage.set("nflz-schedule-prop-watch-open", state.schedulePropWatchOpen);
+      state.schedulePropWatchDrawerKey = button.dataset.schedulePropWatch || "";
       render();
     }));
+    document.querySelector(".schedule-prop-watch-close")?.addEventListener("click", () => {
+      state.schedulePropWatchDrawerKey = "";
+      render();
+    });
     document.querySelector(".schedule-groups")?.addEventListener("click", (event) => {
       if (isScheduleInteractiveTarget(event.target)) return;
       const card = event.target.closest(".schedule-card");
@@ -8178,6 +8210,7 @@ function renderSchedule() {
       </div>
       ${hiddenGameCount ? `<div class="schedule-show-more"><button id="schedule-show-more" class="mini-action">Show ${Math.min(80, hiddenGameCount)} More Games</button><button id="schedule-show-all" class="mini-action">Show All ${totalGames}</button></div>` : ""}
       ${scheduleBreakdown()}
+      ${renderSchedulePropWatchDrawer(visibleGames)}
     </section>
   `;
 }
@@ -9195,25 +9228,53 @@ function fantasyProsAdpStatusNote() {
   return `<span class="scan-status ${status}">${esc(message)}</span>`;
 }
 
+const LIVE_FUNCTION_BASE = "https://nfl-model-z-iq.netlify.app/.netlify/functions";
+
+function scanEndpointUrls(name) {
+  const endpoint = String(name || "").replace(/^\/+/, "");
+  const urls = [];
+  if (location.protocol === "file:") {
+    urls.push(`http://127.0.0.1:8787/api/${endpoint}`);
+    urls.push(`${LIVE_FUNCTION_BASE}/${endpoint}`);
+  } else {
+    urls.push(`/api/${endpoint}`);
+    urls.push(`/.netlify/functions/${endpoint}`);
+    if (!/netlify\.app$/i.test(location.hostname)) urls.push(`${LIVE_FUNCTION_BASE}/${endpoint}`);
+  }
+  return unique(urls);
+}
+
+async function fetchScanJson(name) {
+  const errors = [];
+  for (const url of scanEndpointUrls(name)) {
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return { payload: await response.json(), url };
+    } catch (error) {
+      errors.push(`${url}: ${error.message}`);
+    }
+  }
+  throw new Error(errors.join(" | "));
+}
+
 async function scanDraftKingsOdds() {
   state.draftKingsScanStatus = "checking";
-  state.draftKingsScanMessage = "Scanning ESPN DraftKings odds";
+  state.draftKingsScanMessage = "Scanning DraftKings odds through the first reachable scan route";
   if (window.DRAFTKINGS_ODDS?.games?.length) {
     storage.set(backupKeys.draftKingsOddsBackup, window.DRAFTKINGS_ODDS);
   }
   render();
   try {
-    const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/draftkings-odds-scan" : "/api/draftkings-odds-scan";
-    const response = await fetch(apiUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
-    window.DRAFTKINGS_ODDS = mergeDraftKingsOddsScan(await response.json(), window.DRAFTKINGS_ODDS);
+    const { payload, url } = await fetchScanJson("draftkings-odds-scan");
+    window.DRAFTKINGS_ODDS = mergeDraftKingsOddsScan(payload, window.DRAFTKINGS_ODDS);
     if (window.DRAFTKINGS_ODDS?.games?.length) {
       storage.set(backupKeys.draftKingsOddsBackup, window.DRAFTKINGS_ODDS);
     }
     state.draftKingsScanStatus = "review";
     state.draftKingsScanMessage = window.DRAFTKINGS_ODDS.fromCache
       ? `DraftKings live refresh failed, so cached odds loaded for ${window.DRAFTKINGS_ODDS.games?.length || 0} games. ${window.DRAFTKINGS_ODDS.refreshError || "Try again in a minute."}`
-      : `Updated ${window.DRAFTKINGS_ODDS.freshGames || 0} DraftKings odds rows from ESPN; preserved ${window.DRAFTKINGS_ODDS.preservedCompletedGames || 0} completed-game rows and ${window.DRAFTKINGS_ODDS.preservedPastGames || 0} past-game rows.`;
+      : `Updated ${window.DRAFTKINGS_ODDS.freshGames || 0} DraftKings odds rows from ${url.includes("netlify") ? "Netlify scan" : "local scan"}; preserved ${window.DRAFTKINGS_ODDS.preservedCompletedGames || 0} completed-game rows and ${window.DRAFTKINGS_ODDS.preservedPastGames || 0} past-game rows.`;
   } catch (error) {
     if (window.DRAFTKINGS_ODDS?.games?.length) {
       state.draftKingsScanStatus = "review";
@@ -9275,18 +9336,16 @@ function applyScannedScores(payload) {
 
 async function scanEspnScores() {
   state.scoreScanStatus = "checking";
-  state.scoreScanMessage = "Scanning ESPN scoreboard results";
+  state.scoreScanMessage = "Scanning ESPN scores through the first reachable scan route";
   render();
   try {
-    const apiUrl = location.protocol === "file:" ? "http://127.0.0.1:8787/api/espn-scores-scan" : "/api/espn-scores-scan";
-    const response = await fetch(apiUrl, { cache: "no-store" });
-    if (!response.ok) throw new Error(`Scan failed with HTTP ${response.status}`);
-    window.ESPN_GAME_RESULTS = await response.json();
+    const { payload, url } = await fetchScanJson("espn-scores-scan");
+    window.ESPN_GAME_RESULTS = payload;
     const applied = applyScannedScores(window.ESPN_GAME_RESULTS);
     state.scoreScanStatus = "review";
     state.scoreScanMessage = window.ESPN_GAME_RESULTS.fromCache
       ? `ESPN live refresh failed, so cached scores applied ${applied} completed results. ${window.ESPN_GAME_RESULTS.refreshError || "Try again in a minute."}`
-      : `Scanned ${window.ESPN_GAME_RESULTS.games?.length || 0} ESPN games live and applied ${applied} completed results.`;
+      : `Scanned ${window.ESPN_GAME_RESULTS.games?.length || 0} ESPN games through ${url.includes("netlify") ? "Netlify" : "local"} and applied ${applied} completed results.`;
   } catch (error) {
     if (window.ESPN_GAME_RESULTS?.games?.length) {
       const applied = applyScannedScores(window.ESPN_GAME_RESULTS);
@@ -15550,10 +15609,12 @@ function renderLoginGate() {
           <p class="note">Choose Admin for full editing, or Visitor to browse the whole site without changing saved details.</p>
         </div>
         <div class="auth-login-grid">
-          <form id="admin-login-form" class="auth-login-option">
+          <form id="admin-login-form" class="auth-login-option" autocomplete="on">
             <strong>Login as Admin</strong>
+            <label for="admin-username">Username</label>
+            <input id="admin-username" name="username" type="text" value="Admin" autocomplete="username" />
             <label for="admin-password">Admin password</label>
-            <input id="admin-password" type="password" autocomplete="current-password" />
+            <input id="admin-password" name="password" type="password" autocomplete="current-password" />
             <button type="submit">Login as Admin</button>
           </form>
           <div class="auth-login-option visitor">
@@ -15659,6 +15720,7 @@ function blockVisitorMutation(event) {
 
 function render() {
   window.nflzSetFantasyPosition = setFantasyRankPosition;
+  syncCurrentViewDefault();
   let page = pages.find(([id]) => id === state.page);
   if (!page) {
     state.page = "home";
