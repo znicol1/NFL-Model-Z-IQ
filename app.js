@@ -2,6 +2,7 @@ const navSections = [
   { title: "", pages: [["home", "Quick Actions"]] },
   { title: "Player Database", pages: [["live", "Live Rankings"], ["depth", "Depth Charts"], ["injuries", "Injury Report"], ["top30", "Top 30s by Position"]] },
   { title: "Picks Center", pages: [["schedule", "Season Schedule"], ["picks", "Picks Tracker"]] },
+  { title: "Betting Hub", pages: [["betting", "Betting Hub"]] },
   { title: "Season Projector", pages: [["standings", "Season Projector"]] },
   { title: "Fantasy Hub", pages: [["start", "My Fantasy Teams"], ["weeklyFantasy", "Weekly Fantasy Rankings"], ["seasonFantasy", "Season Long Fantasy Rankings"]] },
   { title: "Data", pages: [["weeklyMatchups", "Weekly Matchups"], ["pff", "PFF Update"], ["statRanks", "Stat Ranks"], ["data", "Data Diagnostics"]] },
@@ -348,6 +349,34 @@ const scheduleScoreTuning = {
   lateSeasonSpreadScale: 1.1,
 };
 
+const bettingHubPositions = ["QB", "RB", "WR", "TE"];
+
+const bettingHubFactors = [
+  { key: "vpos", label: "vPOS", direction: "max", min: 1, max: 32, step: 1, title: "Opponent positional matchup rank. Slider means the matchup rank must be this friendly or better." },
+  { key: "ppgRank", label: "PPG Rank", direction: "max", min: 1, max: 32, step: 1, title: "Team scoring environment rank. Slider means the offense must rank this well or better." },
+  { key: "receiverGroupRank", label: "Rec Group Rank", direction: "max", min: 1, max: 32, step: 1, title: "Team receiver group rank including WRs and TE support. Slider means this rank or better." },
+  { key: "olineRank", label: "OL Rank", direction: "max", min: 1, max: 32, step: 1, title: "Offensive line rank. Slider means this rank or better." },
+  { key: "qbRank", label: "QB Rank", direction: "max", min: 1, max: 32, step: 1, title: "Quarterback context rank feeding the player. Slider means this rank or better." },
+  { key: "redZone", label: "Red Zone Opps", direction: "min", min: 0, max: 4, step: 0.1, title: "Expected red-zone chances. Slider means at least this many." },
+  { key: "targets", label: "Targets", direction: "min", min: 0, max: 15, step: 0.5, title: "Expected targets. Early weeks lean on last season plus early 2026 games; later weeks lean on 2026." },
+  { key: "snapPct", label: "Snap %", direction: "min", min: 0, max: 100, step: 1, title: "Expected snap share. Slider means at least this percent." },
+  { key: "depth", label: "Depth", direction: "max", min: 1, max: 5, step: 1, title: "Fantasy depth chart role. Slider means this depth number or better." },
+];
+
+const defaultBettingHubThresholds = {
+  QB: { vpos: 12, ppgRank: 18, receiverGroupRank: 18, olineRank: 18, qbRank: 18, redZone: 0, targets: 0, snapPct: 65, depth: 1 },
+  RB: { vpos: 12, ppgRank: 18, receiverGroupRank: 32, olineRank: 18, qbRank: 32, redZone: 0.4, targets: 2, snapPct: 45, depth: 2 },
+  WR: { vpos: 12, ppgRank: 18, receiverGroupRank: 18, olineRank: 32, qbRank: 18, redZone: 0.3, targets: 5, snapPct: 60, depth: 3 },
+  TE: { vpos: 12, ppgRank: 18, receiverGroupRank: 18, olineRank: 32, qbRank: 18, redZone: 0.25, targets: 4, snapPct: 55, depth: 2 },
+};
+
+const defaultBettingHubActiveFactors = {
+  QB: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: true, qbRank: true, redZone: false, targets: false, snapPct: true, depth: true },
+  RB: { vpos: true, ppgRank: true, receiverGroupRank: false, olineRank: true, qbRank: false, redZone: true, targets: true, snapPct: true, depth: true },
+  WR: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: false, qbRank: true, redZone: true, targets: true, snapPct: true, depth: true },
+  TE: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: false, qbRank: true, redZone: true, targets: true, snapPct: true, depth: true },
+};
+
 const state = {
   page: "home",
   query: "",
@@ -391,6 +420,22 @@ const state = {
   scheduleRulesOpen: storage.get("nflz-schedule-rules-open", false),
   schedulePropWatchOpen: storage.get("nflz-schedule-prop-watch-open", {}),
   schedulePropWatchDrawerKey: "",
+  scheduleInjuryDrawerKey: "",
+  bettingWeek: storage.get("nflz-betting-week", "auto"),
+  bettingPosition: storage.get("nflz-betting-position", "All"),
+  bettingSampleMode: storage.get("nflz-betting-sample-mode", "last"),
+  bettingLastGames: storage.get("nflz-betting-last-games", 5),
+  bettingGameView: storage.get("nflz-betting-game-view", "2"),
+  bettingControlsOpen: storage.get("nflz-betting-controls-open", true),
+  bettingTopType: storage.get("nflz-betting-top-type", "All"),
+  bettingThresholds: Object.fromEntries(bettingHubPositions.map((position) => {
+    const saved = storage.get("nflz-betting-thresholds", {});
+    return [position, { ...defaultBettingHubThresholds[position], ...(saved[position] || {}) }];
+  })),
+  bettingActiveFactors: Object.fromEntries(bettingHubPositions.map((position) => {
+    const saved = storage.get("nflz-betting-active-factors", {});
+    return [position, { ...defaultBettingHubActiveFactors[position], ...(saved[position] || {}) }];
+  })),
   schedulePositionWeights: { ...defaultSchedulePositionWeights, ...storage.get("nflz-schedule-position-weights", {}) },
   preseasonDepthMultipliers: { ...defaultPreseasonDepthMultipliers, ...storage.get("nflz-preseason-depth-multipliers", {}) },
   regularDepthMultipliers: { ...defaultRegularDepthMultipliers, ...storage.get("nflz-regular-depth-multipliers", {}) },
@@ -7926,6 +7971,7 @@ function scheduleGameCard(game, gameKey) {
     ${scheduleMarketCards(game, projection)}
     ${schedulePickPanel(game, gameKey, projection)}
     ${renderSchedulePropWatch(game, gameKey)}
+    ${renderScheduleNotableInjuries(game, gameKey)}
   </article>`;
 }
 
@@ -7953,6 +7999,36 @@ function schedulePropWatchRows(game) {
     .slice(0, 5);
 }
 
+function playerStarterSlotForSchedule(player, week = selectedSiteWeek()) {
+  const depth = num(playerDepthLock(player, week) || player.depth, NaN);
+  if (!Number.isFinite(depth) || depth < 1) return "";
+  const exact = String(player.position || "").toUpperCase();
+  const group = ["LT", "LG", "C", "RG", "RT"].includes(exact) ? exact : playerGroupForSchedule(player);
+  const matching = scheduleStarterSlots.find((slot) => {
+    const parts = starterSlotParts(slot);
+    return parts.group === group && parts.depth === depth;
+  });
+  return matching || "";
+}
+
+function scheduleNotableInjuryRows(game) {
+  const week = scheduleWeekGroupKey(game.week);
+  const teams = new Set([normalizeScheduleTeam(game.visitor), normalizeScheduleTeam(game.home)]);
+  return (state.players || [])
+    .filter((player) => teams.has(normalizeScheduleTeam(player.team)))
+    .map((player) => {
+      const unavailable = playerUnavailableLabel(player, week);
+      const slot = unavailable && unavailable !== "PS" ? playerStarterSlotForSchedule(player, week) : "";
+      return { player, unavailable, slot };
+    })
+    .filter((row) => row.unavailable && row.slot)
+    .sort((a, b) => {
+      const teamSort = normalizeScheduleTeam(a.player.team).localeCompare(normalizeScheduleTeam(b.player.team));
+      if (teamSort) return teamSort;
+      return scheduleStarterSlots.indexOf(a.slot) - scheduleStarterSlots.indexOf(b.slot);
+    });
+}
+
 function renderSchedulePropWatch(game, gameKey) {
   return `
     <section class="prop-watch-panel schedule-prop-watch collapsed">
@@ -7962,6 +8038,21 @@ function renderSchedulePropWatch(game, gameKey) {
           <p>Open side view for matchup-based prop angles.</p>
         </div>
         <button class="mini-action schedule-prop-watch-toggle" data-schedule-prop-watch="${esc(gameKey)}">Open</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderScheduleNotableInjuries(game, gameKey) {
+  const count = scheduleNotableInjuryRows(game).length;
+  return `
+    <section class="prop-watch-panel schedule-prop-watch schedule-injury-watch collapsed">
+      <div class="prop-watch-head">
+        <div>
+          <h3>Notable Injuries</h3>
+          <p>${count ? `${count} unavailable starter${count === 1 ? "" : "s"} for this matchup.` : "No unavailable starters flagged."}</p>
+        </div>
+        <button class="mini-action schedule-injury-watch-toggle" data-schedule-injury-watch="${esc(gameKey)}" ${count ? "" : "disabled"}>${count ? "Open" : "None"}</button>
       </div>
     </section>
   `;
@@ -7996,6 +8087,482 @@ function renderSchedulePropWatchDrawer(visibleGames = []) {
           </article>
         `).join("")}</div>` : `<p class="empty-cell">No strong QB/RB/WR/TE prop-matchup angles for this game.</p>`}
     </aside>
+  `;
+}
+
+function renderScheduleInjuryDrawer(visibleGames = []) {
+  const key = state.scheduleInjuryDrawerKey;
+  if (!key) return "";
+  const lookupGames = visibleGames.length ? visibleGames : scheduleGames();
+  const row = lookupGames
+    .map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) }))
+    .find((item) => item.key === key);
+  if (!row) return "";
+  const items = scheduleNotableInjuryRows(row.game);
+  return `
+    <aside class="schedule-prop-drawer schedule-injury-drawer" role="dialog" aria-label="Notable Injuries">
+      <div class="prop-watch-head">
+        <div>
+          <h3>Notable Injuries</h3>
+          <p>${esc(teamAbbrevFor(row.game.visitor, row.game.visitor))} at ${esc(teamAbbrevFor(row.game.home, row.game.home))} - ${esc(weekDisplay(row.game.week || ""))}</p>
+        </div>
+        <button class="mini-action schedule-injury-watch-close" type="button">Close</button>
+      </div>
+      ${items.length ? `<div class="prop-watch-grid schedule-prop-watch-grid">${items.map(({ player, unavailable, slot }) => {
+        const latest = latestInjuryScanItemForPlayer(player);
+        const status = injuryStatusText(player);
+        const weekText = player.week ? ` thru ${weekOptionLabel(player.week)}` : "";
+        return `
+          <article class="prop-watch-card schedule-injury-card">
+            <div class="prop-watch-player">
+              ${playerAvatar(player)}
+              <div><button class="player-open prop-watch-name" data-player-key="${esc(sourceKey(player))}">${esc(player.player)}</button><span>${teamLogo(player.team, teamAbbrevFor(player.team))}${esc(teamAbbrevFor(player.team, player.team))} ${esc(slot)} - ${esc(player.position || starterSlotParts(slot).group)}</span></div>
+            </div>
+            <div class="prop-watch-edge"><span>${depthBadge(unavailable)}</span><span>${esc(status)}${esc(weekText)}</span><span>Rating ${esc(fmt(player.rating, 0))}</span></div>
+            ${latest?.espnComment ? `<p class="injury-watch-comment">${esc(latest.espnComment)}</p>` : ""}
+          </article>
+        `;
+      }).join("")}</div>` : `<p class="empty-cell">No unavailable starters flagged for this game.</p>`}
+    </aside>
+  `;
+}
+
+function bettingSelectedWeek() {
+  return state.bettingWeek === "auto" ? selectedSiteWeek() : state.bettingWeek;
+}
+
+function bettingPickText(value, game, type) {
+  if (!value) return "Not set";
+  if (isNoPickChoice(value)) return "No Pick";
+  if (type === "ml") return `${scheduleTeamAbbrev(value) || value} ML`;
+  return String(value).replace(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g, (match) => scheduleTeamAbbrev(match) || match);
+}
+
+function bettingRegularWeekNumber() {
+  const text = String(bettingSelectedWeek() || "");
+  return /^\d+$/.test(text) ? Number(text) : NaN;
+}
+
+function bettingProductionFactorValue(row, seasonLabel, recentLabel) {
+  const season = num(fantasyDetailValue(row, seasonLabel), NaN);
+  const recent = num(fantasyDetailValue(row, recentLabel), NaN);
+  const mode = state.bettingSampleMode || "last";
+  if (mode === "previous") return Number.isFinite(season) ? season : recent;
+  if (mode === "current") {
+    if (hasActual2026Production() && Number.isFinite(recent)) return recent;
+    return Number.isFinite(season) ? season : recent;
+  }
+  const lastGames = Math.max(1, Math.min(25, num(state.bettingLastGames, 5)));
+  if (Number.isFinite(recent) && lastGames <= 5) return recent;
+  if (Number.isFinite(recent) && Number.isFinite(season)) {
+    const recentGames = Math.min(5, lastGames);
+    const seasonGames = Math.max(0, lastGames - recentGames);
+    return ((recent * recentGames) + (season * seasonGames)) / Math.max(1, lastGames);
+  }
+  return Number.isFinite(season) ? season : recent;
+}
+
+function bettingFactorValue(row, position, key) {
+  const detail = (labels) => {
+    for (const label of labels) {
+      const value = fantasyDetailValue(row, label);
+      if (value !== undefined && value !== null && value !== "") return num(value, NaN);
+    }
+    return NaN;
+  };
+  if (key === "vpos") {
+    if (position === "QB") return detail(["Matchup Rating (Low is good)", "Stat vQB Rank"]);
+    if (position === "RB") return detail(["Opp vRB Rank"]);
+    if (position === "WR") return detail(["Opp vWR Rank"]);
+    if (position === "TE") return detail(["Opp vTE Rank"]);
+  }
+  if (key === "ppgRank") return detail(["PPG Rank", "Team Total Rank"]);
+  if (key === "receiverGroupRank") return detail(["Receiving Group Rank", "WR Group Rank", "Rec Rank"]);
+  if (key === "olineRank") return detail(["OL Rank", "O-Line Rank"]);
+  if (key === "qbRank") return detail(["QB Rank"]);
+  if (key === "redZone") return bettingProductionFactorValue(row, "Typical Red Zone Opportunities", "!!LAST 5!!\nTypical Red Zone Opportunities");
+  if (key === "targets") return bettingProductionFactorValue(row, "Typical Targets", "!!LAST 5!!\nTypical Targets");
+  if (key === "snapPct") return bettingProductionFactorValue(row, "Typical Snap %", "!!LAST 5!!\nTypical Snap %");
+  if (key === "depth") return num(row.depth, NaN);
+  return NaN;
+}
+
+function bettingFactorPasses(row, position, factor) {
+  const active = state.bettingActiveFactors[position]?.[factor.key];
+  if (!active) return true;
+  const value = bettingFactorValue(row, position, factor.key);
+  if (!Number.isFinite(value)) return true;
+  const threshold = num(state.bettingThresholds[position]?.[factor.key], defaultBettingHubThresholds[position]?.[factor.key]);
+  return factor.direction === "max" ? value <= threshold : value >= threshold;
+}
+
+function bettingFactorPills(row, position) {
+  return bettingHubFactors
+    .filter((factor) => state.bettingActiveFactors[position]?.[factor.key])
+    .map((factor) => {
+      const value = bettingFactorValue(row, position, factor.key);
+      const threshold = num(state.bettingThresholds[position]?.[factor.key], defaultBettingHubThresholds[position]?.[factor.key]);
+      const pass = !Number.isFinite(value) || bettingFactorPasses(row, position, factor);
+      const direction = factor.direction === "max" ? "<=" : ">=";
+      return `<span class="${pass ? "pass" : "fail"}" title="${esc(factor.title)}">${esc(factor.label)} ${Number.isFinite(value) ? esc(fantasyDisplay(value, Math.abs(value) < 5 ? 1 : 0)) : "-"} <small>${esc(direction)} ${esc(fantasyDisplay(threshold, threshold < 5 ? 1 : 0))}</small></span>`;
+    })
+    .join("");
+}
+
+function bettingConfidenceMeter(score, label = "") {
+  const pct = Math.max(0, Math.min(100, num(score, 0)));
+  const tier = pct >= 78 ? "high" : pct >= 62 ? "mid" : "low";
+  return `<span class="betting-confidence ${tier}" title="${esc(label || `Confidence ${fmt(pct, 0)}%`)}"><b style="width:${pct}%"></b><em>${fmt(pct, 0)}%</em></span>`;
+}
+
+function bettingTdProps(item) {
+  return (item.props || [])
+    .filter(([label, value]) => /TD/i.test(label) && value !== "" && value !== "-")
+    .map(([label, value]) => {
+      const pct = num(String(value).replace("%", ""), NaN);
+      const contextBoost = Math.min(10, (item.advantages?.length || 0) * 2 + Math.max(0, 30 - num(item.row.scoreRank || item.row.rank, 999)) / 10);
+      const isPassTd = item.position === "QB" && /Pass TD/i.test(label);
+      const passTds = isPassTd ? num(fantasyDetailValue(item.row, "Typical Pass TDs"), 0) : 0;
+      const oneAndHalfPct = isPassTd ? Math.max(1, Math.min(95, Math.round((1 - Math.exp(-passTds) * (1 + passTds)) * 100))) : NaN;
+      return {
+        label: isPassTd ? "Pass TD 1.5+" : label,
+        value: isPassTd ? `${oneAndHalfPct}%` : value,
+        confidence: isPassTd
+          ? Math.min(99, oneAndHalfPct + contextBoost)
+          : Number.isFinite(pct) ? Math.min(99, pct + contextBoost) : Math.min(85, item.watchScore),
+      };
+    });
+}
+
+function bettingGamePickConfidence(game, type, pick) {
+  const projection = scheduleProjection(game);
+  const odds = draftKingsOddsFor(game);
+  if (type === "ml") {
+    const margin = Math.abs(num(projection?.spread, 0));
+    return Math.max(50, Math.min(96, 48 + margin * 6));
+  }
+  if (type === "total") {
+    const dkTotal = num(odds?.totalLine, NaN);
+    const edge = Number.isFinite(dkTotal) ? Math.abs(num(projection?.total, dkTotal) - dkTotal) : 0;
+    return Math.max(50, Math.min(94, 45 + edge * 8));
+  }
+  if (type === "spread") {
+    const model = modelZSpreadPick(game);
+    const reasonBoost = /underdog|confirms|exception/i.test(model.reason || "") ? 8 : 0;
+    const margin = Math.abs(num(projection?.spread, 0));
+    return Math.max(50, Math.min(95, 48 + margin * 4 + reasonBoost));
+  }
+  return 50;
+}
+
+function bettingAltLinePicks(game) {
+  const odds = draftKingsOddsFor(game);
+  const projection = scheduleProjection(game);
+  const rows = [];
+  if (odds && Number.isFinite(Number(odds.spreadLine))) {
+    const dkMargin = Math.abs(num(odds.spreadLine, 0));
+    const favorite = dkSpreadFavoriteTeam(game, odds);
+    if (favorite) {
+      const dog = normalizeTeamName(favorite) === normalizeTeamName(game.visitor) ? game.home : game.visitor;
+      const favoriteAbbrev = scheduleTeamAbbrev(favorite);
+      const dogAbbrev = scheduleTeamAbbrev(dog);
+      const modelMargin = modelSpreadRelativeToTeam(game, projection, favorite);
+      const favAltLine = Math.max(0, dkMargin - 6);
+      const dogAltLine = dkMargin + 6;
+      if (modelMargin >= favAltLine + 2.5) {
+        rows.push({
+          type: "Alt Spread",
+          title: `${favoriteAbbrev} ${favAltLine ? `-${fmt(favAltLine, 1)}` : "PK"}`,
+          sub: `${favoriteAbbrev} adjusted 6 points from DK ${fmt(dkMargin, 1)}; model ${fmt(modelMargin, 1)}`,
+          confidence: Math.max(52, Math.min(94, 48 + (modelMargin - favAltLine) * 6)),
+        });
+      }
+      const dogEdge = dogAltLine - modelMargin;
+      if (dogEdge >= 2.5) {
+        rows.push({
+          type: "Alt Spread",
+          title: `${dogAbbrev} +${fmt(dogAltLine, 1)}`,
+          sub: `${dogAbbrev} adjusted 6 points from DK ${fmt(dkMargin, 1)}; model favorite margin ${fmt(modelMargin, 1)}`,
+          confidence: Math.max(52, Math.min(94, 48 + dogEdge * 5)),
+        });
+      }
+    }
+  }
+  if (odds && Number.isFinite(Number(odds.totalLine))) {
+    const dkTotal = num(odds.totalLine, 0);
+    const modelTotal = num(projection.total, dkTotal);
+    const edge = modelTotal - dkTotal;
+    const overAlt = dkTotal - 6;
+    const underAlt = dkTotal + 6;
+    if (modelTotal > overAlt + 2.5) {
+      rows.push({
+        type: "Alt Total",
+        title: `Over ${fmt(overAlt, 1)}`,
+        sub: `6 points below DK ${fmt(dkTotal, 1)}; model total ${fmt(modelTotal, 1)}`,
+        confidence: Math.max(52, Math.min(94, 48 + (modelTotal - overAlt) * 5)),
+      });
+    }
+    if (modelTotal < underAlt - 2.5) {
+      rows.push({
+        type: "Alt Total",
+        title: `Under ${fmt(underAlt, 1)}`,
+        sub: `6 points above DK ${fmt(dkTotal, 1)}; model total ${fmt(modelTotal, 1)}`,
+        confidence: Math.max(52, Math.min(94, 48 + (underAlt - modelTotal) * 5)),
+      });
+    }
+  }
+  return rows;
+}
+
+function bettingTopPicks(games) {
+  const rows = [];
+  games.forEach((game, index) => {
+    const key = scheduleGameKey(game, game.calendarIndex ?? index);
+    const action = gameAction(key);
+    const matchup = `${scheduleTeamAbbrev(game.visitor)} at ${scheduleTeamAbbrev(game.home)}`;
+    [["ml", "ML"], ["spread", "Spread"], ["total", "Total"]].forEach(([type, label]) => {
+      const pick = action[type];
+      if (!pick || isNoPickChoice(pick)) return;
+      rows.push({
+        type: label,
+        title: bettingPickText(pick, game, type),
+        sub: matchup,
+        confidence: bettingGamePickConfidence(game, type, pick),
+      });
+    });
+    bettingAltLinePicks(game).forEach((pick) => {
+      rows.push({
+        ...pick,
+        sub: `${matchup} - ${pick.sub}`,
+      });
+    });
+    bettingPropRowsForGame(game).forEach((item) => {
+      bettingTdProps(item).forEach((prop) => {
+        rows.push({
+          type: prop.label === "Pass TD 1.5+" ? "Pass TD 1.5+" : `${item.position} TD`,
+          title: `${item.row.player || item.row.team} ${prop.label}`,
+          sub: `${teamAbbrevFor(item.row.team, item.row.team)} vs ${teamAbbrevFor(item.row.opponent, item.row.opponent)} - ${prop.value}`,
+          confidence: prop.confidence,
+          playerKey: item.row._playerKey || "",
+        });
+      });
+    });
+  });
+  const wanted = state.bettingTopType || "All";
+  return rows
+    .filter((row) => wanted === "All" || row.type === wanted)
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 20);
+}
+
+function renderBettingTopPicks(games) {
+  const picks = bettingTopPicks(games);
+  const typeOptions = ["All", "ML", "Spread", "Alt Spread", "Total", "Alt Total", "Pass TD 1.5+", "QB TD", "RB TD", "WR TD", "TE TD"];
+  return `
+    <aside class="betting-top-picks">
+      <div class="betting-top-head">
+        <h3>Top 20 Picks</h3>
+        <p>Sorted by confidence from saved picks and TD angles.</p>
+        ${optionSelect("betting-top-type", state.bettingTopType, typeOptions)}
+      </div>
+      ${picks.length ? picks.map((pick, index) => `
+        <article class="betting-top-pick">
+          <span class="betting-top-rank">${index + 1}</span>
+          <div>
+            <b>${esc(pick.type)}</b>
+            ${pick.playerKey ? `<button class="player-open" data-player-key="${esc(pick.playerKey)}">${esc(pick.title)}</button>` : `<strong>${esc(pick.title)}</strong>`}
+            <em>${esc(pick.sub)}</em>
+            ${bettingConfidenceMeter(pick.confidence)}
+          </div>
+        </article>
+      `).join("") : `<p class="empty-cell">No saved picks or TD angles meet the current settings.</p>`}
+    </aside>
+  `;
+}
+
+function bettingPropRowsForGame(game) {
+  const week = scheduleWeekGroupKey(game.week || bettingSelectedWeek());
+  const teams = new Set([normalizeTeamName(game.visitor), normalizeTeamName(game.home)]);
+  const positions = state.bettingPosition === "All" ? bettingHubPositions : [state.bettingPosition];
+  return positions.flatMap((position) => {
+    const workbookRows = fantasyRankItem("weekly", position)?.rows || [];
+    return weeklyFantasyPlayerPool(position, workbookRows, week)
+      .filter((row) => teams.has(normalizeTeamName(row.team)) && teams.has(normalizeTeamName(row.opponent)))
+      .filter((row) => isFantasyRowAvailable(row))
+      .filter((row) => bettingHubFactors.every((factor) => bettingFactorPasses(row, position, factor)))
+      .map((row) => {
+        const advantages = weeklyPropWatchAdvantage(row, position);
+        const props = weeklyPropWatchProps(row, position);
+        return {
+          row,
+          position,
+          advantages,
+          props,
+          watchScore: weeklyPropWatchScore(row, position, advantages),
+        };
+      })
+      .filter((item) => item.props.some(([, value]) => value !== "" && value !== "-"));
+  })
+    .sort((a, b) => b.watchScore - a.watchScore || num(a.row.scoreRank || a.row.rank, 999) - num(b.row.scoreRank || b.row.rank, 999))
+    .slice(0, 5);
+}
+
+function renderBettingFactorControl(position, factor) {
+  const value = num(state.bettingThresholds[position]?.[factor.key], defaultBettingHubThresholds[position]?.[factor.key]);
+  const active = Boolean(state.bettingActiveFactors[position]?.[factor.key]);
+  const direction = factor.direction === "max" ? "or better" : "minimum";
+  return `
+    <label class="betting-factor-control ${active ? "" : "muted"}" title="${esc(factor.title)}">
+      <span><input type="checkbox" data-betting-factor-toggle="${esc(position)}:${esc(factor.key)}" ${active ? "checked" : ""} /> ${esc(factor.label)} <b>${esc(fantasyDisplay(value, value < 5 ? 1 : 0))}</b></span>
+      <div class="betting-factor-inputs">
+        <input type="range" min="${esc(factor.min)}" max="${esc(factor.max)}" step="${esc(factor.step)}" value="${esc(value)}" data-betting-factor="${esc(position)}:${esc(factor.key)}" ${active ? "" : "disabled"} />
+        <input type="number" min="${esc(factor.min)}" max="${esc(factor.max)}" step="${esc(factor.step)}" value="${esc(value)}" data-betting-factor="${esc(position)}:${esc(factor.key)}" ${active ? "" : "disabled"} />
+      </div>
+      <em>${esc(direction)}</em>
+    </label>
+  `;
+}
+
+function renderBettingGameCard(game, index) {
+  const key = scheduleGameKey(game, game.calendarIndex ?? index);
+  const action = gameAction(key);
+  const props = bettingPropRowsForGame(game);
+  const savedPicks = [["ml", "ML"], ["spread", "Spread"], ["total", "Total"]]
+    .map(([type, label]) => ({ type, label, value: action[type] }))
+    .filter((pick) => pick.value && !isNoPickChoice(pick.value));
+  return `
+    <article class="betting-game-card">
+      <header>
+        <div>
+          <span class="week-chip">${esc(weekDisplay(game.week || ""))}</span>
+          <h3>${teamLogo(game.visitor, scheduleTeamAbbrev(game.visitor))}${esc(scheduleTeamAbbrev(game.visitor))} <small>at</small> ${teamLogo(game.home, scheduleTeamAbbrev(game.home))}${esc(scheduleTeamAbbrev(game.home))}</h3>
+          <p>${esc(game.day || "")} ${esc(excelDate(game.date))} ${esc(excelTime(game.time))}</p>
+        </div>
+        <button class="mini-action" data-schedule-detail="${esc(key)}">Game Card</button>
+      </header>
+      ${savedPicks.length ? `<div class="betting-pick-grid">${savedPicks.map((pick) => `
+        <span><b>${esc(pick.label)}</b><em>${esc(bettingPickText(pick.value, game, pick.type))}</em>${bettingConfidenceMeter(bettingGamePickConfidence(game, pick.type, pick.value))}</span>
+      `).join("")}</div>` : `<p class="betting-no-picks">No saved Model Z picks for this game.</p>`}
+      <section class="betting-player-bets">
+        <h4>Notable Player Bets</h4>
+        ${props.length ? props.map((item) => {
+          const { row, position, advantages, props: propList } = item;
+          const topTd = bettingTdProps(item).sort((a, b) => b.confidence - a.confidence)[0];
+          return `
+          <article class="betting-player-bet">
+            <div class="prop-watch-player">
+              ${playerAvatar(findPlayer(row._playerKey) || row)}
+              <div><button class="player-open prop-watch-name" data-player-key="${esc(row._playerKey || "")}">${esc(row.player || row.team)}</button><span>${teamLogo(row.team, teamAbbrevFor(row.team))}${esc(teamAbbrevFor(row.team, row.team))} ${esc(position)} vs ${teamLogo(row.opponent, teamAbbrevFor(row.opponent))}${esc(teamAbbrevFor(row.opponent, row.opponent))}</span></div>
+            </div>
+            <div class="prop-watch-edge">${advantages.length ? advantages.map((piece) => `<span>${esc(piece)}</span>`).join("") : "<span>Meets slider requirements</span>"}</div>
+            <div class="prop-watch-props">${propList.map(([label, value]) => `<span><b>${esc(label)}</b><em>${esc(value)}</em></span>`).join("")}</div>
+            ${topTd ? `<div class="betting-player-confidence"><span>${esc(topTd.label)} confidence</span>${bettingConfidenceMeter(topTd.confidence, `${topTd.label} ${topTd.value}`)}</div>` : ""}
+            <div class="betting-factor-pills">${bettingFactorPills(row, position)}</div>
+          </article>
+        `; }).join("") : `<p class="empty-cell">No QB/RB/WR/TE players currently meet the active slider requirements.</p>`}
+      </section>
+    </article>
+  `;
+}
+
+function renderBettingHub() {
+  const week = bettingSelectedWeek();
+  const weekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
+  const games = scheduleGames().filter((game) => scheduleWeekMatches(game, week));
+  setTimeout(() => {
+    document.querySelector("#betting-week")?.addEventListener("change", (event) => {
+      state.bettingWeek = event.target.value;
+      storage.set("nflz-betting-week", state.bettingWeek);
+      render();
+    });
+    document.querySelector("#betting-position")?.addEventListener("change", (event) => {
+      state.bettingPosition = event.target.value;
+      storage.set("nflz-betting-position", state.bettingPosition);
+      render();
+    });
+    document.querySelector("#betting-game-view")?.addEventListener("change", (event) => {
+      state.bettingGameView = event.target.value;
+      storage.set("nflz-betting-game-view", state.bettingGameView);
+      render();
+    });
+    document.querySelector("#betting-top-type")?.addEventListener("change", (event) => {
+      state.bettingTopType = event.target.value;
+      storage.set("nflz-betting-top-type", state.bettingTopType);
+      render();
+    });
+    document.querySelector("#betting-controls-toggle")?.addEventListener("click", () => {
+      state.bettingControlsOpen = !state.bettingControlsOpen;
+      storage.set("nflz-betting-controls-open", state.bettingControlsOpen);
+      render();
+    });
+    document.querySelector("#betting-sample-mode")?.addEventListener("change", (event) => {
+      state.bettingSampleMode = event.target.value;
+      storage.set("nflz-betting-sample-mode", state.bettingSampleMode);
+      render();
+    });
+    document.querySelector("#betting-last-games")?.addEventListener("input", (event) => {
+      state.bettingLastGames = Math.max(1, Math.min(25, num(event.target.value, 5)));
+      storage.set("nflz-betting-last-games", state.bettingLastGames);
+      render();
+    });
+    document.querySelector("#betting-reset-factors")?.addEventListener("click", () => {
+      state.bettingThresholds = Object.fromEntries(bettingHubPositions.map((position) => [position, { ...defaultBettingHubThresholds[position] }]));
+      state.bettingActiveFactors = Object.fromEntries(bettingHubPositions.map((position) => [position, { ...defaultBettingHubActiveFactors[position] }]));
+      storage.set("nflz-betting-thresholds", state.bettingThresholds);
+      storage.set("nflz-betting-active-factors", state.bettingActiveFactors);
+      render();
+    });
+    document.querySelectorAll("[data-betting-factor]").forEach((input) => input.addEventListener("input", () => {
+      const [position, key] = input.dataset.bettingFactor.split(":");
+      state.bettingThresholds[position] = { ...state.bettingThresholds[position], [key]: Number(input.value) };
+      storage.set("nflz-betting-thresholds", state.bettingThresholds);
+      render();
+    }));
+    document.querySelectorAll("[data-betting-factor-toggle]").forEach((input) => input.addEventListener("change", () => {
+      const [position, key] = input.dataset.bettingFactorToggle.split(":");
+      state.bettingActiveFactors[position] = { ...state.bettingActiveFactors[position], [key]: input.checked };
+      storage.set("nflz-betting-active-factors", state.bettingActiveFactors);
+      render();
+    }));
+    document.querySelectorAll("[data-schedule-detail]").forEach((button) => button.addEventListener("click", () => {
+      state.selectedScheduleKey = button.dataset.scheduleDetail;
+      render();
+    }));
+  }, 0);
+  return `
+    <section class="betting-hub">
+      <div class="toolbar betting-toolbar">
+        <div>
+          <h2>Betting Hub</h2>
+          <p>Week-level Model Z picks from Season Schedule, plus QB/RB/WR/TE prop angles that pass your active slider requirements.</p>
+        </div>
+        <div class="toolbar-actions">
+          ${optionSelect("betting-week", state.bettingWeek, weekOptions)}
+          ${optionSelect("betting-position", state.bettingPosition, ["All", ...bettingHubPositions])}
+          ${optionSelect("betting-sample-mode", state.bettingSampleMode, [["last", "Last games"], ["current", "Current season"], ["previous", "Previous season"]])}
+          <label class="betting-last-games ${state.bettingSampleMode === "last" ? "" : "muted"}"><span>Last</span><input id="betting-last-games" type="number" min="1" max="25" step="1" value="${esc(state.bettingLastGames)}" ${state.bettingSampleMode === "last" ? "" : "disabled"} /><span>games</span></label>
+          ${optionSelect("betting-game-view", state.bettingGameView, [["list", "List"], ["2", "2 across"], ["3", "3 across"], ["4", "4 across"], ["5", "5 across"]])}
+          <button id="betting-controls-toggle" class="mini-action">${state.bettingControlsOpen ? "Hide Sliders" : "Show Sliders"}</button>
+          <button id="betting-reset-factors" class="mini-action">Reset Factors</button>
+        </div>
+      </div>
+      ${state.bettingControlsOpen ? `<section class="betting-factor-board">
+        ${bettingHubPositions.map((position) => `
+          <article class="betting-factor-panel">
+            <h3>${esc(position)} Requirements</h3>
+            <div class="betting-factor-grid">${bettingHubFactors.map((factor) => renderBettingFactorControl(position, factor)).join("")}</div>
+          </article>
+        `).join("")}
+      </section>
+      <div class="betting-week-note">Production thresholds use your selected sample: previous season, current season when scanned, or Last N games. If exact raw game rows are not loaded for a stat, Last N blends the available last-5 sample with the season baseline so it can roll backward without going blank.</div>` : ""}
+      <div class="betting-board-layout">
+        <div class="betting-game-grid betting-view-${esc(state.bettingGameView)}">
+          ${games.length ? games.map((game, index) => renderBettingGameCard(game, index)).join("") : `<p class="empty-cell">No games found for ${esc(weekDisplay(week))}.</p>`}
+        </div>
+        ${renderBettingTopPicks(games)}
+      </div>
+      ${scheduleBreakdown()}
+    </section>
   `;
 }
 
@@ -8159,6 +8726,16 @@ function renderSchedule() {
       state.schedulePropWatchDrawerKey = "";
       render();
     });
+    document.querySelectorAll(".schedule-injury-watch-toggle").forEach((button) => button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      state.scheduleInjuryDrawerKey = button.dataset.scheduleInjuryWatch || "";
+      render();
+    }));
+    document.querySelector(".schedule-injury-watch-close")?.addEventListener("click", () => {
+      state.scheduleInjuryDrawerKey = "";
+      render();
+    });
     document.querySelector(".schedule-groups")?.addEventListener("click", (event) => {
       if (isScheduleInteractiveTarget(event.target)) return;
       const card = event.target.closest(".schedule-card");
@@ -8211,6 +8788,7 @@ function renderSchedule() {
       ${hiddenGameCount ? `<div class="schedule-show-more"><button id="schedule-show-more" class="mini-action">Show ${Math.min(80, hiddenGameCount)} More Games</button><button id="schedule-show-all" class="mini-action">Show All ${totalGames}</button></div>` : ""}
       ${scheduleBreakdown()}
       ${renderSchedulePropWatchDrawer(visibleGames)}
+      ${renderScheduleInjuryDrawer(visibleGames)}
     </section>
   `;
 }
@@ -15745,6 +16323,7 @@ function render() {
     top30: renderTop30,
     schedule: renderSchedule,
     picks: renderPicksTracker,
+    betting: renderBettingHub,
     standings: renderStandings,
     weeklyMatchups: renderWeeklyMatchups,
     weeklyFantasy: () => renderFantasyRanks("weekly"),
