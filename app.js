@@ -358,24 +358,26 @@ const bettingHubFactors = [
   { key: "olineRank", label: "OL Rank", direction: "max", min: 1, max: 32, step: 1, title: "Offensive line rank. Slider means this rank or better." },
   { key: "qbRank", label: "QB Rank", direction: "max", min: 1, max: 32, step: 1, title: "Quarterback context rank feeding the player. Slider means this rank or better." },
   { key: "redZone", label: "Red Zone Opps", direction: "min", min: 0, max: 4, step: 0.1, title: "Expected red-zone chances. Slider means at least this many." },
-  { key: "targets", label: "Targets", direction: "min", min: 0, max: 15, step: 0.5, title: "Expected targets. Early weeks lean on last season plus early 2026 games; later weeks lean on 2026." },
+  { key: "targets", label: "Targets", direction: "min", min: 0, max: 15, step: 0.5, title: "Expected targets using the selected Betting Hub production sample." },
   { key: "snapPct", label: "Snap %", direction: "min", min: 0, max: 100, step: 1, title: "Expected snap share. Slider means at least this percent." },
   { key: "depth", label: "Depth", direction: "max", min: 1, max: 5, step: 1, title: "Fantasy depth chart role. Slider means this depth number or better." },
 ];
 
 const defaultBettingHubThresholds = {
-  QB: { vpos: 12, ppgRank: 18, receiverGroupRank: 18, olineRank: 18, qbRank: 18, redZone: 0, targets: 0, snapPct: 65, depth: 1 },
-  RB: { vpos: 12, ppgRank: 18, receiverGroupRank: 32, olineRank: 18, qbRank: 32, redZone: 0.4, targets: 2, snapPct: 45, depth: 2 },
-  WR: { vpos: 12, ppgRank: 18, receiverGroupRank: 18, olineRank: 32, qbRank: 18, redZone: 0.3, targets: 5, snapPct: 60, depth: 3 },
-  TE: { vpos: 12, ppgRank: 18, receiverGroupRank: 18, olineRank: 32, qbRank: 18, redZone: 0.25, targets: 4, snapPct: 55, depth: 2 },
+  QB: { vpos: 24, ppgRank: 26, receiverGroupRank: 26, olineRank: 26, qbRank: 32, redZone: 0, targets: 0, snapPct: 45, depth: 1 },
+  RB: { vpos: 22, ppgRank: 24, receiverGroupRank: 32, olineRank: 24, qbRank: 32, redZone: 0.15, targets: 0, snapPct: 25, depth: 3 },
+  WR: { vpos: 24, ppgRank: 26, receiverGroupRank: 26, olineRank: 32, qbRank: 26, redZone: 0.05, targets: 2.5, snapPct: 35, depth: 5 },
+  TE: { vpos: 24, ppgRank: 26, receiverGroupRank: 26, olineRank: 32, qbRank: 26, redZone: 0.05, targets: 1.5, snapPct: 30, depth: 3 },
 };
 
 const defaultBettingHubActiveFactors = {
-  QB: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: true, qbRank: true, redZone: false, targets: false, snapPct: true, depth: true },
-  RB: { vpos: true, ppgRank: true, receiverGroupRank: false, olineRank: true, qbRank: false, redZone: true, targets: true, snapPct: true, depth: true },
+  QB: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: true, qbRank: false, redZone: false, targets: false, snapPct: true, depth: true },
+  RB: { vpos: true, ppgRank: true, receiverGroupRank: false, olineRank: true, qbRank: false, redZone: true, targets: false, snapPct: true, depth: true },
   WR: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: false, qbRank: true, redZone: true, targets: true, snapPct: true, depth: true },
   TE: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: false, qbRank: true, redZone: true, targets: true, snapPct: true, depth: true },
 };
+
+const bettingHubSliderVersion = "20260913-td-recommended-all-pos";
 
 const state = {
   page: "home",
@@ -539,6 +541,19 @@ const state = {
   quickGameKey: "",
   quickWinner: "",
 };
+
+function applyBettingHubRecommendedSliders() {
+  if (storage.get("nflz-betting-slider-version", "") === bettingHubSliderVersion) return;
+  state.bettingThresholds = Object.fromEntries(bettingHubPositions.map((position) => [position, { ...defaultBettingHubThresholds[position] }]));
+  state.bettingActiveFactors = Object.fromEntries(bettingHubPositions.map((position) => [position, { ...defaultBettingHubActiveFactors[position] }]));
+  state.bettingTopType = "All";
+  storage.set("nflz-betting-thresholds", state.bettingThresholds);
+  storage.set("nflz-betting-active-factors", state.bettingActiveFactors);
+  storage.set("nflz-betting-top-type", state.bettingTopType);
+  storage.set("nflz-betting-slider-version", bettingHubSliderVersion);
+}
+
+applyBettingHubRecommendedSliders();
 
 const nav = document.querySelector("#nav");
 const content = document.querySelector("#content");
