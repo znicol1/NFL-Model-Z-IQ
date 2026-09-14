@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css?v=20260914-picks-storage-safety" />
+    <link rel="stylesheet" href="styles.css?v=20260914-live-local-sync" />
   </head>
   <body>
     <aside class="sidebar">
@@ -36,6 +36,8 @@
           </nav>
         </div>
         <div class="topbar-actions">
+          <button class="backup-btn cloud-sync-btn" id="cloud-sync" title="Sync saved app data between live and local">Sync</button>
+          <span class="cloud-sync-status" id="cloud-sync-status">Local</span>
           <button class="backup-btn" id="export-backup" title="Export full NFL IQ backup">Export</button>
           <button class="backup-btn" id="import-backup" title="Import full NFL IQ backup">Import</button>
           <input id="import-backup-file" type="file" accept="application/json,.json" hidden />
@@ -64,7 +66,7 @@
     <script src="ourlads-check-results.js?v=20260901-ourlads-reserves-ir"></script>
     <script src="espn-injury-check-results.js?v=20260805-espn-injury-check"></script>
     <script src="ourlads-cache.js?v=20260809-ourlads-current"></script>
-    <script src="app.js?v=20260914-picks-storage-safety"></script>
+    <script src="app.js?v=20260914-live-local-sync"></script>
   </body>
 </html>
 

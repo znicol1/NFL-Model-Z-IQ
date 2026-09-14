@@ -11,6 +11,46 @@ const navSections = [
 
 const pages = navSections.flatMap((section) => section.pages);
 
+const BACKUP_VERSION = "nfl-iq-backup-v1";
+const NO_PICK_VALUE = "__NO_PICK_INCONCLUSIVE__";
+const NO_PICK_LABEL = "No Pick (Inconclusive)";
+const AUTH_MODE_KEY = "nflz-auth-mode";
+const ADMIN_PASSWORD = "Flagg,cooper32";
+const CLOUD_SYNC_ENDPOINT = "https://nfl-model-z-iq.netlify.app/.netlify/functions/app-sync";
+const CLOUD_SYNC_ORIGIN_KEY = "nflz-cloud-origin-id";
+const CLOUD_SYNC_LOCAL_UPDATED_KEY = "nflz-cloud-local-updated-at";
+const CLOUD_SYNC_LAST_APPLIED_KEY = "nflz-cloud-last-applied-at";
+const CLOUD_SYNC_LAST_PUSHED_KEY = "nflz-cloud-last-pushed-at";
+const CLOUD_SYNC_EXCLUDED_KEYS = new Set([
+  AUTH_MODE_KEY,
+  CLOUD_SYNC_ORIGIN_KEY,
+  CLOUD_SYNC_LOCAL_UPDATED_KEY,
+  CLOUD_SYNC_LAST_APPLIED_KEY,
+  CLOUD_SYNC_LAST_PUSHED_KEY,
+]);
+let cloudSyncReady = false;
+let cloudSyncTimer = null;
+let cloudSyncApplying = false;
+
+function ensureCloudOriginId() {
+  let origin = localStorage.getItem(CLOUD_SYNC_ORIGIN_KEY);
+  if (!origin) {
+    origin = `nflz-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(CLOUD_SYNC_ORIGIN_KEY, origin);
+  }
+  return origin;
+}
+
+function isCloudSyncKey(key) {
+  return String(key || "").startsWith("nflz-") && !CLOUD_SYNC_EXCLUDED_KEYS.has(key);
+}
+
+function markCloudSyncDirty(key) {
+  if (!cloudSyncReady || cloudSyncApplying || !isCloudSyncKey(key)) return;
+  localStorage.setItem(CLOUD_SYNC_LOCAL_UPDATED_KEY, new Date().toISOString());
+  scheduleCloudSyncPush();
+}
+
 const storage = {
   get(key, fallback) {
     try {
@@ -21,14 +61,10 @@ const storage = {
   },
   set(key, value) {
     localStorage.setItem(key, JSON.stringify(value));
+    markCloudSyncDirty(key);
   },
 };
 
-const BACKUP_VERSION = "nfl-iq-backup-v1";
-const NO_PICK_VALUE = "__NO_PICK_INCONCLUSIVE__";
-const NO_PICK_LABEL = "No Pick (Inconclusive)";
-const AUTH_MODE_KEY = "nflz-auth-mode";
-const ADMIN_PASSWORD = "Flagg,cooper32";
 const backupKeys = {
   overrides: "nflz-player-overrides",
   challenges: "nflz-challenges",
@@ -367,25 +403,28 @@ const bettingHubFactors = [
 
 const defaultBettingHubThresholds = {
   QB: { vpos: 24, ppgRank: 26, receiverGroupRank: 26, olineRank: 26, qbRank: 32, redZone: 0, targets: 0, snapPct: 45, depth: 1 },
-  RB: { vpos: 22, ppgRank: 24, receiverGroupRank: 32, olineRank: 24, qbRank: 32, redZone: 0.15, targets: 0, snapPct: 25, depth: 3 },
+  RB: { vpos: 24, ppgRank: 26, receiverGroupRank: 32, olineRank: 26, qbRank: 32, redZone: 0.05, targets: 0, snapPct: 18, depth: 4 },
   WR: { vpos: 24, ppgRank: 26, receiverGroupRank: 26, olineRank: 32, qbRank: 26, redZone: 0.05, targets: 2.5, snapPct: 35, depth: 5 },
   TE: { vpos: 24, ppgRank: 26, receiverGroupRank: 26, olineRank: 32, qbRank: 26, redZone: 0.05, targets: 1.5, snapPct: 30, depth: 3 },
 };
 
 const defaultBettingHubActiveFactors = {
   QB: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: true, qbRank: false, redZone: false, targets: false, snapPct: true, depth: true },
-  RB: { vpos: true, ppgRank: true, receiverGroupRank: false, olineRank: true, qbRank: false, redZone: true, targets: false, snapPct: true, depth: true },
+  RB: { vpos: true, ppgRank: true, receiverGroupRank: false, olineRank: true, qbRank: false, redZone: false, targets: false, snapPct: true, depth: true },
   WR: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: false, qbRank: true, redZone: true, targets: true, snapPct: true, depth: true },
   TE: { vpos: true, ppgRank: true, receiverGroupRank: true, olineRank: false, qbRank: true, redZone: true, targets: true, snapPct: true, depth: true },
 };
 
-const bettingHubSliderVersion = "20260913-td-recommended-all-pos";
+const bettingHubSliderVersion = "20260914-aggressive-alt-lines";
 
 const state = {
   page: "home",
   query: "",
   authMode: storage.get(AUTH_MODE_KEY, ""),
   authError: "",
+  cloudSyncStatus: "idle",
+  cloudSyncMessage: "",
+  cloudSyncLastRemoteAt: "",
   data: null,
   players: [],
   liveView: "starters",
@@ -429,7 +468,8 @@ const state = {
   bettingPosition: storage.get("nflz-betting-position", "All"),
   bettingSampleMode: storage.get("nflz-betting-sample-mode", "last"),
   bettingLastGames: storage.get("nflz-betting-last-games", 5),
-  bettingGameView: storage.get("nflz-betting-game-view", "2"),
+  bettingGameView: storage.get("nflz-betting-game-view", "list"),
+  bettingUpcomingOnly: storage.get("nflz-betting-upcoming-only", false),
   bettingControlsOpen: storage.get("nflz-betting-controls-open", true),
   bettingTopType: storage.get("nflz-betting-top-type", "All"),
   bettingThresholds: Object.fromEntries(bettingHubPositions.map((position) => {
@@ -549,9 +589,11 @@ function applyBettingHubRecommendedSliders() {
   state.bettingThresholds = Object.fromEntries(bettingHubPositions.map((position) => [position, { ...defaultBettingHubThresholds[position] }]));
   state.bettingActiveFactors = Object.fromEntries(bettingHubPositions.map((position) => [position, { ...defaultBettingHubActiveFactors[position] }]));
   state.bettingTopType = "All";
+  state.bettingGameView = "list";
   storage.set("nflz-betting-thresholds", state.bettingThresholds);
   storage.set("nflz-betting-active-factors", state.bettingActiveFactors);
   storage.set("nflz-betting-top-type", state.bettingTopType);
+  storage.set("nflz-betting-game-view", state.bettingGameView);
   storage.set("nflz-betting-slider-version", bettingHubSliderVersion);
 }
 
@@ -564,6 +606,8 @@ const search = document.querySelector("#search");
 const exportBackupButton = document.querySelector("#export-backup");
 const importBackupButton = document.querySelector("#import-backup");
 const importBackupFile = document.querySelector("#import-backup-file");
+const cloudSyncButton = document.querySelector("#cloud-sync");
+const cloudSyncStatus = document.querySelector("#cloud-sync-status");
 
 const overrides = storage.get("nflz-player-overrides", {});
 const savedChallenges = storage.get("nflz-challenges", []);
@@ -4901,6 +4945,19 @@ function modelSpreadRelativeToTeam(game, projection, teamName) {
   return normalizeTeamName(projection.favorite) === normalizeTeamName(teamName) ? num(projection.spread, 0) : -num(projection.spread, 0);
 }
 
+function spreadLineLabel(team, line) {
+  const abbrev = scheduleTeamAbbrev(team);
+  const value = num(line, 0);
+  if (Math.abs(value) < 0.05) return `${abbrev} PK`;
+  return `${abbrev} ${value > 0 ? "+" : "-"}${fmt(Math.abs(value), 1)}`;
+}
+
+function gameHasSubmittedScore(game, index) {
+  const key = scheduleGameKey(game, game.calendarIndex ?? index);
+  const action = gameAction(key);
+  return action.awayScore !== "" && action.homeScore !== "";
+}
+
 function modelZSpreadPick(game) {
   const odds = draftKingsOddsFor(game);
   const projection = scheduleProjection(game);
@@ -8239,9 +8296,10 @@ function bettingFactorPills(row, position) {
     .join("");
 }
 
-function bettingConfidenceMeter(score, label = "") {
+function bettingConfidenceMeter(score, label = "", colorScore = score) {
   const pct = Math.max(0, Math.min(100, num(score, 0)));
-  const tier = pct >= 78 ? "high" : pct >= 62 ? "mid" : "low";
+  const colorPct = Math.max(0, Math.min(100, num(colorScore, pct)));
+  const tier = colorPct >= 72 ? "high" : colorPct >= 42 ? "mid" : "low";
   return `<span class="betting-confidence ${tier}" title="${esc(label || `Confidence ${fmt(pct, 0)}%`)}"><b style="width:${pct}%"></b><em>${fmt(pct, 0)}%</em></span>`;
 }
 
@@ -8257,6 +8315,9 @@ function bettingTdProps(item) {
       return {
         label: isPassTd ? "Pass TD 1.5+" : label,
         value: isPassTd ? `${oneAndHalfPct}%` : value,
+        type: isPassTd ? "Pass TD 1.5+" : `${item.position} TD`,
+        group: isPassTd ? "Pass TD 1.5+" : "Scoring TD",
+        colorGroup: isPassTd ? "Pass TD 1.5+" : `${item.position} ${label}`,
         confidence: isPassTd
           ? Math.min(99, oneAndHalfPct + contextBoost)
           : Number.isFinite(pct) ? Math.min(99, pct + contextBoost) : Math.min(85, item.watchScore),
@@ -8294,26 +8355,27 @@ function bettingAltLinePicks(game) {
     const favorite = dkSpreadFavoriteTeam(game, odds);
     if (favorite) {
       const dog = normalizeTeamName(favorite) === normalizeTeamName(game.visitor) ? game.home : game.visitor;
-      const favoriteAbbrev = scheduleTeamAbbrev(favorite);
-      const dogAbbrev = scheduleTeamAbbrev(dog);
       const modelMargin = modelSpreadRelativeToTeam(game, projection, favorite);
-      const favAltLine = Math.max(0, dkMargin - 6);
-      const dogAltLine = dkMargin + 6;
-      if (modelMargin >= favAltLine + 2.5) {
+      const favAltLine = dkMargin + 6;
+      const dogAltLine = dkMargin - 6;
+      const favoriteEdge = modelMargin - dkMargin;
+      const dogEdge = dkMargin - modelMargin;
+      if (favoriteEdge > 1) {
+        const altCover = modelMargin - favAltLine;
         rows.push({
           type: "Alt Spread",
-          title: `${favoriteAbbrev} ${favAltLine ? `-${fmt(favAltLine, 1)}` : "PK"}`,
-          sub: `${favoriteAbbrev} adjusted 6 points from DK ${fmt(dkMargin, 1)}; model ${fmt(modelMargin, 1)}`,
-          confidence: Math.max(52, Math.min(94, 48 + (modelMargin - favAltLine) * 6)),
+          title: spreadLineLabel(favorite, -favAltLine),
+          sub: `Aggressive: DK ${spreadLineLabel(favorite, -dkMargin)} moved 6 points; model ${scheduleTeamAbbrev(favorite)} by ${fmt(modelMargin, 1)}`,
+          confidence: Math.max(42, Math.min(92, 58 + favoriteEdge * 4 + altCover * 5)),
         });
       }
-      const dogEdge = dogAltLine - modelMargin;
-      if (dogEdge >= 2.5) {
+      if (dogEdge > 3) {
+        const altCover = dogAltLine - modelMargin;
         rows.push({
           type: "Alt Spread",
-          title: `${dogAbbrev} +${fmt(dogAltLine, 1)}`,
-          sub: `${dogAbbrev} adjusted 6 points from DK ${fmt(dkMargin, 1)}; model favorite margin ${fmt(modelMargin, 1)}`,
-          confidence: Math.max(52, Math.min(94, 48 + dogEdge * 5)),
+          title: spreadLineLabel(dog, dogAltLine),
+          sub: `Aggressive: DK ${spreadLineLabel(dog, dkMargin)} moved 6 points; model favorite margin ${fmt(modelMargin, 1)}`,
+          confidence: Math.max(42, Math.min(92, 58 + dogEdge * 3 + altCover * 5)),
         });
       }
     }
@@ -8322,22 +8384,24 @@ function bettingAltLinePicks(game) {
     const dkTotal = num(odds.totalLine, 0);
     const modelTotal = num(projection.total, dkTotal);
     const edge = modelTotal - dkTotal;
-    const overAlt = dkTotal - 6;
-    const underAlt = dkTotal + 6;
-    if (modelTotal > overAlt + 2.5) {
+    const overAlt = dkTotal + 6;
+    const underAlt = Math.max(0, dkTotal - 6);
+    if (edge > 2.5) {
+      const altCover = modelTotal - overAlt;
       rows.push({
         type: "Alt Total",
         title: `Over ${fmt(overAlt, 1)}`,
-        sub: `6 points below DK ${fmt(dkTotal, 1)}; model total ${fmt(modelTotal, 1)}`,
-        confidence: Math.max(52, Math.min(94, 48 + (modelTotal - overAlt) * 5)),
+        sub: `Aggressive: DK ${fmt(dkTotal, 1)} moved 6 points higher; model total ${fmt(modelTotal, 1)}`,
+        confidence: Math.max(42, Math.min(92, 58 + edge * 3 + altCover * 5)),
       });
     }
-    if (modelTotal < underAlt - 2.5) {
+    if (edge < -2.5) {
+      const altCover = underAlt - modelTotal;
       rows.push({
         type: "Alt Total",
         title: `Under ${fmt(underAlt, 1)}`,
-        sub: `6 points above DK ${fmt(dkTotal, 1)}; model total ${fmt(modelTotal, 1)}`,
-        confidence: Math.max(52, Math.min(94, 48 + (underAlt - modelTotal) * 5)),
+        sub: `Aggressive: DK ${fmt(dkTotal, 1)} moved 6 points lower; model total ${fmt(modelTotal, 1)}`,
+        confidence: Math.max(42, Math.min(92, 58 + Math.abs(edge) * 3 + altCover * 5)),
       });
     }
   }
@@ -8369,7 +8433,9 @@ function bettingTopPicks(games) {
     bettingPropRowsForGame(game).forEach((item) => {
       bettingTdProps(item).forEach((prop) => {
         rows.push({
-          type: prop.label === "Pass TD 1.5+" ? "Pass TD 1.5+" : `${item.position} TD`,
+          type: prop.type,
+          propGroup: prop.group,
+          colorGroup: prop.colorGroup,
           title: `${item.row.player || item.row.team} ${prop.label}`,
           sub: `${teamAbbrevFor(item.row.team, item.row.team)} vs ${teamAbbrevFor(item.row.opponent, item.row.opponent)} - ${prop.value}`,
           confidence: prop.confidence,
@@ -8379,15 +8445,27 @@ function bettingTopPicks(games) {
     });
   });
   const wanted = state.bettingTopType || "All";
-  return rows
-    .filter((row) => wanted === "All" || row.type === wanted)
+  const filtered = rows
+    .filter((row) => wanted === "All" || row.type === wanted || row.propGroup === wanted);
+  const withColor = filtered.map((row) => {
+    const group = row.colorGroup || row.type;
+    const peers = rows.filter((peer) => (peer.colorGroup || peer.type) === group);
+    const values = peers.map((peer) => num(peer.confidence, NaN)).filter(Number.isFinite);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const colorScore = Number.isFinite(min) && Number.isFinite(max) && max > min
+      ? ((num(row.confidence, 0) - min) / (max - min)) * 100
+      : num(row.confidence, 0);
+    return { ...row, colorScore };
+  });
+  return withColor
     .sort((a, b) => b.confidence - a.confidence)
     .slice(0, 20);
 }
 
 function renderBettingTopPicks(games) {
   const picks = bettingTopPicks(games);
-  const typeOptions = ["All", "ML", "Spread", "Alt Spread", "Total", "Alt Total", "Pass TD 1.5+", "QB TD", "RB TD", "WR TD", "TE TD"];
+  const typeOptions = ["All", "ML", "Spread", "Alt Spread", "Total", "Alt Total", "Pass TD 1.5+", "Scoring TD", "QB TD", "RB TD", "WR TD", "TE TD"];
   return `
     <aside class="betting-top-picks">
       <div class="betting-top-head">
@@ -8402,7 +8480,7 @@ function renderBettingTopPicks(games) {
             <b>${esc(pick.type)}</b>
             ${pick.playerKey ? `<button class="player-open" data-player-key="${esc(pick.playerKey)}">${esc(pick.title)}</button>` : `<strong>${esc(pick.title)}</strong>`}
             <em>${esc(pick.sub)}</em>
-            ${bettingConfidenceMeter(pick.confidence)}
+            ${bettingConfidenceMeter(pick.confidence, "", pick.colorScore)}
           </div>
         </article>
       `).join("") : `<p class="empty-cell">No saved picks or TD angles meet the current settings.</p>`}
@@ -8431,10 +8509,12 @@ function bettingPropRowsForGame(game) {
           watchScore: weeklyPropWatchScore(row, position, advantages),
         };
       })
-      .filter((item) => item.props.some(([, value]) => value !== "" && value !== "-"));
+      .filter((item) => item.props.some(([, value]) => value !== "" && value !== "-"))
+      .sort((a, b) => b.watchScore - a.watchScore || num(a.row.scoreRank || a.row.rank, 999) - num(b.row.scoreRank || b.row.rank, 999))
+      .slice(0, 5);
   })
     .sort((a, b) => b.watchScore - a.watchScore || num(a.row.scoreRank || a.row.rank, 999) - num(b.row.scoreRank || b.row.rank, 999))
-    .slice(0, 5);
+    .slice(0, 10);
 }
 
 function renderBettingFactorControl(position, factor) {
@@ -8498,7 +8578,9 @@ function renderBettingGameCard(game, index) {
 function renderBettingHub() {
   const week = bettingSelectedWeek();
   const weekOptions = [["auto", `Auto: ${siteWeekLabel()}`], ...scheduleWeekOptions(false)];
-  const games = scheduleGames().filter((game) => scheduleWeekMatches(game, week));
+  const games = scheduleGames()
+    .filter((game) => scheduleWeekMatches(game, week))
+    .filter((game, index) => !state.bettingUpcomingOnly || !gameHasSubmittedScore(game, index));
   setTimeout(() => {
     document.querySelector("#betting-week")?.addEventListener("change", (event) => {
       state.bettingWeek = event.target.value;
@@ -8518,6 +8600,11 @@ function renderBettingHub() {
     document.querySelector("#betting-top-type")?.addEventListener("change", (event) => {
       state.bettingTopType = event.target.value;
       storage.set("nflz-betting-top-type", state.bettingTopType);
+      render();
+    });
+    document.querySelector("#betting-upcoming-only")?.addEventListener("change", (event) => {
+      state.bettingUpcomingOnly = event.target.checked;
+      storage.set("nflz-betting-upcoming-only", state.bettingUpcomingOnly);
       render();
     });
     document.querySelector("#betting-controls-toggle")?.addEventListener("click", () => {
@@ -8572,6 +8659,7 @@ function renderBettingHub() {
           ${optionSelect("betting-sample-mode", state.bettingSampleMode, [["last", "Last games"], ["current", "Current season"], ["previous", "Previous season"]])}
           <label class="betting-last-games ${state.bettingSampleMode === "last" ? "" : "muted"}"><span>Last</span><input id="betting-last-games" type="number" min="1" max="25" step="1" value="${esc(state.bettingLastGames)}" ${state.bettingSampleMode === "last" ? "" : "disabled"} /><span>games</span></label>
           ${optionSelect("betting-game-view", state.bettingGameView, [["list", "List"], ["2", "2 across"], ["3", "3 across"], ["4", "4 across"], ["5", "5 across"]])}
+          <label class="compact-toggle"><input id="betting-upcoming-only" type="checkbox" ${state.bettingUpcomingOnly ? "checked" : ""} /> Upcoming only</label>
           <button id="betting-controls-toggle" class="mini-action">${state.bettingControlsOpen ? "Hide Sliders" : "Show Sliders"}</button>
           <button id="betting-reset-factors" class="mini-action">Reset Factors</button>
         </div>
@@ -15876,6 +15964,180 @@ function localStorageBytes(value) {
   return new Blob([String(value || "")]).size;
 }
 
+function cloudSyncDataFromBrowser() {
+  const data = {};
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!isCloudSyncKey(key)) continue;
+    try {
+      data[key] = JSON.parse(localStorage.getItem(key));
+    } catch {
+      data[key] = localStorage.getItem(key);
+    }
+  }
+  return data;
+}
+
+function cloudSyncPayload() {
+  return {
+    version: 1,
+    updatedAt: localStorage.getItem(CLOUD_SYNC_LOCAL_UPDATED_KEY) || new Date().toISOString(),
+    originId: ensureCloudOriginId(),
+    data: cloudSyncDataFromBrowser(),
+  };
+}
+
+function applyCloudSyncData(remote) {
+  if (!remote?.data || typeof remote.data !== "object") return false;
+  cloudSyncApplying = true;
+  try {
+    const remoteKeys = new Set(Object.keys(remote.data));
+    for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+      const key = localStorage.key(index);
+      if (isCloudSyncKey(key) && !remoteKeys.has(key)) localStorage.removeItem(key);
+    }
+    Object.entries(remote.data).forEach(([key, value]) => {
+      if (!isCloudSyncKey(key)) return;
+      localStorage.setItem(key, JSON.stringify(value));
+    });
+    if (remote.updatedAt) {
+      localStorage.setItem(CLOUD_SYNC_LOCAL_UPDATED_KEY, remote.updatedAt);
+      localStorage.setItem(CLOUD_SYNC_LAST_APPLIED_KEY, remote.updatedAt);
+    }
+    return true;
+  } finally {
+    cloudSyncApplying = false;
+  }
+}
+
+function cloudSyncTime(value) {
+  const date = new Date(value || "");
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function isLiveSyncHost() {
+  return /nfl-model-z-iq\.netlify\.app$/i.test(location.hostname);
+}
+
+function cloudSyncStatusText() {
+  const localAt = localStorage.getItem(CLOUD_SYNC_LOCAL_UPDATED_KEY) || "";
+  const pushedAt = localStorage.getItem(CLOUD_SYNC_LAST_PUSHED_KEY) || "";
+  if (state.cloudSyncStatus === "checking") return "Syncing...";
+  if (state.cloudSyncStatus === "error") return "Sync issue";
+  if (state.cloudSyncStatus === "pulled") return "Pulled cloud";
+  if (state.cloudSyncStatus === "pushed") return "Synced";
+  if (localAt && pushedAt && cloudSyncTime(localAt) > cloudSyncTime(pushedAt)) return "Unsynced";
+  return isAdminMode() ? "Synced" : "Local";
+}
+
+function updateCloudSyncStatus() {
+  if (!cloudSyncStatus) return;
+  cloudSyncStatus.textContent = cloudSyncStatusText();
+  cloudSyncStatus.className = `cloud-sync-status ${esc(state.cloudSyncStatus || "idle")}`;
+  cloudSyncStatus.title = state.cloudSyncMessage || "Saved data syncs between the live site and this browser when logged in as Admin.";
+  if (cloudSyncButton) {
+    cloudSyncButton.disabled = state.cloudSyncStatus === "checking" || !isAdminMode();
+    cloudSyncButton.title = isAdminMode()
+      ? "Sync saved app data between live and local"
+      : "Login as Admin to sync saved data";
+  }
+}
+
+async function fetchCloudSyncState() {
+  const response = await fetch(CLOUD_SYNC_ENDPOINT, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Cloud sync GET failed with HTTP ${response.status}`);
+  return response.json();
+}
+
+async function pushCloudSyncState() {
+  const payload = cloudSyncPayload();
+  const response = await fetch(CLOUD_SYNC_ENDPOINT, {
+    method: "PUT",
+    headers: {
+      "content-type": "application/json",
+      "x-nflz-sync-token": ADMIN_PASSWORD,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(`Cloud sync save failed with HTTP ${response.status}`);
+  const saved = await response.json();
+  const pushedAt = saved.updatedAt || payload.updatedAt;
+  localStorage.setItem(CLOUD_SYNC_LAST_PUSHED_KEY, pushedAt);
+  state.cloudSyncLastRemoteAt = pushedAt;
+  return saved;
+}
+
+function scheduleCloudSyncPush() {
+  if (!cloudSyncReady || cloudSyncApplying || !isAdminMode()) return;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    syncCloudState({ reason: "autosave" });
+  }, 2200);
+  updateCloudSyncStatus();
+}
+
+async function syncCloudState(options = {}) {
+  if (!isAdminMode()) {
+    state.cloudSyncStatus = "idle";
+    state.cloudSyncMessage = "Login as Admin to sync local and live.";
+    updateCloudSyncStatus();
+    return;
+  }
+  state.cloudSyncStatus = "checking";
+  state.cloudSyncMessage = "Checking shared live/local save state...";
+  updateCloudSyncStatus();
+  try {
+    const remote = await fetchCloudSyncState();
+    const remoteAt = remote?.updatedAt || "";
+    const localAt = localStorage.getItem(CLOUD_SYNC_LOCAL_UPDATED_KEY) || "";
+    const remoteTime = cloudSyncTime(remoteAt);
+    const localTime = cloudSyncTime(localAt);
+    state.cloudSyncLastRemoteAt = remoteAt;
+
+    if (options.forcePull && remoteTime) {
+      applyCloudSyncData(remote);
+      state.cloudSyncStatus = "pulled";
+      state.cloudSyncMessage = `Pulled cloud changes from ${new Date(remoteAt).toLocaleString()}. Reloading...`;
+      updateCloudSyncStatus();
+      setTimeout(() => window.location.reload(), 400);
+      return;
+    }
+
+    if (!remoteTime && !isLiveSyncHost() && !options.forcePush) {
+      state.cloudSyncStatus = "error";
+      state.cloudSyncMessage = "Shared cloud save is empty. Open the live site as Admin once to seed it, then local will pull live edits.";
+      updateCloudSyncStatus();
+      return;
+    }
+
+    if (options.forcePush || !remoteTime || localTime > remoteTime) {
+      const saved = await pushCloudSyncState();
+      state.cloudSyncStatus = "pushed";
+      state.cloudSyncMessage = `Pushed this browser to shared sync at ${new Date(saved.updatedAt || Date.now()).toLocaleString()}.`;
+      updateCloudSyncStatus();
+      return;
+    }
+
+    if (remoteTime > localTime) {
+      applyCloudSyncData(remote);
+      state.cloudSyncStatus = "pulled";
+      state.cloudSyncMessage = `Pulled newer shared sync from ${new Date(remoteAt).toLocaleString()}. Reloading...`;
+      updateCloudSyncStatus();
+      setTimeout(() => window.location.reload(), 400);
+      return;
+    }
+
+    state.cloudSyncStatus = "pushed";
+    state.cloudSyncMessage = "This browser already matches the shared sync state.";
+    localStorage.setItem(CLOUD_SYNC_LAST_PUSHED_KEY, remoteAt || localAt || new Date().toISOString());
+    updateCloudSyncStatus();
+  } catch (error) {
+    state.cloudSyncStatus = "error";
+    state.cloudSyncMessage = error.message;
+    updateCloudSyncStatus();
+  }
+}
+
 function localStorageRows() {
   const rows = [];
   for (let index = 0; index < localStorage.length; index += 1) {
@@ -16339,6 +16601,7 @@ function wireLoginGate() {
       state.authError = "";
       storage.set(AUTH_MODE_KEY, state.authMode);
       render();
+      setTimeout(() => syncCloudState({ reason: "login" }), 0);
       return;
     }
     state.authError = "That admin password did not match.";
@@ -16433,6 +16696,7 @@ function render() {
   document.body.classList.toggle("auth-locked", !isAuthenticated());
   document.body.classList.toggle("visitor-mode", isVisitorMode());
   document.body.classList.toggle("admin-mode", isAdminMode());
+  updateCloudSyncStatus();
   if (!isAuthenticated()) {
     content.innerHTML = renderLoginGate();
     wireLoginGate();
@@ -16535,6 +16799,7 @@ importBackupFile?.addEventListener("change", (event) => {
   if (file) importFullBackup(file);
   event.target.value = "";
 });
+cloudSyncButton?.addEventListener("click", () => syncCloudState({ forcePush: false, reason: "manual" }));
 
 const load = window.NFL_MODEL_Z_DATA ? Promise.resolve(window.NFL_MODEL_Z_DATA) : fetch("data.json").then((response) => response.json());
 load.then((data) => {
@@ -16556,7 +16821,10 @@ load.then((data) => {
   if (defensiveMismatchFixes) repairNotes.push(`${defensiveMismatchFixes} defensive Madden/PFF mismatch update${defensiveMismatchFixes === 1 ? "" : "s"}`);
   if (defensiveQuotaFixes) repairNotes.push(`${defensiveQuotaFixes} defensive quota normalization update${defensiveQuotaFixes === 1 ? "" : "s"}`);
   if (repairNotes.length) state.depthCheckNotice = `Repaired ${repairNotes.join(" and ")} from saved depth chart data.`;
+  cloudSyncReady = true;
+  ensureCloudOriginId();
   render();
+  if (isAdminMode()) setTimeout(() => syncCloudState({ reason: "startup" }), 0);
 }).catch(() => {
   content.innerHTML = `<section class="panel"><h2>Data did not load</h2><p class="note">Serve this folder locally so the browser can read data.json.</p></section>`;
 });

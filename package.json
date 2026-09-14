@@ -1,0 +1,8 @@
+{
+  "name": "nfl-model-z-iq",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@netlify/blobs": "^8.2.0"
+  }
+}

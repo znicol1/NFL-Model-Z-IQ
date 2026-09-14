@@ -304,6 +304,36 @@ nav {
   color: var(--blue);
 }
 
+.cloud-sync-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 31px;
+  border: 1px solid #cbd6e6;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #53627d;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.cloud-sync-status.checking {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.cloud-sync-status.pushed,
+.cloud-sync-status.pulled {
+  background: #ecfdf3;
+  color: #166534;
+}
+
+.cloud-sync-status.error {
+  background: #fff1f2;
+  color: #9f1239;
+}
+
 .eyebrow {
   color: var(--red);
   font-weight: 800;
@@ -5608,6 +5638,26 @@ select,
 .betting-top-head select {
   width: 100%;
   margin-top: 8px;
+}
+
+.compact-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid #cbd6e6;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.compact-toggle input {
+  width: 14px;
+  height: 14px;
 }
 
 .betting-top-pick {
