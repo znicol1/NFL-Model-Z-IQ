@@ -21,19 +21,43 @@ function authorized(event) {
   return String(token) === String(ADMIN_PASSWORD);
 }
 
+function syncStore() {
+  const siteID = process.env.NFLZ_BLOBS_SITE_ID || process.env.NETLIFY_SITE_ID || process.env.SITE_ID;
+  const token = process.env.NFLZ_BLOBS_TOKEN || process.env.NETLIFY_BLOBS_TOKEN || process.env.NETLIFY_AUTH_TOKEN;
+  if (siteID && token) return getStore({ name: STORE_NAME, siteID, token });
+  return getStore(STORE_NAME);
+}
+
 exports.handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return response(204, {});
 
-  const store = getStore(STORE_NAME);
+  let store;
+  try {
+    store = syncStore();
+  } catch (error) {
+    return response(503, {
+      error: "Cloud sync storage is not configured.",
+      details: error.message,
+      setup: "Enable Netlify Blobs for this site or set NFLZ_BLOBS_SITE_ID and NFLZ_BLOBS_TOKEN environment variables in Netlify.",
+    });
+  }
 
   if (event.httpMethod === "GET") {
-    const saved = await store.get(STATE_KEY, { type: "json" });
-    return response(200, saved || {
-      version: 1,
-      updatedAt: "",
-      originId: "",
-      data: {},
-    });
+    try {
+      const saved = await store.get(STATE_KEY, { type: "json" });
+      return response(200, saved || {
+        version: 1,
+        updatedAt: "",
+        originId: "",
+        data: {},
+      });
+    } catch (error) {
+      return response(503, {
+        error: "Cloud sync storage read failed.",
+        details: error.message,
+        setup: "Enable Netlify Blobs for this site or set NFLZ_BLOBS_SITE_ID and NFLZ_BLOBS_TOKEN environment variables in Netlify.",
+      });
+    }
   }
 
   if (event.httpMethod !== "POST" && event.httpMethod !== "PUT") {
@@ -55,7 +79,10 @@ exports.handler = async (event) => {
     return response(400, { error: "Sync payload must include a data object" });
   }
 
-  const current = await store.get(STATE_KEY, { type: "json" });
+  let current = null;
+  try {
+    current = await store.get(STATE_KEY, { type: "json" });
+  } catch {}
   const next = {
     version: 1,
     updatedAt: payload.updatedAt || new Date().toISOString(),
@@ -65,6 +92,14 @@ exports.handler = async (event) => {
     previousUpdatedAt: current?.updatedAt || "",
   };
 
-  await store.setJSON(STATE_KEY, next);
-  return response(200, next);
+  try {
+    await store.setJSON(STATE_KEY, next);
+    return response(200, next);
+  } catch (error) {
+    return response(503, {
+      error: "Cloud sync storage write failed.",
+      details: error.message,
+      setup: "Enable Netlify Blobs for this site or set NFLZ_BLOBS_SITE_ID and NFLZ_BLOBS_TOKEN environment variables in Netlify.",
+    });
+  }
 };
