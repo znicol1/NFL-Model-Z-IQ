@@ -47,6 +47,8 @@ const backupKeys = {
   maddenRecentAdjustments: "nflz-madden-recent-adjustments",
   ratingHistoryStartAt: "nflz-rating-history-start-at",
   draftKingsOddsBackup: "nflz-draftkings-odds-last-good",
+  picksLastSavedAt: "nflz-picks-last-saved-at",
+  pickSaveHistory: "nflz-picks-save-history",
 };
 
 if (!window.DRAFTKINGS_ODDS?.games?.length) {
@@ -808,12 +810,23 @@ function gameAction(gameKey) {
 function saveGameAction(gameKey, patch) {
   savedPicks[gameKey] = { ...gameAction(gameKey), ...patch };
   storage.set("nflz-picks", savedPicks);
+  const savedAt = new Date().toISOString();
+  storage.set(backupKeys.picksLastSavedAt, savedAt);
+  recordPickSaveSnapshot(gameKey, savedAt);
 }
 
 function autosaveGameAction(gameKey, patch) {
   if (!gameKey) return;
   saveGameAction(gameKey, patch);
   state.picksLastSaved = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+
+function recordPickSaveSnapshot(gameKey, savedAt) {
+  try {
+    const history = storage.get(backupKeys.pickSaveHistory, []);
+    const next = [{ savedAt, gameKey, picks: savedPicks }, ...(Array.isArray(history) ? history : [])].slice(0, 4);
+    storage.set(backupKeys.pickSaveHistory, next);
+  } catch {}
 }
 
 function downloadJson(filename, payload) {
@@ -873,6 +886,8 @@ function importFullBackup(file) {
       storage.set(backupKeys.maddenMatchOverrides, data.maddenMatchOverrides || {});
       storage.set(backupKeys.maddenRecentAdjustments, data.maddenRecentAdjustments || {});
       storage.set(backupKeys.ratingHistoryStartAt, data.ratingHistoryStartAt || "");
+      storage.set(backupKeys.picksLastSavedAt, data.picksLastSavedAt || "");
+      storage.set(backupKeys.pickSaveHistory, data.pickSaveHistory || []);
       alert("NFL IQ backup imported. The app will reload with your saved ratings, picks, challenges, and fantasy order.");
       window.location.reload();
     } catch (error) {
@@ -9253,6 +9268,22 @@ function renderPicksTracker() {
   const groups = ["Preseason", "Regular Season", "Playoffs"];
   const allStats = ["ml", "spread", "total"].map((field) => ({ field, ...pickStats(rows, field) }));
   const currentPickWeek = scheduleWeekGroupKey(selectedSiteWeek());
+  const saveCounts = pickSaveCounts();
+  const lastSavedAt = storage.get(backupKeys.picksLastSavedAt, "");
+  const pickSafetyPanel = `<section class="pick-safety-panel">
+    <div>
+      <span class="eyebrow">Pick Storage</span>
+      <h3>${esc(storageOriginLabel())}</h3>
+      <p>${esc(saveCounts.picks)} picks across ${esc(saveCounts.games)} games, ${esc(saveCounts.finals)} finals saved. Last save: ${esc(formatSavedAt(lastSavedAt))}.</p>
+      <p class="note">Local and live use different browser storage. To move picks between them, export picks here, open the other site, then import that file there.</p>
+    </div>
+    <div class="filters">
+      <button id="picks-export-only" class="mini-action primary">Export Picks</button>
+      <button id="picks-import-only" class="mini-action">Import Picks</button>
+      <button id="picks-copy-only" class="mini-action">Copy Picks</button>
+      <input id="picks-import-file" type="file" accept="application/json,.json" hidden />
+    </div>
+  </section>`;
   const statCard = (label, stat) => `<div class="pick-stat" ${pickStatStyle(stat)}><span>${esc(label)}</span><strong>${fmt(stat.pct * 100, 1)}%</strong><em>${stat.wins}-${stat.losses}${stat.pushes ? `-${stat.pushes}` : ""}</em></div>`;
   const pickRowsTable = (items) => `<div class="table-scroll picks-scroll">${table([
     { label: "Week" }, { label: "Game" }, { label: "ML" }, { label: "ML Result" }, { label: "Spread" }, { label: "Spread Result" }, { label: "Total" }, { label: "Total Result" }, { label: "Final" },
@@ -9267,8 +9298,10 @@ function renderPicksTracker() {
     <td>${pickResultBadgeForChoice(action.total, totalResult)}</td>
     <td>${action.awayScore !== "" && action.homeScore !== "" ? `${esc(action.awayScore)}-${esc(action.homeScore)}` : "-"}</td>
   </tr>`))}</div>`;
+  setTimeout(wirePickSafetyPanel);
   return `<section class="panel picks-panel">
     <div class="toolbar"><div><h2>Picks Tracker</h2><p>Tracks Model Z picks from Season Schedule. Picks grade once the result winner and final score are entered or scanned.</p></div></div>
+    ${pickSafetyPanel}
     <div class="pick-stats-row">${statCard("ML", allStats[0])}${statCard("Spread", allStats[1])}${statCard("Total", allStats[2])}</div>
     ${groups.map((group) => {
       const groupRows = rows.filter((row) => row.type === group);
@@ -15853,6 +15886,81 @@ function localStorageRows() {
   return rows.sort((a, b) => b.bytes - a.bytes);
 }
 
+function storageOriginLabel() {
+  if (location.protocol === "file:") return "File on this computer";
+  if (location.hostname === "127.0.0.1" || location.hostname === "localhost") return `Local server (${location.host})`;
+  return `Live site (${location.hostname})`;
+}
+
+function pickSaveCounts() {
+  const rows = Object.values(savedPicks || {}).filter((row) => row && typeof row === "object");
+  return {
+    games: rows.length,
+    picks: rows.reduce((sum, row) => sum + ["ml", "spread", "total"].filter((field) => row[field]).length, 0),
+    finals: rows.filter((row) => row.awayScore !== "" && row.homeScore !== "").length,
+  };
+}
+
+function formatSavedAt(iso) {
+  if (!iso) return "Not saved in this browser yet";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return String(iso);
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+}
+
+function pickBackupPayload() {
+  return {
+    type: "nfl-iq-picks-backup-v1",
+    app: "NFL Model Z",
+    exportedAt: new Date().toISOString(),
+    source: storageOriginLabel(),
+    data: {
+      picks: savedPicks,
+      picksLastSavedAt: storage.get(backupKeys.picksLastSavedAt, ""),
+      pickSaveHistory: storage.get(backupKeys.pickSaveHistory, []),
+    },
+  };
+}
+
+function exportPicksBackup() {
+  downloadJson(`nfl-model-z-picks-${new Date().toISOString().slice(0, 10)}.json`, pickBackupPayload());
+}
+
+function importPicksBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(reader.result);
+      const data = payload.data || payload;
+      const picks = data.picks || {};
+      if (!picks || typeof picks !== "object" || Array.isArray(picks)) throw new Error("Invalid picks payload");
+      Object.keys(savedPicks).forEach((key) => delete savedPicks[key]);
+      Object.assign(savedPicks, picks);
+      storage.set(backupKeys.picks, savedPicks);
+      storage.set(backupKeys.picksLastSavedAt, data.picksLastSavedAt || payload.exportedAt || new Date().toISOString());
+      storage.set(backupKeys.pickSaveHistory, data.pickSaveHistory || []);
+      alert("Picks imported into this browser. The app will reload now.");
+      window.location.reload();
+    } catch (error) {
+      alert("That picks file could not be imported. Use a Model Z picks backup or full NFL IQ backup JSON.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function wirePickSafetyPanel() {
+  document.querySelector("#picks-export-only")?.addEventListener("click", exportPicksBackup);
+  document.querySelector("#picks-import-only")?.addEventListener("click", () => document.querySelector("#picks-import-file")?.click());
+  document.querySelector("#picks-copy-only")?.addEventListener("click", () => {
+    navigator.clipboard?.writeText(JSON.stringify(pickBackupPayload(), null, 2));
+    alert("Picks backup copied to clipboard.");
+  });
+  document.querySelector("#picks-import-file")?.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (file) importPicksBackup(file);
+  });
+}
+
 function storageBucketLabel(key) {
   return {
     "nflz-player-overrides": "Player edits",
@@ -15878,7 +15986,7 @@ function storageBucketLabel(key) {
 
 function backupPayload() {
   const objectFallbacks = ["overrides", "picks", "fantasyOrder", "depthCandidateRemovals", "depthIgnored", "depthResolved", "pffManualRanks", "pffRecentAdjustments", "maddenMatchOverrides", "maddenRecentAdjustments"];
-  const stringFallbacks = ["ratingHistoryStartAt"];
+  const stringFallbacks = ["ratingHistoryStartAt", "picksLastSavedAt"];
   return {
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
