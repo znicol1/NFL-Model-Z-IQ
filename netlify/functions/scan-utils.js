@@ -32,6 +32,39 @@ async function espnSchedule() {
   return getJson(ESPN_SCHEDULE_URL);
 }
 
+async function espnScheduleForWeek(seasonType, week) {
+  return getJson(`${ESPN_SCHEDULE_URL}&seasontype=${seasonType}&week=${week}`);
+}
+
+async function espnFullSeasonSchedule() {
+  const requests = [
+    ...Array.from({ length: 5 }, (_, index) => ({ seasonType: 1, week: index + 1 })),
+    ...Array.from({ length: 18 }, (_, index) => ({ seasonType: 2, week: index + 1 })),
+    ...Array.from({ length: 5 }, (_, index) => ({ seasonType: 3, week: index + 1 })),
+  ];
+  const settled = await Promise.allSettled(requests.map(({ seasonType, week }) => espnScheduleForWeek(seasonType, week)));
+  const gamesById = new Map();
+  const failedWeeks = [];
+  settled.forEach((result, index) => {
+    const request = requests[index];
+    if (result.status === "rejected") {
+      failedWeeks.push(`${request.seasonType}:${request.week}`);
+      return;
+    }
+    flattenScheduleGames(result.value).forEach((game) => {
+      const key = game.eventId || [game.date, game.visitor, game.home].join("|");
+      gamesById.set(key, game);
+    });
+  });
+  if (!gamesById.size) throw new Error("ESPN did not return any schedule weeks");
+  return {
+    games: [...gamesById.values()].sort((a, b) => String(a.date).localeCompare(String(b.date))),
+    failedWeeks,
+    requestedWeeks: requests.length,
+    loadedWeeks: requests.length - failedWeeks.length,
+  };
+}
+
 function dateKeyToIso(dateKey) {
   const text = String(dateKey || "");
   if (!/^\d{8}$/.test(text)) return "";
@@ -147,7 +180,9 @@ function parseWindowAssignmentFile(relativePath, windowName) {
 module.exports = {
   draftKingsOddsForEvent,
   draftKingsRow,
+  espnFullSeasonSchedule,
   espnSchedule,
+  espnScheduleForWeek,
   flattenScheduleGames,
   headers,
   jsonResponse,

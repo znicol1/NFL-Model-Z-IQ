@@ -10069,6 +10069,7 @@ function draftKingsStatusNote() {
 
 function applyScannedScores(payload) {
   let applied = 0;
+  const unmatched = [];
   const scannedTeam = (value) => normalizeTeamName(normalizeScheduleTeam(value));
   const dateDistanceDays = (a, b) => {
     if (!a || !b) return Infinity;
@@ -10076,7 +10077,8 @@ function applyScannedScores(payload) {
     const right = dateOnly(b);
     return Math.abs(left.getTime() - right.getTime()) / 86400000;
   };
-  (payload?.games || []).filter((game) => game.completed && game.winner).forEach((result) => {
+  const completed = (payload?.games || []).filter((game) => game.completed && Number.isFinite(Number(game.awayScore)) && Number.isFinite(Number(game.homeScore)));
+  completed.forEach((result) => {
     const resultVisitor = result.visitor || result.away || result.awayTeam;
     const resultHome = result.home || result.homeTeam;
     const match = scheduleGames()
@@ -10088,7 +10090,10 @@ function applyScannedScores(payload) {
         if (result.week && String(row.game.week) === String(result.week)) return true;
         return dateDistanceDays(row.game.date, result.date) <= 1;
       });
-    if (!match) return;
+    if (!match) {
+      unmatched.push(`${resultVisitor || "Away"} at ${resultHome || "Home"} (${result.date || "unknown date"})`);
+      return;
+    }
     const winnerKey = scannedTeam(result.winner);
     const scannedTie = Number.isFinite(Number(result.awayScore)) && Number.isFinite(Number(result.homeScore)) && Number(result.awayScore) === Number(result.homeScore);
     const resultWinner = scannedTie ? "Tie" : winnerKey === scannedTeam(match.game.visitor)
@@ -10103,7 +10108,7 @@ function applyScannedScores(payload) {
     });
     applied += 1;
   });
-  return applied;
+  return { applied, completed: completed.length, unmatched };
 }
 
 async function scanEspnScores() {
@@ -10113,16 +10118,22 @@ async function scanEspnScores() {
   try {
     const { payload, url } = await fetchScanJson("espn-scores-scan");
     window.ESPN_GAME_RESULTS = payload;
-    const applied = applyScannedScores(window.ESPN_GAME_RESULTS);
+    const summary = applyScannedScores(window.ESPN_GAME_RESULTS);
+    const matchNote = summary.unmatched.length
+      ? ` ${summary.unmatched.length} completed game${summary.unmatched.length === 1 ? "" : "s"} could not be matched: ${summary.unmatched.slice(0, 4).join("; ")}${summary.unmatched.length > 4 ? "; ..." : ""}.`
+      : "";
+    const coverageNote = window.ESPN_GAME_RESULTS.failedWeeks?.length
+      ? ` ESPN week feeds missed: ${window.ESPN_GAME_RESULTS.failedWeeks.join(", ")}.`
+      : "";
     state.scoreScanStatus = "review";
     state.scoreScanMessage = window.ESPN_GAME_RESULTS.fromCache
-      ? `ESPN live refresh failed, so cached scores applied ${applied} completed results. ${window.ESPN_GAME_RESULTS.refreshError || "Try again in a minute."}`
-      : `Scanned ${window.ESPN_GAME_RESULTS.games?.length || 0} ESPN games through ${url.includes("netlify") ? "Netlify" : "local"} and applied ${applied} completed results.`;
+      ? `ESPN live refresh failed, so cached scores applied ${summary.applied} of ${summary.completed} completed results. ${window.ESPN_GAME_RESULTS.refreshError || "Try again in a minute."}${matchNote}`
+      : `Scanned ${window.ESPN_GAME_RESULTS.games?.length || 0} ESPN games through ${url.includes("netlify") ? "Netlify" : "local"} and applied ${summary.applied} of ${summary.completed} completed results.${coverageNote}${matchNote}`;
   } catch (error) {
     if (window.ESPN_GAME_RESULTS?.games?.length) {
-      const applied = applyScannedScores(window.ESPN_GAME_RESULTS);
+      const summary = applyScannedScores(window.ESPN_GAME_RESULTS);
       state.scoreScanStatus = "review";
-      state.scoreScanMessage = `Using cached ESPN scores and applied ${applied} completed results. Live score scan route was not reachable: ${error.message}`;
+      state.scoreScanMessage = `Using cached ESPN scores and applied ${summary.applied} of ${summary.completed} completed results. Live score scan route was not reachable: ${error.message}${summary.unmatched.length ? ` Unmatched: ${summary.unmatched.slice(0, 4).join("; ")}.` : ""}`;
       render();
       return;
     }
