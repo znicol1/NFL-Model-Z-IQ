@@ -87,6 +87,7 @@ exports.handler = async (event) => {
     version: 1,
     updatedAt: payload.updatedAt || new Date().toISOString(),
     originId: payload.originId || "",
+    fingerprint: payload.fingerprint || "",
     data: payload.data,
     savedAt: new Date().toISOString(),
     previousUpdatedAt: current?.updatedAt || "",

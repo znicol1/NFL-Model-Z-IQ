@@ -607,6 +607,8 @@ const exportBackupButton = document.querySelector("#export-backup");
 const importBackupButton = document.querySelector("#import-backup");
 const importBackupFile = document.querySelector("#import-backup-file");
 const cloudSyncButton = document.querySelector("#cloud-sync");
+const cloudPushButton = document.querySelector("#cloud-push");
+const cloudPullButton = document.querySelector("#cloud-pull");
 const cloudSyncStatus = document.querySelector("#cloud-sync-status");
 
 const overrides = storage.get("nflz-player-overrides", {});
@@ -16034,12 +16036,24 @@ function cloudSyncDataFromBrowser() {
   return data;
 }
 
+function cloudSyncFingerprint(data) {
+  const stable = JSON.stringify(Object.keys(data || {}).sort().map((key) => [key, data[key]]));
+  let hash = 2166136261;
+  for (let index = 0; index < stable.length; index += 1) {
+    hash ^= stable.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `v1-${(hash >>> 0).toString(16).padStart(8, "0")}-${stable.length}`;
+}
+
 function cloudSyncPayload() {
+  const data = cloudSyncDataFromBrowser();
   return {
     version: 1,
     updatedAt: localStorage.getItem(CLOUD_SYNC_LOCAL_UPDATED_KEY) || new Date().toISOString(),
     originId: ensureCloudOriginId(),
-    data: cloudSyncDataFromBrowser(),
+    fingerprint: cloudSyncFingerprint(data),
+    data,
   };
 }
 
@@ -16080,6 +16094,7 @@ function cloudSyncStatusText() {
   const pushedAt = localStorage.getItem(CLOUD_SYNC_LAST_PUSHED_KEY) || "";
   if (state.cloudSyncStatus === "checking") return "Syncing...";
   if (state.cloudSyncStatus === "error") return "Sync issue";
+  if (state.cloudSyncStatus === "conflict") return "Different saves";
   if (state.cloudSyncStatus === "pulled") return "Pulled cloud";
   if (state.cloudSyncStatus === "pushed") return "Synced";
   if (localAt && pushedAt && cloudSyncTime(localAt) > cloudSyncTime(pushedAt)) return "Unsynced";
@@ -16097,6 +16112,9 @@ function updateCloudSyncStatus() {
       ? "Sync saved app data between live and local"
       : "Login as Admin to sync saved data";
   }
+  [cloudPushButton, cloudPullButton].forEach((button) => {
+    if (button) button.disabled = state.cloudSyncStatus === "checking" || !isAdminMode();
+  });
 }
 
 async function fetchCloudSyncState() {
@@ -16143,11 +16161,16 @@ async function syncCloudState(options = {}) {
   state.cloudSyncMessage = "Checking shared live/local save state...";
   updateCloudSyncStatus();
   try {
+    if (options.forcePush) {
+      localStorage.setItem(CLOUD_SYNC_LOCAL_UPDATED_KEY, new Date().toISOString());
+    }
     const remote = await fetchCloudSyncState();
     const remoteAt = remote?.updatedAt || "";
     const localAt = localStorage.getItem(CLOUD_SYNC_LOCAL_UPDATED_KEY) || "";
     const remoteTime = cloudSyncTime(remoteAt);
     const localTime = cloudSyncTime(localAt);
+    const localFingerprint = cloudSyncFingerprint(cloudSyncDataFromBrowser());
+    const remoteFingerprint = remote?.fingerprint || cloudSyncFingerprint(remote?.data || {});
     state.cloudSyncLastRemoteAt = remoteAt;
 
     if (options.forcePull && remoteTime) {
@@ -16180,6 +16203,13 @@ async function syncCloudState(options = {}) {
       state.cloudSyncMessage = `Pulled newer shared sync from ${new Date(remoteAt).toLocaleString()}. Reloading...`;
       updateCloudSyncStatus();
       setTimeout(() => window.location.reload(), 400);
+      return;
+    }
+
+    if (remoteFingerprint !== localFingerprint) {
+      state.cloudSyncStatus = "conflict";
+      state.cloudSyncMessage = "This browser and the shared save are different. Choose Push This Browser or Pull Shared Save.";
+      updateCloudSyncStatus();
       return;
     }
 
@@ -16856,6 +16886,8 @@ importBackupFile?.addEventListener("change", (event) => {
   event.target.value = "";
 });
 cloudSyncButton?.addEventListener("click", () => syncCloudState({ forcePush: false, reason: "manual" }));
+cloudPushButton?.addEventListener("click", () => syncCloudState({ forcePush: true, reason: "manual-push" }));
+cloudPullButton?.addEventListener("click", () => syncCloudState({ forcePull: true, reason: "manual-pull" }));
 
 const load = window.NFL_MODEL_Z_DATA ? Promise.resolve(window.NFL_MODEL_Z_DATA) : fetch("data.json").then((response) => response.json());
 load.then((data) => {

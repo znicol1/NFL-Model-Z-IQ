@@ -304,6 +304,11 @@ nav {
   color: var(--blue);
 }
 
+.cloud-transfer-btn {
+  min-width: 112px;
+  padding-inline: 10px;
+}
+
 .cloud-sync-status {
   display: inline-flex;
   align-items: center;
@@ -329,7 +334,8 @@ nav {
   color: #166534;
 }
 
-.cloud-sync-status.error {
+.cloud-sync-status.error,
+.cloud-sync-status.conflict {
   background: #fff1f2;
   color: #9f1239;
 }
