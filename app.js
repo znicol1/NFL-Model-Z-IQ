@@ -3593,6 +3593,7 @@ function effectiveInjurySuggestedWeek(item) {
   const comment = String(item?.espnComment || "").toLowerCase();
   const text = `${tag} ${comment}`;
   if (/^healthy$|out\s+for\s+season/i.test(status)) return "";
+  if (/^ir\s+thru/i.test(status)) return irThruWeekFromInjuryReport(item) || item?.suggestedWeek || defaultInjuryWeekForStatus(status);
   if (injuryTextMeansActivePupNfi(text)) return "Pre3";
   if (injuryTextMeansCampRampUp(text) && String(selectedSiteWeek()).startsWith("Pre")) return "Pre3";
   if (injuryTextMeansRosterRisk(text)) return injuryReviewWeekPlus(2);
@@ -6400,14 +6401,69 @@ function findPlayerByName(name) {
 const injuryStatuses = ["Healthy", "Probable for Week ___", "Questionable for Week ___", "OUT for Season", "OUT thru Week ___", "IR Thru Week ___", "Practice Squad", "Suspended thru Week ___", "*Likely* Out thru Week ___"];
 const injuryWeeks = ["", "Pre1", "Pre2", "Pre3", ...Array.from({ length: 18 }, (_, i) => String(i + 1)), "WC", "DIV", "ACC", "NCC", "SB"];
 
+function injuryPlayoffWeekLabel(week) {
+  return ({ 19: "WC", 20: "DIV", 21: "ACC", 22: "SB" })[week] || "SB";
+}
+
+function injuryMonthDayDate(value, fallbackYear = 2026) {
+  const match = String(value || "").trim().match(/^(?:[A-Za-z]{3}\s+\d{1,2}:\s*)?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})/i);
+  if (!match) return null;
+  const month = match[1].slice(0, 3).toLowerCase();
+  const year = /^(jan|feb)$/i.test(month) ? fallbackYear + 1 : fallbackYear;
+  const date = new Date(`${match[1]} ${match[2]}, ${year}`);
+  return Number.isNaN(date.getTime()) ? null : dateOnly(date);
+}
+
+function regularSeasonWeekForDate(date) {
+  const check = dateOnly(date);
+  const groups = scheduleWeekOptions(false)
+    .map(([week]) => {
+      const games = calendarGames().filter((game) => scheduleWeekGroupKey(game.week) === String(week));
+      const dates = games.map((game) => game.date).filter(Boolean).sort();
+      return { week: String(week), first: dates[0], last: dates[dates.length - 1] };
+    })
+    .filter((item) => item.first && item.last && !item.week.startsWith("Pre"))
+    .sort((a, b) => weekSortValue(a.week) - weekSortValue(b.week));
+  if (!groups.length || Number.isNaN(check.getTime())) return null;
+  for (let index = 0; index < groups.length; index += 1) {
+    const group = groups[index];
+    const previous = groups[index - 1];
+    const startBoundary = previous ? new Date(dateOnly(previous.last).getTime() + 86400000) : new Date(0);
+    const endBoundary = dateOnly(group.last);
+    if (check <= endBoundary && check >= startBoundary) return num(group.week, null);
+  }
+  if (check < dateOnly(groups[0].last)) return 1;
+  return num(groups[groups.length - 1].week, null);
+}
+
+function irThruWeekFromPlacedWeek(placedWeek) {
+  const week = Number(placedWeek);
+  if (!Number.isFinite(week) || week <= 1) return "4";
+  const target = Math.max(4, week + 3);
+  return target <= 18 ? String(target) : injuryPlayoffWeekLabel(target);
+}
+
+function irThruWeekFromInjuryReport(item) {
+  const text = `${item?.espnTag || ""} ${item?.espnComment || ""}`;
+  const commentDate = injuryMonthDayDate(item?.espnCommentDate) || injuryMonthDayDate(item?.espnComment);
+  if (commentDate && /placed|put|signed .* injured reserve|moved .* injured reserve|reserve\/pup|reserve\/nfi|injured reserve/i.test(text)) {
+    return irThruWeekFromPlacedWeek(regularSeasonWeekForDate(commentDate));
+  }
+  const returnDate = injuryMonthDayDate(item?.espnReturnDate);
+  const returnWeek = returnDate ? regularSeasonWeekForDate(returnDate) : null;
+  if (Number.isFinite(returnWeek)) {
+    const target = Math.max(4, returnWeek - 1);
+    return target <= 18 ? String(target) : injuryPlayoffWeekLabel(target);
+  }
+  return "";
+}
+
 function irAutoThruWeek() {
   const current = selectedSiteWeek();
   if (String(current).startsWith("Pre")) return "4";
   const week = Number(current);
   if (!Number.isFinite(week)) return "4";
-  const target = week + 4;
-  if (target <= 18) return String(target);
-  return ({ 19: "WC", 20: "DIV", 21: "ACC", 22: "SB" })[target] || "SB";
+  return irThruWeekFromPlacedWeek(week);
 }
 
 function currentInjuryReviewWeek() {
