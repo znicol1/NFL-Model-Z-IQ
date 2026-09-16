@@ -10081,12 +10081,15 @@ function applyScannedScores(payload) {
   completed.forEach((result) => {
     const resultVisitor = result.visitor || result.away || result.awayTeam;
     const resultHome = result.home || result.homeTeam;
+    const inferredWeekKey = result.weekKey || (/^\d{4}-08-/i.test(String(result.date || "")) && /^\d+$/.test(String(result.week || ""))
+      ? `Pre${Math.max(0, Number(result.week) - 1)}`
+      : String(result.week || ""));
     const match = scheduleGames()
       .map((game, index) => ({ game, key: scheduleGameKey(game, game.calendarIndex ?? index) }))
       .find((row) => {
         const sameTeams = scannedTeam(row.game.visitor) === scannedTeam(resultVisitor) && scannedTeam(row.game.home) === scannedTeam(resultHome);
         if (!sameTeams) return false;
-        if (result.weekKey && String(row.game.week) === String(result.weekKey)) return true;
+        if (inferredWeekKey && String(row.game.week) === inferredWeekKey) return true;
         if (row.game.date === result.date) return true;
         if (result.week && String(row.game.week) === String(result.week)) return true;
         return dateDistanceDays(row.game.date, result.date) <= 1;
