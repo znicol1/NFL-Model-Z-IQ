@@ -38,7 +38,7 @@ async function espnScheduleForWeek(seasonType, week) {
 
 async function espnFullSeasonSchedule() {
   const requests = [
-    ...Array.from({ length: 5 }, (_, index) => ({ seasonType: 1, week: index + 1 })),
+    ...Array.from({ length: 4 }, (_, index) => ({ seasonType: 1, week: index + 1 })),
     ...Array.from({ length: 18 }, (_, index) => ({ seasonType: 2, week: index + 1 })),
     ...Array.from({ length: 5 }, (_, index) => ({ seasonType: 3, week: index + 1 })),
   ];
@@ -52,6 +52,11 @@ async function espnFullSeasonSchedule() {
       return;
     }
     flattenScheduleGames(result.value).forEach((game) => {
+      game.weekKey = request.seasonType === 1
+        ? `Pre${request.week - 1}`
+        : request.seasonType === 2
+          ? String(request.week)
+          : `Post${request.week}`;
       const key = game.eventId || [game.date, game.visitor, game.home].join("|");
       gamesById.set(key, game);
     });

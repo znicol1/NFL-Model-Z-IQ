@@ -10086,6 +10086,7 @@ function applyScannedScores(payload) {
       .find((row) => {
         const sameTeams = scannedTeam(row.game.visitor) === scannedTeam(resultVisitor) && scannedTeam(row.game.home) === scannedTeam(resultHome);
         if (!sameTeams) return false;
+        if (result.weekKey && String(row.game.week) === String(result.weekKey)) return true;
         if (row.game.date === result.date) return true;
         if (result.week && String(row.game.week) === String(result.week)) return true;
         return dateDistanceDays(row.game.date, result.date) <= 1;
