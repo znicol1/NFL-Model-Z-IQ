@@ -53,20 +53,19 @@ function parseMonthDay(value, seasonYear = 2026) {
 
 function weekForDate(date, schedule) {
   if (!date) return "";
-  const weeks = [...new Map((schedule || []).map((game) => [game.week, excelDateToDate(game.date)])).entries()]
-    .filter(([, weekDate]) => weekDate instanceof Date && !Number.isNaN(weekDate.valueOf()))
-    .sort((a, b) => a[1] - b[1]);
-  const found = weeks.find(([, weekDate]) => date <= new Date(weekDate.getTime() + 6 * 86400 * 1000));
-  return found ? String(found[0]) : "";
+  const weeks = new Map();
+  (schedule || []).forEach((game) => {
+    const gameDate = excelDateToDate(game.date);
+    if (Number.isNaN(gameDate.valueOf())) return;
+    const key = String(game.week);
+    if (!weeks.has(key) || gameDate > weeks.get(key)) weeks.set(key, gameDate);
+  });
+  const ordered = [...weeks.entries()].sort((a, b) => a[1] - b[1]);
+  return String((ordered.find(([, lastGameDate]) => date <= lastGameDate) || ordered[ordered.length - 1] || [""])[0]);
 }
 
 function currentInjuryReviewWeek(schedule) {
-  const now = new Date();
-  const weeks = [...new Map((schedule || []).map((game) => [game.week, excelDateToDate(game.date)])).entries()]
-    .filter(([, weekDate]) => weekDate instanceof Date && !Number.isNaN(weekDate.valueOf()))
-    .sort((a, b) => a[1] - b[1]);
-  const found = weeks.find(([, weekDate]) => now <= new Date(weekDate.getTime() + 6 * 86400 * 1000));
-  const week = found ? String(found[0]) : "";
+  const week = weekForDate(new Date(), schedule);
   return week === "Pre0" ? "Pre1" : week;
 }
 
@@ -107,11 +106,69 @@ function commentDate(description) {
 }
 
 function injuryTextMeansSeasonEnding(text) {
-  return /out\s+for\s+season|season-ending|season ending|will miss (?:the )?2026 (?:campaign|season)|miss (?:the )?(?:entire|rest of)(?: the)? (?:2026 )?(?:campaign|season)|expected to miss (?:the )?entire (?:2026 )?(?:campaign|season)/i.test(text || "");
+  return /out\s+for\s+season|season-ending|season ending|will miss (?:the )?2026 (?:campaign|season)|miss (?:the )?(?:entire|rest of)(?: the)? (?:2026 )?(?:campaign|season)|expected to miss (?:the )?entire (?:2026 )?(?:campaign|season)|\b(?:tore|ruptured|torn)\s+(?:his|her|their|the|an?)?\s*achilles\b/i.test(text || "");
 }
 
 function injuryTextMeansActivePupNfi(text) {
   return /active\/pup|active-pup|active pup|active\/physically unable|active physically unable|active\/nfi|active-nfi|active nfi|active\/non-football|active non-football/i.test(text || "");
+}
+
+function injuryTextMeansDesignatedIrReturn(text) {
+  return /\bdesignated\b.{0,90}\b(?:to|for) return from (?:the )?(?:injured reserve|ir|reserve\/(?:pup|nfi))\b|\b21-day (?:practice|evaluation) window (?:was |has been |had been )?opened\b/i.test(text || "");
+}
+
+function injuryTextMeansIrPracticeReturn(row) {
+  const status = String(row.statusDesc || "").toLowerCase();
+  const comment = String(row.description || "").toLowerCase();
+  const returned = /\breturn(?:ed|s|ing)? to practice\b|\bback at practice\b|\bresum(?:ed|es|ing) practice\b/.test(comment);
+  return /\bactivated\b.{0,90}\bfrom (?:the )?(?:injured reserve|ir)\b|\bremoved\b.{0,90}\bfrom (?:the )?(?:injured reserve|ir)\b/.test(comment)
+    || (returned && (/\bir\b|injured reserve/.test(status) || /\bfrom (?:the )?(?:injured reserve|ir)\b/.test(comment)));
+}
+
+function commentDecision(row, schedule) {
+  const comment = String(row.description || "").toLowerCase();
+  const tag = String(row.statusDesc || "").toLowerCase();
+  const taggedIr = /injured reserve|\bir\b|reserve\/(?:pup|nfi)/.test(tag);
+  const reportWeek = weekForDate(parseMonthDay(commentDate(row.description)), schedule);
+  const currentWeek = currentInjuryReviewWeek(schedule);
+  const stillIr = /\bremains? on (?:the )?(?:injured reserve|ir)\b|\bstays? on (?:the )?(?:injured reserve|ir)\b|\bwon't return to practice this week\b|\bwill not return to practice this week\b|\b(?:will|most likely|likely) not\b.{0,35}\bpractice window opened\b/.test(comment);
+  if (stillIr && taggedIr) return { status: "IR Thru Week ___", week: "" };
+  if (injuryTextMeansDesignatedIrReturn(comment) || injuryTextMeansIrPracticeReturn(row)) {
+    if (/\b(?:will not|won't) play\b|\bruled out for\b|\binactive for\b/.test(comment)) return { status: "OUT", week: reportWeek || currentWeek };
+    return { status: "Questionable for Week ___", week: currentWeek };
+  }
+  const target = comment.match(/\btargeting a return for week\s+(\d{1,2})\b/);
+  if (target) return { status: "OUT", week: String(Math.max(1, Number(target[1]) - 1)) };
+  if (injuryTextMeansInGameExit(comment) || /\bdoubtful to return to (?:thursday|sunday|monday|saturday|tonight|today|the|this)\b/.test(comment)) {
+    return { status: /\bconcussion\b|\bbroken rib\b/.test(comment) ? "Doubtful for Week ___" : "Questionable for Week ___", week: String(Number(reportWeek || currentWeek) + 1) };
+  }
+  if (/\bbroken rib\b/.test(comment)) return { status: "Doubtful for Week ___", week: String(Number(currentWeek) + 1) };
+  if (/\b(?:is|listed as|officially) questionable for\b/.test(comment)) return { status: "Questionable for Week ___", week: reportWeek || currentWeek };
+  if (/\b(?:is|listed as|officially) doubtful for\b/.test(comment)) return { status: "Doubtful for Week ___", week: reportWeek || currentWeek };
+  if (/\bruled out for\b|\binactive for\b/.test(comment)) return taggedIr
+    ? { status: "IR Thru Week ___", week: "" }
+    : { status: "OUT", week: reportWeek || currentWeek };
+  return null;
+}
+
+function injuryTextMeansMultiWeekAbsence(text) {
+  return /(?:expected to|will|set to|likely to) miss (?:multiple|several) weeks|(?:out|sidelined) for (?:multiple|several) weeks|likely to avoid .*injured reserve.*expected to miss time/i.test(text || "");
+}
+
+function injuryTextMeansUncertainGameAvailability(text) {
+  return /up in the air.*(?:available|play)|(?:availability|playing).*up in the air/i.test(text || "");
+}
+
+function injuryTextMeansFullPractice(text) {
+  return /full participant|practic(?:ed|es|ing) in full/i.test(text || "");
+}
+
+function injuryTextMeansLongTermUncertain(text) {
+  return /(?:hopeful|hoping|optimistic).*\b(?:play|return)\b.*\b(?:at some point|this season|during the .*season)\b/i.test(text || "");
+}
+
+function injuryTextMeansInGameExit(text) {
+  return /(?:ruled|declared) out for (?:the )?(?:rest|remainder) of (?:sunday'?s|monday'?s|thursday'?s|saturday'?s|today'?s|tonight'?s|the|this) game/i.test(text || "");
 }
 
 function injuryTextMeansHealthy(text) {
@@ -126,17 +183,33 @@ function injuryTextMeansCampRampUp(text) {
 }
 
 function injuryTextMeansReserveList(text) {
+  if (/(?:avoid|avoiding|avoided) (?:a stint on |being placed on |placement on )?(?:injured reserve|\bir\b)|(?:won't|will not|isn't expected to) (?:go on|be placed on) (?:injured reserve|\bir\b)/i.test(text || "")) return false;
+  if (/\bnfi-r\b/i.test(text || "")) return false;
   if (injuryTextMeansActivePupNfi(text)) return false;
   return /\bir\b|injured reserve|reserve\/pup|reserve-pup|reserve pup|reserve\/physically unable|reserve physically unable|reserve\/nfi|reserve-nfi|reserve nfi|reserve\/non-football|reserve non-football/i.test(text || "");
 }
 
-function suggestStatus(row) {
+function suggestStatus(row, schedule) {
   const status = String(row.statusDesc || "").toLowerCase();
   const comment = String(row.description || "").toLowerCase();
   const text = `${status} ${comment}`;
-  if (injuryTextMeansHealthy(text)) return "Healthy";
-  if (/questionable|doubtful/.test(status) && !comment.trim()) return "Healthy";
   if (injuryTextMeansSeasonEnding(text)) return "OUT for Season";
+  const decision = commentDecision(row, schedule);
+  if (decision) return decision.status;
+  if (injuryTextMeansUncertainGameAvailability(comment)) return "Questionable for Week ___";
+  if (/injured reserve|\bir\b/.test(status) && injuryTextMeansFullPractice(comment)) return "Questionable for Week ___";
+  if (injuryTextMeansDesignatedIrReturn(comment) && !/\bruled out for (?:sunday|monday|thursday|saturday|the next)\b/.test(comment)) return "Questionable for Week ___";
+  if (injuryTextMeansIrPracticeReturn(row)) return "Questionable for Week ___";
+  if (injuryTextMeansInGameExit(comment)) return /concussion/.test(comment) ? "Doubtful for Week ___" : "Questionable for Week ___";
+  if (injuryTextMeansMultiWeekAbsence(comment)) {
+    const reportWeek = Number(weekForDate(parseMonthDay(commentDate(row.description)), schedule));
+    const currentWeek = Number(currentInjuryReviewWeek(schedule));
+    return Number.isFinite(reportWeek) && Number.isFinite(currentWeek) && currentWeek > reportWeek + 1 ? "Questionable for Week ___" : "OUT";
+  }
+  if (injuryTextMeansLongTermUncertain(comment) || /\bnfi-r\b/.test(text)) return "OUT";
+  if (injuryTextMeansHealthy(text)) return "Healthy";
+  if (/questionable/.test(status) && !comment.trim()) return "Questionable for Week ___";
+  if (/doubtful/.test(status) && !comment.trim()) return "Doubtful for Week ___";
   if (injuryTextMeansActivePupNfi(text)) return "OUT thru Week ___";
   if (injuryTextMeansReserveList(text) || /reverted to .*ir|placed .*ir/.test(comment)) return "IR Thru Week ___";
   if (/suspended/.test(comment)) return "Suspended thru Week ___";
@@ -155,6 +228,21 @@ function defaultSuggestedWeek(status, schedule) {
 function effectiveSuggestedWeek(status, row, schedule, returnDate) {
   const text = `${String(row.statusDesc || "").toLowerCase()} ${String(row.description || "").toLowerCase()}`;
   if (/^healthy$|out\s+for\s+season/i.test(status || "")) return "";
+  const decision = commentDecision(row, schedule);
+  if (decision) return decision.week;
+  if (injuryTextMeansUncertainGameAvailability(row.description) || (/injured reserve|\bir\b/i.test(row.statusDesc || "") && injuryTextMeansFullPractice(row.description))) return currentInjuryReviewWeek(schedule);
+  if (injuryTextMeansInGameExit(row.description)) {
+    const reportWeek = weekForDate(parseMonthDay(commentDate(row.description)), schedule);
+    return reportWeek ? String(Number(reportWeek) + 1) : currentInjuryReviewWeek(schedule);
+  }
+  if (injuryTextMeansMultiWeekAbsence(row.description)) {
+    const reportWeek = weekForDate(parseMonthDay(commentDate(row.description)), schedule);
+    return reportWeek ? String(Number(reportWeek) + 1) : currentInjuryReviewWeek(schedule);
+  }
+  if (injuryTextMeansLongTermUncertain(row.description)) return String(Math.min(18, Number(currentInjuryReviewWeek(schedule) || 1) + 2));
+  if (/\bnfi-r\b/i.test(text)) return currentInjuryReviewWeek(schedule);
+  if (/^out$/i.test(status || "") || /^(?:questionable|doubtful)\s+for\s+week/i.test(status || "")) return currentInjuryReviewWeek(schedule);
+  if ((injuryTextMeansDesignatedIrReturn(row.description) || injuryTextMeansIrPracticeReturn(row)) && /^(?:questionable|doubtful)\s+for\s+week|^out\s+thru/i.test(status || "")) return currentInjuryReviewWeek(schedule);
   if (/^ir\s+thru/i.test(status || "")) return "";
   if (injuryTextMeansActivePupNfi(text)) return "Pre3";
   const current = currentInjuryReviewWeek(schedule);
@@ -169,17 +257,18 @@ function buildResults(data, injuries) {
   injuries.forEach((team) => {
     const teamName = normalizeTeamName(team.displayName);
     (team.items || []).forEach((item) => {
-      const cleanName = cleanPlayerName(item.athlete?.name || "");
+      const name = item.athlete?.name || "";
+      if (!name) return;
+      const cleanName = cleanPlayerName(name);
       const matched = players.find((player) => cleanPlayerName(player.player) === cleanName && normalizeTeamName(player.team) === teamName)
         || players.find((player) => cleanPlayerName(player.player) === cleanName);
-      if (!matched) return;
-      const suggestedStatus = suggestStatus(item);
+      const suggestedStatus = suggestStatus(item, data.schedule || []);
       const returnDate = item.date || "";
       results.push({
-        playerKey: playerKey(matched),
-        player: matched.player,
-        team: matched.team,
-        position: matched.position,
+        playerKey: matched ? playerKey(matched) : "",
+        player: matched?.player || name,
+        team: matched?.team || teamName,
+        position: matched?.position || "",
         espnTeam: teamName,
         espnTag: item.statusDesc || item.type?.description || "",
         espnReturnDate: returnDate,
@@ -187,7 +276,7 @@ function buildResults(data, injuries) {
         espnComment: item.description || "",
         suggestedStatus,
         suggestedWeek: effectiveSuggestedWeek(suggestedStatus, item, data.schedule || [], returnDate),
-        confidence: normalizeTeamName(matched.team) === teamName ? "team/name match" : "name match, team differs",
+        confidence: !matched ? "ESPN name awaiting active roster match" : normalizeTeamName(matched.team) === teamName ? "team/name match" : "name match, team differs",
       });
     });
   });
@@ -237,3 +326,7 @@ exports.handler = async (event) => {
     }
   }
 };
+
+exports.suggestStatus = suggestStatus;
+exports.effectiveSuggestedWeek = effectiveSuggestedWeek;
+exports.weekForDate = weekForDate;
